@@ -16,12 +16,6 @@ def resize_img(img):
         img = block_reduce(img, block_size=(2, 2), func=np.max)
     return img
 
-def write_input_info(out_folder, data):
-    description_file = os.path.join(out_folder, 'description.txt')
-    print("... Writing bounds file to:", description_file)
-    description_file = open(description_file, "w+")
-    description_file.write(data)
-    description_file.close()
 
 
 #delete small regions (<size) of binary images

@@ -56,22 +56,9 @@ class GeToFeatureGraph(GeToGraph):
         for param in kwargs['params']:
             self.params[param] = kwargs['params'][param]
 
-        self.params['write_folder'] = os.path.join(name,write_folder)
-        self.params['format'] = format
-
-        self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
-                                          self.params['write_folder'], 'runs')
-
-        if not os.path.exists(self.pred_run_path):
-            os.makedirs(os.path.join(self.pred_run_path))
-
-        self.pred_base_path = os.path.join(self.LocalSetup.project_base_path, 'datasets'
-                                           ,self.params['write_folder'])
-        self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
-        self.msc_write_path = self.LocalSetup.neuron_training_base_path
-
 
         super(GeToFeatureGraph, self).__init__(geomsc_fname_base=geomsc_fname_base, label_file=label_file)
+
 
         #
         # Write Paths
@@ -92,32 +79,31 @@ class GeToFeatureGraph(GeToGraph):
             for k, v in param_add_ons.items():
                 self.params[k] = v
 
-        self.model_name = model_name
+        self.data_name = name
+        self.params['write_folder'] = os.path.join(name, write_folder)
+        self.experiment_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets'
+                                              , self.params['write_folder'])
+        self.input_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets', name, 'input')
+        self.params['experiment_folder'] = self.experiment_folder
+        self.params['input_folder'] = self.input_folder
+        self.params['data_name'] = self.data_name
 
+        self.params['format'] = format
         self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
-                                          self.params['write_folder'],
-                                          'runs')
-
+                                          self.params['write_folder'], 'runs')
         if not os.path.exists(self.pred_run_path):
             os.makedirs(os.path.join(self.pred_run_path))
-        self.pred_base_path = os.path.join(self.LocalSetup.project_base_path,
-                                           'datasets',
-                                           self.params['write_folder'])
         self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
         self.msc_write_path = self.LocalSetup.neuron_training_base_path
-        self.session_name = str(self.run_num) + '_' + model_name
+
+        self.model_name = model_name
+        self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
+        self.msc_write_path = self.LocalSetup.neuron_training_base_path
+        self.session_name = str(self.run_num)
         self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
         if not os.path.exists(self.pred_session_run_path):
             os.makedirs(os.path.join(self.pred_session_run_path))
-        msc_info = os.path.join(self.pred_session_run_path, str(self.run_num) + '_args')
-        print("&&&& param")
-        print(self.params)
-        print("&&&& end param")
-        with open(msc_info + '.txt', 'w+') as f:
-            f.write(str(self.params) + "\n")
-            for i in self.params:
-                f.write(str(i) + "\n")
-            f.close()
+
 
         #
         # Data
@@ -145,61 +131,10 @@ class GeToFeatureGraph(GeToGraph):
         self.X = self.image.shape[0]
         self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
 
-
-
-
         #
         #
-
-
-
         self.features = None
         self.feature_ops = {}
-
-
-
-
-
-        #
-        # logging
-        #
-        self.active_file = os.path.join(self.LocalSetup.project_base_path, 'continue_active.txt')
-        f = open(self.active_file, 'w')
-        f.write('0')
-        f.close()
-
-        if False:
-            self.counter_file = os.path.join(self.LocalSetup.project_base_path, 'run_count.txt')
-            f = open(self.counter_file, 'r')
-            c = f.readlines()
-            self.run_num = int(c[0]) + 1 ##################################
-            f.close()
-            self.reset_run = reset_run
-            if reset_run:
-                self.run_num = 0
-            f = open(self.counter_file, 'w')
-            f.write(str(self.run_num))
-            f.close()
-            print("&&&& run num ", self.run_num)
-
-        #self.session_name = str(self.run_num) + '_' + model_name
-
-        #if msc_file is None:
-        #    msc_file = os.path.join(self.pred_run_path, self.session_name)
-
-        #self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
-        #if not os.path.exists(self.pred_session_run_path):
-        #    os.makedirs(os.path.join(self.pred_session_run_path))
-
-        #msc_info = os.path.join(self.pred_session_run_path, str(self.run_num) + '_args')
-        #print("&&&& param")
-        #print(self.params)
-        #print("&&&& end param")
-        #with open(msc_info + '.txt', 'w+') as f:
-        #    f.write(str(self.params) + "\n")
-        #    for i in self.params:
-        #        f.write(str(i) + "\n")
-        #    f.close()
 
         #
         # build feature graph
@@ -278,24 +213,10 @@ class GeToFeatureGraph(GeToGraph):
                 #    arc_pixel_map[i] = get_pixel_values_from_arcs([arc], im, sampled=False)
 
                 gnode_pixels = get_pixel_values_from_vertices([gnode], im)
-                connected_pixels = []
-                for j in self.G.neighbors(gnode.gid):
-                    nbr_gnode = self.gid_gnode_dict[j]
-                    #if j not in arc_pixel_map:
-                    #    arc_pixel_map[j] = get_pixel_values_from_arcs(
-                    #        [nbr_arc], self.image, sampled = False
-                    #    )
-                    j_pixels = get_pixel_values_from_vertices(
-                            [nbr_gnode], self.image, sampled = False
-                        )
-                    connected_pixels.append(j_pixels)
 
                 for function_name, foo in self.feature_ops.items():
-                    if function_name.startswith("neighbor_"):
-                        gnode_feature_row.append(foo(connected_pixels))
-                    else:
-                        attribute = foo(gnode_pixels)
-                        gnode_feature_row.append(attribute)
+                    attribute = foo(gnode_pixels)
+                    gnode_feature_row.append(attribute)
                     if len(gnode_features) == 0:
                         feature_names.append(image_name + "_" + function_name)
 
@@ -398,10 +319,10 @@ class GeToFeatureGraph(GeToGraph):
             for name, image in self.images.items():
                 image = np.array(image).astype('uint8')
                 #Img = Image.fromarray(image)
-                if not os.path.exists(os.path.join(self.pred_base_path, 'filtered_images')):
-                    os.mkdirs(os.path.join(self.pred_base_path, 'filtered_images'))
-                #Img.save(os.path.join(self.pred_base_path, 'filtered_images', name+'.tif'))
-                imageio.imsave(os.path.join(self.pred_base_path, 'filtered_images', name+'.png'), image)
+                if not os.path.exists(os.path.join(self.experiment_folder, 'filtered_images')):
+                    os.makedirs(os.path.join(self.experiment_folder, 'filtered_images'))
+                #Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'))
+                imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.png'), image)
 
     def load_json_feature_graph(self):
         graph_path = os.path.join(self.pred_run_path, self.msc_graph_name)
@@ -410,8 +331,8 @@ class GeToFeatureGraph(GeToGraph):
             , positive_sample_count = load_data(prefix=graph_path)
 
     def write_gnode_features(self, filename):
-        msc_feats_file = os.path.join(self.pred_base_path,'features', filename + ".feats.txt")
-        msc_gid_to_feats_file = os.path.join(self.pred_base_path, 'features', filename + ".gid_feat_idx.txt")
+        msc_feats_file = os.path.join(self.experiment_folder,'features', "feats.txt")
+        msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "gid_feat_idx.txt")
         print("&&&& writing features in: ", msc_feats_file)
         feats_file = open(msc_feats_file, "w+")
         gid_feats_file = open(msc_gid_to_feats_file, "w+")
@@ -429,7 +350,7 @@ class GeToFeatureGraph(GeToGraph):
         feats_file.close()
 
     def write_feature_names(self, filename):
-        msc_feats_file = os.path.join(self.pred_base_path,'features', filename + ".featnames.txt")
+        msc_feats_file = os.path.join(self.experiment_folder,'features', "featnames.txt")
         print("&&&& writing feature namesin: ", msc_feats_file)
         feats_file = open(msc_feats_file, "w+")
         for fname in self.feature_names:
@@ -437,7 +358,7 @@ class GeToFeatureGraph(GeToGraph):
         feats_file.close()
 
     def load_gnode_features(self, filename):
-        msc_feats_file = os.path.join( self.pred_base_path,'features', filename + ".feats.txt")
+        msc_feats_file = os.path.join( self.experiment_folder,'features', "feats.txt")
         print("&&&& Reading features from: ", msc_feats_file)
         feats_file = open(msc_feats_file, "r")
         feat_lines = feats_file.readlines()
@@ -453,7 +374,7 @@ class GeToFeatureGraph(GeToGraph):
         self.features = np.array(features)
         feats_file.close()
 
-        gid_to_feats_file = os.path.join(self.pred_base_path, 'features',filename  + ".gid_feat_idx.txt")
+        gid_to_feats_file = os.path.join(self.experiment_folder, 'features',"gid_feat_idx.txt")
         print("&&&& writing features in: ", gid_to_feats_file)
         feats_file = open(gid_to_feats_file, "r")
         feat_lines = feats_file.readlines()

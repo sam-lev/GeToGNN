@@ -17,6 +17,7 @@ from getograph import Attributes
 from getofeaturegraph import GeToFeatureGraph
 from ui.arcselector import ArcSelector
 from localsetup import LocalSetup
+from proc_manager import experiment_logger
 
 class GeToGNN(GeToFeatureGraph):
     def __init__(self,training_selection_type='box', parameter_file_number = None, geomsc_fname_base = None, label_file=None,
@@ -41,13 +42,18 @@ class GeToGNN(GeToFeatureGraph):
                          load_feature_graph_name=load_feature_graph_name, params=self.params)
 
         self.run_num = 0
-
-
-
+        self.logger = experiment_logger(experiment_folder=self.experiment_folder,
+                                        input_folder=self.input_folder)
+        self.param_file = os.path.join(self.LocalSetup.project_base_path,
+                                       'parameter_list_'+str(parameter_file_number)+'.txt')
+        self.topo_image_name = label_file.split('.labels')[0]
+        self.logger.record_filename(label_file=label_file,
+                                    parameter_list_file=self.param_file,
+                                    image_name=image,
+                                    topo_image_name=self.topo_image_name)
 
         self.subgraph_sample_set = {}
         self.subgraph_sample_set_ids = {}
-
         self.positive_arc_ids = set()
         self.selected_positive_arc_ids = set()
         self.negative_arc_ids = set()
@@ -688,7 +694,7 @@ class GeToGNN(GeToFeatureGraph):
         return (self.G_dict, self.node_gid_to_feat_idx , self.node_gid_to_label, self.features)
 
     def write_arc_predictions(self, filename, path=None, msc=None):
-        msc_pred_file = os.path.join(self.pred_session_run_path, filename + ".preds.txt")
+        msc_pred_file = os.path.join(self.pred_session_run_path, "preds.txt")
         print("&&&& writing predictions in: ", msc_pred_file)
         pred_file = open(msc_pred_file,"w+")
         for gnode in self.gid_gnode_dict.values():
@@ -698,7 +704,7 @@ class GeToGNN(GeToFeatureGraph):
     # write to file per line 'gid partition'
     # where partition = {train:0, test:1, val:2}
     def write_gnode_partitions(self, name):
-        partitions_file = os.path.join(self.pred_session_run_path, name+'.partitions.txt')
+        partitions_file = os.path.join(self.pred_session_run_path, 'partitions.txt')
         print("... Writing partitions file to:", partitions_file)
         partitions_file = open(partitions_file, "w+")
         for gid in self.gid_gnode_dict.keys():
@@ -709,7 +715,7 @@ class GeToGNN(GeToFeatureGraph):
         partitions_file.close()
 
     def write_selection_bounds(self, name):
-        window_file = os.path.join(self.pred_session_run_path, name+'.window.txt')
+        window_file = os.path.join(self.pred_session_run_path, 'window.txt')
         print("... Writing bounds file to:", window_file)
         window_file = open(window_file, "w+")
         window_file.write('x_box' + ' ' + str(self.x_box) + "\n")

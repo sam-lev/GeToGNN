@@ -52,8 +52,6 @@ class dataflow:
                 if dest_folder[-1] != '/':
                     dest_folder = dest_folder + "/"
                 if item.endswith(filetype):
-                    source_folder = os.path.join(dest_folder,'input')
-                    write_input_info(out_folder = dest_folder, data=item)
                     img = imageio.imread(dest_folder + item)
                     if len(img.shape) == 3:
                         img = np.pad(img, ((12, 12), (69, 70), (0, 0)), mode='constant')

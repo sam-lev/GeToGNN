@@ -7,7 +7,7 @@ write_msc False
 write_growing_boxes False
 write_features False
 load_features True
-write_feature_names True
+write_feature_names False
 write_partitions True
 save_filtered_images False
 collect_features False
@@ -35,7 +35,7 @@ val_model cvt
 learning_rate 1.0e-3
 weight_decay 1.0e-11
 polarity 666
-epochs 128
+epochs 32
 depth 3
 walk_length 2
 number_walks 2

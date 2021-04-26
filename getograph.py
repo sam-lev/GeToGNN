@@ -8,7 +8,6 @@ import imageio
 from PIL import Image
 import networkx as nx
 
-from data_ops.utils import write_input_info
 from data_ops.set_params import set_parameters
 from localsetup import LocalSetup
 
@@ -38,9 +37,10 @@ class Attributes:
 
 
         self.model_name = None
-
+        self.data_name = None
         self.pred_run_path = None
-        self.pred_base_path = None
+        self.experiment_folder = None
+        self.input_folder = None
         self.segmentation_path = None
         self.msc_write_path = None
         self.session_name = None
@@ -50,32 +50,33 @@ class Attributes:
         self.X = None
         self.Y = None
 
-    def update_run_info(self):
+    def update_run_info(self, write_folder=None):
 
         #self.params['write_folder'] = new # experiment
-        self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
+        if write_folder is not None:
+            self.params['write_folder'] = os.path.join(self.data_name, write_folder)
+            self.experiment_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets'
+                                                  ,self.params['write_folder'])
+            self.input_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets',
+                                             self.data_name, 'input')
+            self.params['experiment_folder'] = self.experiment_folder
+            self.params['input_folder'] = self.input_folder
+
+            self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
                                           self.params['write_folder'],
                                           'runs')
 
         if not os.path.exists(self.pred_run_path):
-            os.mkdirs(os.path.join(self.pred_run_path))
-        self.pred_base_path = os.path.join(self.LocalSetup.project_base_path,
+            os.makedirs(os.path.join(self.pred_run_path))
+        self.experiment_folder = os.path.join(self.LocalSetup.project_base_path,
                                            'datasets',
                                            self.params['write_folder'])
 
-        self.session_name = str(self.run_num) + '_' + self.model_name
+        self.session_name = str(self.run_num)
         self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
         if not os.path.exists(self.pred_session_run_path):
             os.makedirs(os.path.join(self.pred_session_run_path))
-        msc_info = os.path.join(self.pred_session_run_path, str(self.run_num) + '_args')
-        print("&&&& param")
-        print(self.params)
-        print("&&&& end param")
-        with open(msc_info + '.txt', 'w+') as f:
-            f.write(str(self.params) + "\n")
-            for i in self.params:
-                f.write(str(i) + "\n")
-            f.close()
+
 
 class GeToElement:
     def __init__(self, dim = None, gid = None, points = None):
@@ -273,9 +274,6 @@ class GeToGraph(Attributes):
         geo_file.close()
 
     def read_labels_from_file(self, file = None):
-
-        write_input_info(out_folder=os.path.dirname(file), data=os.path.basename(file))
-
         label_file = open(file, "r")
         self.label_lines = label_file.readlines()
         label_file.close()
@@ -321,35 +319,10 @@ class GeToGraph(Attributes):
         distance, index = self.select_kdtree.query(point)
         return self.select_key_map[index]
 
-    def write_arc_labels(self, filename, path=None, msc=None):
-        msc_label_file = filename + ".labels.txt"
-        print("&&&& writing labels in: ", msc_label_file)
-        label_file = open(msc_label_file,"w+")
-        for gid in self.gid_gnode_dict.keys():
-            node_pred = self.node_gid_to_prediction[gid]
-            label_file.write(str(gid)+ ' '+str(node_pred[1]) + "\n")
-        label_file.close()
-
-    def write_arc_features(self, filename):
-        msc_feats_file = filename + ".feats.txt"
-        print("&&&& writing features in: ", msc_feats_file)
-        feats_file = open(msc_feats_file, "w+")
-        for gnode in self.gid_gnode_dict.values():
-            feature_vec = gnode.features
-            feats_file.write(str(gnode.gid)+ ' ')
-            for f in feature_vec[0:-1]:
-                feats_file.write(str(f)+' ')
-            feats_file.write(str(feature_vec[-1]) + "\n")
-        feats_file.close()
-
-    def draw_segmentation(self, filename, ridge=True, valley=True, invert=False):
+    def draw_segmentation(self, dirpath, ridge=True, valley=True, invert=False):
         X = self.X #if not invert else self.Y
         Y = self.Y #if not invert else self.X
         original_image = self.image
-
-        filename = filename + '.png'
-
-        print("... Drawing predictions and ground truth with:", filename)
 
         self.use_ridge_arcs = ridge
         self.use_valley_arcs = valley
@@ -439,11 +412,11 @@ class GeToGraph(Attributes):
                 map_im = mapped_image
                 lab_map_im = label_map_image
             Img = Image.fromarray(map_im.astype('uint8'))  # .astype(np.float32))#mapped_img)
-            Img.save(filename + 'MAP.' + filename.split('.')[-1])
+            Img.save(os.path.join(dirpath, 'inference.png'))
 
             Img = Image.fromarray(
                 lab_map_im.astype('uint8'))  # .astype(np.float32))#mapped_img)
-            Img.save(filename + 'MAP_groundseg.' + filename.split('.')[-1])
+            Img.save(os.path.join(dirpath , 'groundseg.png'))
 
         plt.close()
 

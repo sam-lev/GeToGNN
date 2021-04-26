@@ -39,7 +39,7 @@ ground_truth_label_file = os.path.join('/home/sam/Documents/PhD/Research/getognn
                                        name,'input', label_file )
     #/retinal/input/im0236_la2_700_605.raw.labels_2.txt'
 
-write_path = ['experiment_'+str(run_num)+'_qtrWindow', 'experiment_'+str(run_num)+'_qtrWindow',
+write_path = ['experiment_'+str(run_num)+'_qtrbox_32epoch', 'experiment_'+str(run_num)+'_qtrWindow',
               'experiment_'+str(run_num)+'_qtrWindow', 'experiment_'+str(run_num)+'_qtrWindow'
     , 'experiment_'+str(run_num)+'_qtrWindow'][sample_idx]
 
@@ -69,6 +69,7 @@ else:
     getognn.load_gnode_features(filename=model_name)
 if getognn.params['write_features']:
     getognn.write_gnode_features(getognn.session_name)
+if getognn.params['write_feature_names']:
     getognn.write_feature_names(getognn.session_name)
 
 # training info, selection, partition train/val/test
@@ -97,8 +98,7 @@ G = getognn.get_graph()
 getognn.equate_graph(G)
 
 getognn.write_arc_predictions(getognn.session_name)
-getognn.draw_segmentation(filename=os.path.join(getognn.pred_session_run_path,
-                                                     getognn.session_name))
+getognn.draw_segmentation(dirpath=getognn.pred_session_run_path)
 
 run_manager = Run_Manager(getognn=getognn,
                           training_window_file=os.path.join(LocalSetup.project_base_path,
