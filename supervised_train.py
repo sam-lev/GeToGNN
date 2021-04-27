@@ -39,7 +39,7 @@ ground_truth_label_file = os.path.join('/home/sam/Documents/PhD/Research/getognn
                                        name,'input', label_file )
     #/retinal/input/im0236_la2_700_605.raw.labels_2.txt'
 
-write_path = ['experiment_'+str(run_num)+'_qtrbox_32epoch', 'experiment_'+str(run_num)+'_qtrWindow',
+write_path = ['experiment_'+str(run_num)+'_eighthWindow', 'experiment_'+str(run_num)+'_qtrWindow',
               'experiment_'+str(run_num)+'_qtrWindow', 'experiment_'+str(run_num)+'_qtrWindow'
     , 'experiment_'+str(run_num)+'_qtrWindow'][sample_idx]
 
@@ -75,7 +75,8 @@ if getognn.params['write_feature_names']:
 # training info, selection, partition train/val/test
 getognn.read_labels_from_file(file=ground_truth_label_file)
 getognn.box_select_geomsc_training(x_range=getognn.params['x_box'], y_range=getognn.params['y_box'])
-getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1, validation_samples = 2)
+getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
+                                         validation_samples = 1)
 if getognn.params['write_json_graph']:
     getognn.write_json_graph_data(folder_path=getognn.pred_session_run_path, name=model_name + '_' + getognn.params['name'])
 
@@ -102,7 +103,7 @@ getognn.draw_segmentation(dirpath=getognn.pred_session_run_path)
 
 run_manager = Run_Manager(getognn=getognn,
                           training_window_file=os.path.join(LocalSetup.project_base_path,
-                                                            'moving_windows_list.txt'),
+                                                            'window_eighth.txt'),
                           features_file=model_name,
                           sample_idx=sample_idx,
                           model_name=model_name,

@@ -304,8 +304,9 @@ class GeToGraph(Attributes):
         sorted_vertices = sorted(vertices, key=lambda gnode: len(gnode.points))
         for gnode in sorted_vertices:
             gid = gnode.gid
-            self.select_points.extend(gnode.points)
-            self.select_key_map.extend([gid] * len(gnode.points))
+            if len(np.shape(gnode.points)) > 1:
+                self.select_points.extend(gnode.points)
+                self.select_key_map.extend([gid] * len(gnode.points))
         # only needed for selection ui to choose neighboring arcs
         # can cause error with sparse MSC
         self.select_kdtree = scipy.spatial.KDTree(self.select_points, leafsize=10000)

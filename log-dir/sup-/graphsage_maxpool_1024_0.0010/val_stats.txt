@@ -1,1 +1,1 @@
-loss=1.27109 f1_micro=0.75000 f1_macro=0.42857 time=0.00676
+loss=0.00007 f1_micro=1.00000 f1_macro=1.00000 time=0.00648

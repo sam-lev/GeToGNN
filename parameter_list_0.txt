@@ -1,5 +1,5 @@
-x_box 0,175
-y_box 0,151
+x_box 0,75
+y_box 0,87
 selection_type 0
 load_preprocessed False
 load_preprocessed_walks False
@@ -35,7 +35,7 @@ val_model cvt
 learning_rate 1.0e-3
 weight_decay 1.0e-11
 polarity 666
-epochs 32
+epochs 192
 depth 3
 walk_length 2
 number_walks 2

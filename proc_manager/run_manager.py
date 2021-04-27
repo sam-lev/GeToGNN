@@ -96,7 +96,7 @@ class Run_Manager:
             self.getognn.box_select_geomsc_training(x_range=X_BOX,
                                                     y_range=Y_BOX)
 
-            self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops=2,
+            self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops=1,
                                                      validation_samples=1)
             #if self.getognn.params['write_partitions']:
             self.getognn.write_gnode_partitions(self.getognn.session_name)
