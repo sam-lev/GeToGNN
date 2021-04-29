@@ -442,7 +442,7 @@ class GeToGNN(GeToFeatureGraph):
         self.negative_arc_ids = self.selected_negative_arc_ids
         self.positive_arcs = self.selected_positive_arcs
         self.negative_arcs = self.selected_negative_arcs
-        self.all_train = self.positive_arcs.union(self.negative_arcs)
+        self.all_train = self.positive_arc_ids.union(self.negative_arc_ids)
         self.all_test_and_val = self.selected_test_arcs
         return self.all_train , self.all_test_and_val
 

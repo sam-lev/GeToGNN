@@ -3,7 +3,7 @@ import os
 
 from getognn import *
 from localsetup import LocalSetup
-LocalSetup = LocalSetup(env='slurm')
+LocalSetup = LocalSetup()
 
 class Run_Manager:
     def __init__(self, getognn, training_window_file, features_file, sample_idx, model_name, format):
