@@ -1,6 +1,8 @@
 from localsetup import LocalSetup
 import os
 
+LS = LocalSetup(env='slurm')
+
 def parse_params(param_dict):
     selection_type = int(param_dict['selection_type'])
 
@@ -102,7 +104,6 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
         y_1 = y_1#args.y_min
         y_2 = y_2#args.y_max
     if read_params_from is not None:
-        LS = LocalSetup(env='multivax')
         param_file = os.path.join(LS.project_base_path, 'parameter_list_'+str(read_params_from)+'.txt')
         f = open(param_file, 'r')
         param_dict = {}
@@ -118,7 +119,6 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
             else:
                 param_dict[name_value[0]] = name_value[1]
     if growing_windows_from is not None:
-        LS = LocalSetup(env='multivax')
         box_line_num = int(iteration)
         param_file = os.path.join(LS.project_base_path, 'growing_windows_' + str(growing_windows_from) + '.txt')
         f= open(param_file,'r')
