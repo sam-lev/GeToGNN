@@ -25,15 +25,17 @@ box_set = set()
 
 print("step" , step)
 for i in range(int(X/((1./fraction)*X)*int(1./step))):
-    X_START = round(increment_x * (step*i))
-    X_END = round(increment_x*(step*i)) + round(increment_x*(step*i)) + increment_x
+    slide = i*step
+    X_START = round((X/fraction)*step)*i
+    X_END =  round(((X/fraction)*step)*i + X/fraction)
     if X_END > X:
         X_END = int(X-1)
     x_boxes.append("x_box "+str(X_START)+','+str(X_END))
     
 for i in range(int(Y/((1./fraction)*Y)*int(1./step))):
-    Y_START = round(increment_y * (step*i))
-    Y_END = round(increment_y*(step*i)) + round(increment_y*(step*i)) + increment_y
+    slide = i/step
+    Y_START = round((Y/fraction)*step)*i
+    Y_END = round(((Y/fraction)*step)*i + Y/fraction)
     if Y_END > Y:
         Y_END = int(Y-1)
     y_boxes.append("y_box "+str(Y_START)+','+str(Y_END))
