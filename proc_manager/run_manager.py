@@ -95,15 +95,31 @@ class Run_Manager:
             # train/test/val collection
             training_set , test_set = self.getognn.box_select_geomsc_training(x_range=X_BOX,
                                                     y_range=Y_BOX)
+            print("LENGTH .. Training", len(training_set))
+            print(".. length test: ", len(test_set))
             # skip box if no training arcs present in region
             if len(training_set) <= 1:
                 removed_box_file = open(os.path.join(self.getognn.LocalSetup.project_base_path,
                                                      'datasets', self.getognn.params['write_folder'],
                                                      'removed_windows.txt'),'w+')
                 removed_box_file.write('x_box '+str(X_BOX[0][0])+','+str(X_BOX[0][1])+'\n')
-                removed_box_file.write('x_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+                removed_box_file.write('y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
                 continue
 
+            # must do cvt before assigning class
+            # to ensure validation set doesn't remove all training nodes
+            validation_hops = 1
+            validation_samples = 1
+            validation_set, validation_set_ids,\
+            _, _ = self.getognn.cvt_sample_validation_set(hops=validation_hops,
+                                                          samples=validation_samples)
+            all_validation = self.getognn.validation_set_ids["positive"].union(self.getognn.validation_set_ids["negative"])
+            all_selected = self.getognn.selected_positive_arc_ids.union(self.getognn.selected_negative_arc_ids)
+            if not self.getognn.check_valid_partitions(all_selected, all_validation):
+                continue 
+
+            for gid in all_validation:
+                self.getognn.node_gid_to_partition[gid] = 'val'
             self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops=1,
                                                      validation_samples=1)
             #if self.getognn.params['write_partitions']:

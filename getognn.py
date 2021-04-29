@@ -387,6 +387,7 @@ class GeToGNN(GeToFeatureGraph):
             for gnode in self.gid_gnode_dict.values():
                 #idx = self.make_arc_id(arc)
                 gid = gnode.gid
+                self.node_gid_to_partition[gnode.gid] = ''
                 p1 = gnode.points[0]
                 p2 = gnode.points[-1]
                 in_box = False
@@ -416,6 +417,7 @@ class GeToGNN(GeToFeatureGraph):
 
                 for gnode in self.gid_gnode_dict.values():#self.msc.arcs:
                     gid = gnode.gid
+                    self.node_gid_to_partition[gnode.gid] = ''
                     p1 = gnode.points[0]
                     p2 = gnode.points[-1]
                     in_box = False
@@ -558,6 +560,12 @@ class GeToGNN(GeToFeatureGraph):
         self.subgraph_sample_set_ids["negative"] = sample_set_ids[1]
         return self.subgraph_sample_set, self.subgraph_sample_set_ids, subgraph_positive_arcs, subgraph_negative_arcs
 
+    def check_valid_partitions(self, train, val):
+        train_copy = train.copy()
+        for vl in train.intersection(val):
+            train_copy.remove(vl)
+        return not len(train_copy) == 0
+
     def get_train_test_val_sugraph_split(self, validation_hops = 1, validation_samples = 1,
                                          test_hops = None, test_samples = None, multiclass= False
                                          , collect_validation=True):
@@ -569,7 +577,7 @@ class GeToGNN(GeToFeatureGraph):
                 self.node_gid_to_partition[gid] = 'val'
 
         all_validation = self.validation_set_ids["positive"].union(self.validation_set_ids["negative"])
-        all_selected = self.selected_positive_arcs.union(self.selected_negative_arcs)
+        all_selected = self.selected_positive_arc_ids.union(self.selected_negative_arc_ids)
 
         if test_samples is not None:
             self.test_set, self.test_set_ids, _, _ =self.cvt_sample_test_set(samples=test_samples
@@ -592,7 +600,7 @@ class GeToGNN(GeToFeatureGraph):
                         int(gnode.gid in self.negative_arc_ids),
                         int(gnode.gid in self.positive_arc_ids)
                 ]
-                self.node_gid_to_label = label
+                self.node_gid_to_label[gnode.gid] = label
             if multiclass:
                 label = [
                     int(gnode.gid in self.negative_arc_ids),
@@ -606,9 +614,10 @@ class GeToGNN(GeToFeatureGraph):
             node["key"] = gnode.key
             node["box"] = gnode.box
             node["partition"] = partition
+            # assign partition to node
+            node["train"] = partition == 'train'
             node["test"] = partition == 'test'
             node["val"] = partition == 'val'
-            node["train"] = partition == 'train'
             node["label"] = label
             if self.selection_type == 'map':
                 node["label_accuracy"] = gnode.label_accuracy
