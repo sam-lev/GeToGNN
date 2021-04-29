@@ -16,6 +16,13 @@ def parse_params(param_dict):
         i for i in __group_xy([i for i in param_dict['y_box']])
     ]
 
+    if isinstance(param_dict['gpu'],list):
+        gpus = param_dict['gpu']
+        gpus = [str(i) for i in gpus]
+        gpus = (',').join(gpus)
+    else:
+        gpus = str(param_dict['gpu'])[:-1]
+
     def tobool(b):
         return "True" in b
 
@@ -80,7 +87,7 @@ def parse_params(param_dict):
         'forest_class_weights' : tobool(param_dict['forest_class_weights']),
         'mlp_lr' : float(param_dict['mlp_lr']),
         'mlp_epochs' : int(param_dict['mlp_epochs']),
-        'gpu' : str(param_dict['gpu'])[:-1],
+        'gpu' : gpus,
         'mlp_batch_size' : int(param_dict['mlp_batch_size']),
         'mlp_out_dim_1' : int(param_dict['mlp_out_dim_1']),
         'mlp_out_dim_2' : int(param_dict['mlp_out_dim_2']),
