@@ -5,7 +5,7 @@ from getognn import GeToGNN
 from localsetup import LocalSetup
 from proc_manager import Run_Manager
 
-LocalSetup = LocalSetup(env='slurm')
+LocalSetup = LocalSetup()
 
 #
 # selection of dataset done here
