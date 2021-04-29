@@ -4,6 +4,8 @@ import shutil
 import imageio
 import numpy as np
 from localsetup import LocalSetup
+
+LocalSetup = LocalSetup('slurm')
 from data_ops.utils import *
 
 class dataflow:
@@ -173,18 +175,17 @@ class retinadataset(dataflow):
                          ,persistence_values=[], env='multivax', number_images=None):
 
         if use_local_setup:
-            self.LocalSetup = LocalSetup(env)
 
-            drive_training_path = self.LocalSetup.drive_training_path
-            drive_segmentation_path = self.LocalSetup.drive_training_segmentation_path
-            drive_test_path = self.LocalSetup.drive_test_path
-            drive_training_mask_path = self.LocalSetup.drive_training_mask_path
-            drive_test_segmentation_path = self.LocalSetup.drive_test_segmentation_path
-            drive_test_mask_path = self.LocalSetup.drive_test_mask_path
-            stare_image_path = self.LocalSetup.stare_training_data_path
-            stare_segmentation_path = self.LocalSetup.stare_segmentations
-            drive_training_msc_segmentation_path = self.LocalSetup.drive_training_msc_segmentation_path
-            stare_msc_segmentation_path = self.LocalSetup.stare_msc_segmentation_path
+            drive_training_path = LocalSetup.drive_training_path
+            drive_segmentation_path = LocalSetup.drive_training_segmentation_path
+            drive_test_path = LocalSetup.drive_test_path
+            drive_training_mask_path = LocalSetup.drive_training_mask_path
+            drive_test_segmentation_path = LocalSetup.drive_test_segmentation_path
+            drive_test_mask_path = LocalSetup.drive_test_mask_path
+            stare_image_path = LocalSetup.stare_training_data_path
+            stare_segmentation_path = LocalSetup.stare_segmentations
+            drive_training_msc_segmentation_path = LocalSetup.drive_training_msc_segmentation_path
+            stare_msc_segmentation_path = LocalSetup.stare_msc_segmentation_path
         else:
             stare_image_path = 'datasets/stare/images/'
             stare_segmentation_path = 'datasets/stare/segmentations/'
@@ -306,8 +307,7 @@ class raw2ddataset(dataflow):
     def __init__(self, data_array=None, dataset='neuron2', env='multivax', image= None, split='train', do_transform=False
                  , with_hand_seg=False, shuffle=True, dim_invert = False):
         super().__init__()
-        self.LocalSetup = LocalSetup(env)
-        self.project_base_path = self.LocalSetup.project_base_path
+        self.project_base_path = LocalSetup.project_base_path
         self.dataset = dataset
         self.dim_invert = dim_invert
         if data_array is not None:
