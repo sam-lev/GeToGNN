@@ -20,7 +20,7 @@ from localsetup import LocalSetup
 from proc_manager import experiment_logger
 
 class GeToGNN(GeToFeatureGraph):
-    def __init__(self,training_selection_type='box', parameter_file_number = None, geomsc_fname_base = None, label_file=None,
+    def __init__(self,training_selection_type='box',run_num=0, parameter_file_number = None, geomsc_fname_base = None, label_file=None,
                  model_name=None, load_feature_graph_name=False,image=None, **kwargs):
 
         #super(GeToGNN, self).__init__()
@@ -36,12 +36,13 @@ class GeToGNN(GeToFeatureGraph):
         self.G = None
         self.G_dict = {}
 
-        super(GeToGNN, self).__init__(parameter_file_number=parameter_file_number, name=self.params['name'],
-                         geomsc_fname_base=geomsc_fname_base, label_file=label_file,image=image,
-                         write_folder=self.params['write_folder'], model_name=model_name,
-                         load_feature_graph_name=load_feature_graph_name, params=self.params)
+        super(GeToGNN, self).__init__(parameter_file_number=parameter_file_number, run_num=run_num,
+                                      name=self.params['name'],geomsc_fname_base=geomsc_fname_base,
+                                      label_file=label_file,image=image,write_folder=self.params['write_folder'],
+                                      model_name=model_name,load_feature_graph_name=load_feature_graph_name,
+                                      params=self.params)
 
-        self.run_num = 0
+        self.run_num = run_num
         self.logger = experiment_logger(experiment_folder=self.experiment_folder,
                                         input_folder=self.input_folder)
         self.param_file = os.path.join(self.LocalSetup.project_base_path,
@@ -441,6 +442,9 @@ class GeToGNN(GeToFeatureGraph):
         self.negative_arc_ids = self.selected_negative_arc_ids
         self.positive_arcs = self.selected_positive_arcs
         self.negative_arcs = self.selected_negative_arcs
+        self.all_train = self.positive_arcs.union(self.negative_arcs)
+        self.all_test_and_val = self.selected_test_arcs
+        return self.all_train , self.all_test_and_val
 
     def edge_map_overlap(self, arc, labeled_segmentation,  labeled_mask= None, msc=None, geomsc=None,
                          invert=True):

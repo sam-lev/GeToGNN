@@ -29,7 +29,7 @@ class Attributes:
         #
         # Write Paths
         #
-        self.run_num = 0
+        self.run_num = 42
         self.LocalSetup = LocalSetup(env='multivax')
         print("KWARG")
         print(kwargs)
@@ -153,6 +153,7 @@ class GeToGraph(Attributes):
         self.gid_gnode_dict = {}
         self.gid_edge_dict   = {}
         self.key_arc_dict    = {}
+        self.run_num=kwargs['run_num']
 
         super(GeToGraph, self).__init__()
 

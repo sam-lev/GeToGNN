@@ -93,8 +93,16 @@ class Run_Manager:
             #    self.getognn.write_gnode_features(self.getognn.session_name)
 
             # train/test/val collection
-            self.getognn.box_select_geomsc_training(x_range=X_BOX,
+            training_set , test_set = self.getognn.box_select_geomsc_training(x_range=X_BOX,
                                                     y_range=Y_BOX)
+            # skip box if no training arcs present in region
+            if len(training_set) <= 1:
+                removed_box_file = open(os.path.join(self.getognn.LocalSetup.project_base_path,
+                                                     'datasets', self.getognn.params['write_folder'],
+                                                     'removed_windows.txt'),'w+')
+                removed_box_file.write('x_box '+str(X_BOX[0][0])+','+str(X_BOX[0][1])+'\n')
+                removed_box_file.write('x_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+                continue
 
             self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops=1,
                                                      validation_samples=1)

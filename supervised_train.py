@@ -7,51 +7,54 @@ from proc_manager import Run_Manager
 
 LocalSetup = LocalSetup()
 
-
+#
+# selection of dataset done here
+#
 sample_idx = 0
-run_num = 0
 
+#
+#for naming, reassigned in getognn
+#
+experiment_num = 1
+experiment_name = "halfStepHalfWindow"
+window_file_base = 'retinal_halfStepHalfWindow.txt'
+run_num = 0
 model_name = 'GeToGNN'#'experiment'#'input_select_from_1st_inference'
 
 
-
+#
+# input
+#
 name = ['retinal','neuron1', 'neuron2','mat2_lines', 'berghia'][sample_idx]
-
 image = ['im0236_o_700_605.raw',
          'MAX_neuron_640_640.raw',
          'MAX__0030_Image0001_01_o_1737_1785.raw',
          'sub_CMC_example_o_969_843.raw',
          'berghia_o_891_897.raw'][sample_idx]   # neuron1
-
-
-
 label_file = ['im0236_la2_700_605.raw.labels_2.txt',
               'MAX_neuron_640_640.raw.labels_3.txt',
               'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_4.txt',
               'sub_CMC_example_l1_969_843.raw.labels_0.txt',
               'berghia_prwpr_e4_891_896.raw.labels_3.txt'][sample_idx]   #neuron1
-
-msc_file = os.path.join('/home/sam/Documents/PhD/Research/getognn/datasets', name,
-                        'input',label_file.split('raw')[0]+'raw')#'/retinal/input', 'im0236_o_700_605.raw')
-
-
-ground_truth_label_file = os.path.join('/home/sam/Documents/PhD/Research/getognn/datasets',
+msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', name,
+                        'input',label_file.split('raw')[0]+'raw')
+#'/retinal/input', 'im0236_o_700_605.raw')
+ground_truth_label_file = os.path.join(LocalSetup.project_base_path, 'datasets',
                                        name,'input', label_file )
-    #/retinal/input/im0236_la2_700_605.raw.labels_2.txt'
-
-write_path = ['experiment_'+str(run_num)+'_eighthWindow', 'experiment_'+str(run_num)+'_qtrWindow',
-              'experiment_'+str(run_num)+'_qtrWindow', 'experiment_'+str(run_num)+'_qtrWindow'
-    , 'experiment_'+str(run_num)+'_qtrWindow'][sample_idx]
-
-
+#/retinal/input/im0236_la2_700_605.raw.labels_2.txt'
+write_path = 'experiment_'+str(experiment_num)+'_'+experiment_name
 feature_file = os.path.join(name,write_path,'features',model_name)
-
+window_file = os.path.join(LocalSetup.project_base_path,"datasets",
+                           name, write_path,
+                           window_file_base)
+parameter_file_number = 1
 format = 'raw'
 
 
 
 getognn = GeToGNN(training_selection_type='box',
-                  parameter_file_number = 0,
+                  run_num=run_num,
+                  parameter_file_number = parameter_file_number,
                   name=name,
                   image=image,
                   feature_file=feature_file,
@@ -74,7 +77,9 @@ if getognn.params['write_feature_names']:
 
 # training info, selection, partition train/val/test
 getognn.read_labels_from_file(file=ground_truth_label_file)
-getognn.box_select_geomsc_training(x_range=getognn.params['x_box'], y_range=getognn.params['y_box'])
+
+training_set , test_and_val_set = getognn.box_select_geomsc_training(x_range=getognn.params['x_box'], y_range=getognn.params['y_box'])
+
 getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
                                          validation_samples = 1)
 if getognn.params['write_json_graph']:
@@ -102,11 +107,16 @@ getognn.write_arc_predictions(getognn.session_name)
 getognn.draw_segmentation(dirpath=getognn.pred_session_run_path)
 
 run_manager = Run_Manager(getognn=getognn,
-                          training_window_file=os.path.join(LocalSetup.project_base_path,
-                                                            'window_eighth.txt'),
+                          training_window_file=window_file,
                           features_file=model_name,
                           sample_idx=sample_idx,
                           model_name=model_name,
                           format=format)
+if not getognn.params['load_features']:
+    getognn.params['write_features'] = False
+    getognn.params['load_features'] = True
+    getognn.params['write_feature_names'] = False
+    getognn.params['save_filtered_images'] = False
+    getognn.params['collect_features'] = False
 run_manager.perform_runs()
 

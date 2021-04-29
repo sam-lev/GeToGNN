@@ -48,7 +48,7 @@ class experiment_logger():
 
         def write_experiment_info():
             shutil.copy(self.parameter_list_file, self.experiment_folder)
-            shutil.copy(self.window_list_file, self.experiment_folder)
+            #shutil.copy(self.window_list_file, self.experiment_folder)
 
         write_input_info()
         write_experiment_info()

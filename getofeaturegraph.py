@@ -38,7 +38,8 @@ from localsetup import LocalSetup
 from ml.utils import load_data
 
 class GeToFeatureGraph(GeToGraph):
-    def __init__(self, image=None, geomsc_fname_base = None, label_file=None, parameter_file_number = None,
+    def __init__(self, image=None, geomsc_fname_base = None, label_file=None,
+                 parameter_file_number = None, run_num=0,
                  dataset_group='neuron',write_folder="results", model_name='ndlas',
                  name='neuron2', format='raw', load_feature_graph_name = None,
                  msc_file=None, dim_invert=False, map_labels=False,
@@ -57,13 +58,14 @@ class GeToFeatureGraph(GeToGraph):
             self.params[param] = kwargs['params'][param]
 
 
-        super(GeToFeatureGraph, self).__init__(geomsc_fname_base=geomsc_fname_base, label_file=label_file)
+        super(GeToFeatureGraph, self).__init__(geomsc_fname_base=geomsc_fname_base,
+                                               label_file=label_file, run_num=run_num)
 
 
         #
         # Write Paths
         #
-        self.run_num = 0
+        self.run_num = run_num
         self.LocalSetup = LocalSetup(env='multivax')
 
         if parameter_file_number is not None:
@@ -331,6 +333,8 @@ class GeToFeatureGraph(GeToGraph):
             , positive_sample_count = load_data(prefix=graph_path)
 
     def write_gnode_features(self, filename):
+        if not os.path.exists(os.path.join(self.experiment_folder,'features')):
+            os.makedirs(os.path.join(self.experiment_folder,'features'))
         msc_feats_file = os.path.join(self.experiment_folder,'features', "feats.txt")
         msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "gid_feat_idx.txt")
         print("&&&& writing features in: ", msc_feats_file)

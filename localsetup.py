@@ -22,7 +22,7 @@ class LocalSetup:
                         stare_train_write_path = "/Users/multivax/Documents/PhD/4spring19/DeepLearning/DeepLearning/HW3/datasets/stare/"
                         """
             if multivax:
-                self.project_base_path = "/home/sam/Documents/PhD/Research/getognn/"
+                self.project_base_path = "/home/sam/Documents/PhD/Research/GeToGNN/"
                 self.dataset_base_path = os.path.join(self.project_base_path, "datasets")
                 self.stare_base_path = os.path.join(self.project_base_path, "datasets", "optics", "stare")
                 self.drive_test_base_path = os.path.join(self.project_base_path, "datasets", "optics", "drive", "DRIVE", "test")
