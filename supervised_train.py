@@ -10,13 +10,13 @@ LocalSetup = LocalSetup(env='slurm')
 #
 # selection of dataset done here
 #
-sample_idx = 0
+sample_idx = 2
 
 #
 #for naming, reassigned in getognn
 #
 experiment_num = 1
-experiment_name = "fourthDimStepHalf"
+experiment_name = "eighthDim-halfStep"
 window_file_base = 'windows_'+experiment_name+'.txt'
 run_num = 0
 model_name = 'GeToGNN'#'experiment'#'input_select_from_1st_inference'
