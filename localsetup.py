@@ -67,7 +67,8 @@ class LocalSetup:
             ####################
             if slurm:
 
-                self.project_base_path = "/home/sci/samlev/GeoMSCxML/"
+                self.project_base_path = "/home/sci/samlev/GeToGNN/"
+                self.dataset_base_path = os.path.join(self.project_base_path, "datasets")
                 self.stare_base_path = os.path.join(self.project_base_path, "datasets", "optics", "stare")
                 self.drive_test_base_path = os.path.join(self.project_base_path, "datasets", "optics", "drive", "DRIVE", "test")
                 self.drive_training_base_path = os.path.join(self.project_base_path, "datasets", "optics", "drive", "DRIVE","training")

@@ -25,7 +25,7 @@ class GeToGNN(GeToFeatureGraph):
 
         #super(GeToGNN, self).__init__()
 
-        self.LocalSetup = LocalSetup()
+        #self.LocalSetup = LocalSetup(env='slurm')
         self.params = {}
         if parameter_file_number is None:
             self.params = kwargs

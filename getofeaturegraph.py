@@ -45,7 +45,7 @@ class GeToFeatureGraph(GeToGraph):
                  msc_file=None, dim_invert=False, map_labels=False,
                  reset_run = False, **kwargs):
 
-        self.LocalSetup = LocalSetup(env='multivax')
+        #self.LocalSetup = LocalSetup(env='slurm')
 
 
         #if parameter_file_number is not None:
@@ -66,7 +66,7 @@ class GeToFeatureGraph(GeToGraph):
         # Write Paths
         #
         self.run_num = run_num
-        self.LocalSetup = LocalSetup(env='multivax')
+
 
         if parameter_file_number is not None:
             self.params = set_parameters(read_params_from=parameter_file_number)

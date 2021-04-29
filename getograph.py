@@ -30,7 +30,7 @@ class Attributes:
         # Write Paths
         #
         self.run_num = 42
-        self.LocalSetup = LocalSetup(env='multivax')
+        self.LocalSetup = LocalSetup(env='slurm')
         print("KWARG")
         print(kwargs)
         self.params = None
