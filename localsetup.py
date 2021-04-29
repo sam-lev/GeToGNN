@@ -69,6 +69,15 @@ class LocalSetup:
 
                 self.project_base_path = "/home/sci/samlev/GeToGNN/"
                 self.dataset_base_path = os.path.join(self.project_base_path, "datasets")
+                self.neuron_training_segmentation_path = os.path.join(self.project_base_path,
+                                                                      "datasets",
+                                                                      "neuron2",
+                                                                      "manual")
+
+                self.neuron_training_base_path = os.path.join(self.project_base_path,
+                                                              "datasets",
+                                                              "neuron2")
+                
                 self.stare_base_path = os.path.join(self.project_base_path, "datasets", "optics", "stare")
                 self.drive_test_base_path = os.path.join(self.project_base_path, "datasets", "optics", "drive", "DRIVE", "test")
                 self.drive_training_base_path = os.path.join(self.project_base_path, "datasets", "optics", "drive", "DRIVE","training")
