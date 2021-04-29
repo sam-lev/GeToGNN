@@ -16,8 +16,8 @@ sample_idx = 0
 #for naming, reassigned in getognn
 #
 experiment_num = 1
-experiment_name = "halfStepHalfWindow"
-window_file_base = 'retinal_halfStepHalfWindow.txt'
+experiment_name = "fourthDimStepHalf"
+window_file_base = 'windows_'+experiment_name+'.txt'
 run_num = 0
 model_name = 'GeToGNN'#'experiment'#'input_select_from_1st_inference'
 
