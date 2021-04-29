@@ -87,7 +87,7 @@ def parse_params(param_dict):
         'forest_class_weights' : tobool(param_dict['forest_class_weights']),
         'mlp_lr' : float(param_dict['mlp_lr']),
         'mlp_epochs' : int(param_dict['mlp_epochs']),
-        'gpu' : gpus,
+        'gpu' : int(gpus),
         'mlp_batch_size' : int(param_dict['mlp_batch_size']),
         'mlp_out_dim_1' : int(param_dict['mlp_out_dim_1']),
         'mlp_out_dim_2' : int(param_dict['mlp_out_dim_2']),
