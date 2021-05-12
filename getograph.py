@@ -8,74 +8,8 @@ import imageio
 from PIL import Image
 import networkx as nx
 
-from data_ops.set_params import set_parameters
 from localsetup import LocalSetup
-
-class Attributes:
-    def __init__(self, gid_gnode_dict={}, gid_edge_dict={}, **kwargs):
-        self.gid_gnode_dict = gid_gnode_dict
-        self.gid_edge_dict = gid_edge_dict
-        self.node_gid_to_label = {}
-        self.node_gid_to_partition = {}
-        self.node_gid_to_feature = {}
-        self.node_gid_to_feat_idx = {}
-        self.node_gid_to_nx_idx = {}
-        self.node_gid_to_prediction = {}
-        self.G = None
-        #self.G_dict
-        #self.select_points / points
-        #self.select_key_map / key_map
-
-        #
-        # Write Paths
-        #
-        self.run_num = 42
-        self.LocalSetup = LocalSetup()
-        print("KWARG")
-        print(kwargs)
-        self.params = None
-
-
-        self.model_name = None
-        self.data_name = None
-        self.pred_run_path = None
-        self.experiment_folder = None
-        self.input_folder = None
-        self.segmentation_path = None
-        self.msc_write_path = None
-        self.session_name = None
-        self.pred_session_run_path = None
-        msc_info = None
-        self.image = None
-        self.X = None
-        self.Y = None
-
-    def update_run_info(self, write_folder=None):
-
-        #self.params['write_folder'] = new # experiment
-        if write_folder is not None:
-            self.params['write_folder'] = os.path.join(self.data_name, write_folder)
-            self.experiment_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets'
-                                                  ,self.params['write_folder'])
-            self.input_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets',
-                                             self.data_name, 'input')
-            self.params['experiment_folder'] = self.experiment_folder
-            self.params['input_folder'] = self.input_folder
-
-            self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
-                                          self.params['write_folder'],
-                                          'runs')
-
-        if not os.path.exists(self.pred_run_path):
-            os.makedirs(os.path.join(self.pred_run_path))
-        self.experiment_folder = os.path.join(self.LocalSetup.project_base_path,
-                                           'datasets',
-                                           self.params['write_folder'])
-
-        self.session_name = str(self.run_num)
-        self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
-        if not os.path.exists(self.pred_session_run_path):
-            os.makedirs(os.path.join(self.pred_session_run_path))
+from attributes import Attributes
 
 
 class GeToElement:
@@ -148,14 +82,16 @@ class GeToEdge(GeToElement):
 
 
 class GeToGraph(Attributes):
-    def __init__(self, geomsc_fname_base = None, label_file = None, **kwargs):
+    def __init__(self, geomsc_fname_base = None, label_file = None,
+                 experiment_folder = None, parameter_file_number = None,**kwargs):
         # indexing and hashing
         self.gid_gnode_dict = {}
         self.gid_edge_dict   = {}
         self.key_arc_dict    = {}
         self.run_num=kwargs['run_num']
 
-        super(GeToGraph, self).__init__()
+        super(GeToGraph, self).__init__(parameter_file_number=parameter_file_number,
+                                        write_folder = kwargs['write_folder'])
 
         # for kdtree for sampling nearest point
         # in graph and retrieving node gid
@@ -183,7 +119,7 @@ class GeToGraph(Attributes):
         if label_file is not None:
             self.read_labels_from_file(file = label_file)
 
-        super(GeToGraph, self).__init__()
+
 
     def update_max_degree(self, gnode1, gnode2):
         if gnode1.degree > self.max_degree:
@@ -453,8 +389,10 @@ class GeToGraph(Attributes):
                                   (int, np.integer)) or isinstance(gnode.prediction,
                                                                    (float, np.float)):
                     gnode.prediction = float(gnode.prediction)
+                    self.node_gid_to_prediction[gid] = float(gnode.prediction)
                 else:
                     gnode.prediction = float(gnode.prediction[1])
+                    self.node_gid_to_prediction[gid] = float(gnode.prediction)
             if clear_preds:
                 gnode.prediction = None
             if G.node[node]["label"] is not None:

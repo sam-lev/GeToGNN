@@ -1,2 +1,2 @@
-from .geomscsegmentation import *
+#from .geomscsegmentation import *
 from .utils import *

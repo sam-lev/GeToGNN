@@ -49,7 +49,7 @@ class SupervisedGraphsage(SampleAndAggregate):
             raise Exception("Unknown aggregator: ", self.aggregator_cls)
 
         if hidden_dim_1_agg is not None:
-            print(">>> hidden dim 1 ", hidden_dim_1_agg, type(hidden_dim_1_agg))
+            print(">>> hidden dim 1 ", hidden_dim_1_agg,)
             self.aggregator_cls.hidden_dim_1 = hidden_dim_1_agg
         if hidden_dim_2_agg is not None:
             self.aggregator_cls.hidden_dim_2 = hidden_dim_2_agg
@@ -95,9 +95,12 @@ class SupervisedGraphsage(SampleAndAggregate):
     def build(self):
         samples1, support_sizes1 = self.sample(self.inputs1, self.layer_infos)
         num_samples = [layer_info.num_samples for layer_info in self.layer_infos]
-        self.outputs1, self.aggregators = self.aggregate(samples1, [self.features], self.dims, num_samples,
-                support_sizes1, concat=self.concat, model_size=self.model_size,
-                 jumping_knowledge = self.jumping_knowledge, hidden_dim_1 = self.hidden_dim_1, hidden_dim_2 = self.hidden_dim_2)
+        self.outputs1, self.aggregators = self.aggregate(samples1, [self.features], self.dims,
+                                                         num_samples,support_sizes1, concat=self.concat,
+                                                         model_size=self.model_size,
+                                                         jumping_knowledge = self.jumping_knowledge,
+                                                         hidden_dim_1 = self.hidden_dim_1,
+                                                         hidden_dim_2 = self.hidden_dim_2)
         dim_mult = 2 if self.concat else 1
 
         self.outputs1 = tf.nn.l2_normalize(self.outputs1, 1)
@@ -113,6 +116,8 @@ class SupervisedGraphsage(SampleAndAggregate):
         grads_and_vars = self.optimizer.compute_gradients(self.loss)
         clipped_grads_and_vars = [(tf.clip_by_value(grad, -5.0, 5.0) if grad is not None else None, var) 
                 for grad, var in grads_and_vars]
+        see_values = [[('grad', grad),('var',var)] for grad,var in grads_and_vars]
+
         self.grad, _ = clipped_grads_and_vars[0]
         self.opt_op = self.optimizer.apply_gradients(clipped_grads_and_vars, name="opt_op")
         self.preds = self.predict()

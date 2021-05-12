@@ -1076,7 +1076,7 @@ class supervised:
             self.negative_arcs=negative_arcs
             self.val_model = val_model
 
-            self.LocalSetup = LocalSetup(env=env)
+            self.LocalSetup = LocalSetup()
             self.load_walks = load_walks
 
             self.use_embedding=use_embedding
