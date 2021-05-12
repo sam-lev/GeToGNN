@@ -9,8 +9,6 @@ import imageio
 from PIL import Image
 
 from getograph import GeToGraph
-from getograph import Attributes
-from topology.geomscsegmentation import geomscsegmentation
 from data_ops.collect_data import collect_training_data, compute_geomsc, collect_datasets
 from data_ops.set_params import set_parameters
 from ml.features import (
@@ -40,7 +38,8 @@ from ml.utils import load_data
 class GeToFeatureGraph(GeToGraph):
     def __init__(self, image=None, geomsc_fname_base = None, label_file=None,
                  parameter_file_number = None, run_num=0,
-                 dataset_group='neuron',write_folder="results", model_name='ndlas',
+                 dataset_group='neuron',write_folder="results",
+                 model_name='ndlas',
                  name='neuron2', format='raw', load_feature_graph_name = None,
                  msc_file=None, dim_invert=False, map_labels=False,
                  reset_run = False, **kwargs):
@@ -51,14 +50,16 @@ class GeToFeatureGraph(GeToGraph):
         #if parameter_file_number is not None:
         #    self.params = set_parameters(read_params_from=parameter_file_number)
         #else:
-        self.params = kwargs['params']
-        for param in kwargs:
-            self.params[param] = kwargs[param]
-        for param in kwargs['params']:
-            self.params[param] = kwargs['params'][param]
+        #self.params = kwargs['params']
+        #for param in kwargs:
+        #    self.params[param] = kwargs[param]
+        #for param in kwargs['params']:
+        #    self.params[param] = kwargs['params'][param]
 
 
-        super(GeToFeatureGraph, self).__init__(geomsc_fname_base=geomsc_fname_base,
+        super(GeToFeatureGraph, self).__init__(parameter_file_number=parameter_file_number,
+                                               geomsc_fname_base=geomsc_fname_base,
+                                               write_folder= write_folder,
                                                label_file=label_file, run_num=run_num)
 
 
@@ -68,21 +69,24 @@ class GeToFeatureGraph(GeToGraph):
         self.run_num = run_num
 
 
-        if parameter_file_number is not None:
+        """if parameter_file_number is not None:
             self.params = set_parameters(read_params_from=parameter_file_number)
         else:
             self.params = kwargs['params']
+        """
         for param in kwargs:
             self.params[param] = kwargs[param]
-        for param in kwargs['params']:
-            self.params[param] = kwargs['params'][param]
+        #for param in kwargs['params']:
+        #    self.params[param] = kwargs['params'][param]
         if 'params' in kwargs.keys():
             param_add_ons = kwargs['params']
             for k, v in param_add_ons.items():
                 self.params[k] = v
 
+
+
         self.data_name = name
-        self.params['write_folder'] = os.path.join(name, write_folder)
+        self.params['write_folder'] = write_folder
         self.experiment_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets'
                                               , self.params['write_folder'])
         self.input_folder = os.path.join(self.LocalSetup.project_base_path, 'datasets', name, 'input')
@@ -146,6 +150,9 @@ class GeToFeatureGraph(GeToGraph):
         else:
             self.msc_graph_name = load_feature_graph_name
             self.load_feature_graph()
+        """if self.G is None:
+            self.G = self.build_graph()
+        """
         if self.G is None:
             self.G = self.build_graph()
         #if self.features is None and not self.params['load_features']:
@@ -187,6 +194,7 @@ class GeToFeatureGraph(GeToGraph):
         gnode_features = []
         feature_names = []
         feature_idx = 0
+        feature_order = 0
 
         for gnode in self.gid_gnode_dict.values():
 
@@ -196,6 +204,8 @@ class GeToFeatureGraph(GeToGraph):
             gnode_feature_row.append(euclidean_sum)
             if len(gnode_features) == 0:
                 feature_names.append('euclidean_sum_length')
+                self.fname_to_featidx['euclidean_sum_length'] = feature_order
+                feature_order += 1
 
             centroid = get_centroid(gnode)
             centroid_translated_points = translate_points_by_centroid([gnode], centroid)
@@ -203,11 +213,15 @@ class GeToFeatureGraph(GeToGraph):
                 gnode_feature_row.append(p)
                 if len(gnode_features) == 0:
                     feature_names.append('centroid_coord_'+str(i))
+                    self.fname_to_featidx['centroid'] = feature_order
+                    feature_order += 1
 
             length = len(gnode.points)
             gnode_feature_row.append(length)
             if len(gnode_features) == 0:
                 feature_names.append("length_line")
+                self.fname_to_featidx['length'] = feature_order
+                feature_order += 1
 
             for image_name, im in self.images.items():
 
@@ -221,12 +235,16 @@ class GeToFeatureGraph(GeToGraph):
                     gnode_feature_row.append(attribute)
                     if len(gnode_features) == 0:
                         feature_names.append(image_name + "_" + function_name)
+                        self.fname_to_featidx[image_name + "_" + function_name] = feature_order
+                        feature_order += 1
 
 
             deg = gnode.degree
             gnode_feature_row.append(deg)
             if len(gnode_features) == 0:
                 feature_names.append("degree")
+                self.fname_to_featidx["degree"] = feature_order
+                feature_order += 1
 
 
 

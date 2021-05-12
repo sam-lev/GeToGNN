@@ -1,7 +1,7 @@
 from localsetup import LocalSetup
 import os
 
-LS = LocalSetup(env='slurm')
+LS = LocalSetup()
 
 def parse_params(param_dict):
     selection_type = int(param_dict['selection_type'])
@@ -104,14 +104,15 @@ def parse_params(param_dict):
 
 
 def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
-                   read_params_from = None, growing_windows_from = None, iteration = None):
+                   read_params_from = None, growing_windows_from = None, iteration = None,
+                   experiment_folder=None):
     if x_1 is not None:#not args.read_param:
         x_1 = x_1#args.x_min
         x_2 = x_2#args.x_max
         y_1 = y_1#args.y_min
         y_2 = y_2#args.y_max
     if read_params_from is not None:
-        param_file = os.path.join(LS.project_base_path, 'parameter_list_'+str(read_params_from)+'.txt')
+        param_file = os.path.join(LS.project_base_path,'datasets',experiment_folder, 'parameter_list_'+str(read_params_from)+'.txt')
         f = open(param_file, 'r')
         param_dict = {}
         params = f.readlines()

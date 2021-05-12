@@ -2,67 +2,151 @@ from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 from sklearn.ensemble import ExtraTreesClassifier
 import matplotlib.pyplot as plt
+import os
+from copy import deepcopy
 
-class RandomForest:
+from mlgraph import MLGraph
+from proc_manager import experiment_manager
+from metrics.prediction_score import f1
+from metrics.prediction_score import recall
+from metrics.prediction_score import precision
+from metrics.prediction_score import compute_quality_metrics
 
-    def __init__(self):
+class RandomForest(MLGraph):
+
+    def __init__(self, training_selection_type='box',run_num=0, parameter_file_number = None,
+                 geomsc_fname_base = None, label_file=None,
+                 model_name=None, load_feature_graph_name=False,image=None, **kwargs):
+
         self.details = "Random forest classifier with feature importance"
+        self.type = "Random Forest"
 
-    def random_forest_classifier(self, features=None, labels=None, train_features=None, train_labels=None,
-                      test_features=None, test_labels=None, feature_map=False,
-                      n_trees=10, depth=4, index_list=None):
+        self.params = {}
+        if parameter_file_number is None:
+            self.params = kwargs
+        else:
+            for param in kwargs:
+                self.params[param] = kwargs[param]
+
+        self.G = None
+        self.G_dict = {}
+
+        super(RandomForest, self).__init__(parameter_file_number=parameter_file_number, run_num=run_num,
+                                      name=self.params['name'], geomsc_fname_base=geomsc_fname_base,
+                                      label_file=label_file, image=image, write_folder=self.params['write_folder'],
+                                      model_name=model_name, load_feature_graph_name=load_feature_graph_name)
+
+        #                                     params=self.params)
+
+        for param in kwargs:
+            self.params[param] = kwargs[param]
+        # for param in kwargs['params']:
+        #    self.params[param] = kwargs['params'][param]
+        if 'params' in kwargs.keys():
+            param_add_ons = kwargs['params']
+            for k, v in param_add_ons.items():
+                self.params[k] = v
+
+        self.run_num = run_num
+        self.logger = experiment_manager.experiment_logger(experiment_folder=self.experiment_folder,
+                                                           input_folder=self.input_folder)
+        self.param_file = os.path.join(self.LocalSetup.project_base_path,
+                                       'parameter_list_' + str(parameter_file_number) + '.txt')
+        self.topo_image_name = label_file.split('.labels')[0]
+        self.logger.record_filename(label_file=label_file,
+                                    parameter_list_file=self.param_file,
+                                    image_name=image,
+                                    topo_image_name=self.topo_image_name)
+
+        #
+        # Training / val /test sets
+        #
+        self.subgraph_sample_set = {}
+        self.subgraph_sample_set_ids = {}
+        self.positive_arc_ids = set()
+        self.selected_positive_arc_ids = set()
+        self.negative_arc_ids = set()
+        self.selected_negative_arc_ids = set()
+        self.positive_arcs = set()
+        self.selected_positive_arcs = set()
+        self.negative_arcs = set()
+        self.selected_negative_arcs = set()
+
+    def build_random_forest(self,
+                 ground_truth_label_file=None, write_path=None, feature_file=None,
+                 window_file=None, model_name="GeToGNN"):
+
+
+
+        # features
+        if not self.params['load_features']:
+            self.compile_features()
+        else:
+            self.load_gnode_features(filename=model_name)
+        if self.params['write_features']:
+            self.write_gnode_features(self.session_name)
+        if self.params['write_feature_names']:
+            self.write_feature_names(self.session_name)
+
+        # training info, selection, partition train/val/test
+        self.read_labels_from_file(file=ground_truth_label_file)
+
+        training_set , test_and_val_set = self.box_select_geomsc_training(x_range=self.params['x_box'], y_range=self.params['y_box'])
+
+        self.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
+                                                 validation_samples = 1)
+
+
+
+        self.attributes = deepcopy(self.get_attributes())
+        self.write_gnode_partitions(self.session_name)
+        self.write_selection_bounds(self.session_name)
+
+    def classifier(self, node_gid_to_prediction, train_features=None, train_labels=None,
+                   test_features=None, test_labels=None, feature_map=False,
+                   n_trees=10, depth=4, weighted_distribution=False):
         print("_____________________________________________________")
         print("                Random_Forest     ")
         print("number trees: ", n_trees)
         print("depth: ", depth)
         # Import the model we are using
         # Instantiate model with 1000 decision trees
-        if feature_map:
-            feature_map = self.arc_feature_map
-            train_attributes = feature_map['train']
-            train_features = np.array(train_attributes[1])
-            train_labels = np.array(train_attributes[0])
+        train_gid_feat_dict = train_features
+        train_gid_label_dict = train_labels
+        test_gid_feat_dict = test_features
+        test_gid_label_dict = test_labels
 
-            test_attributes = feature_map['test']
-            test_features = np.array(test_attributes[1])
-            test_labels = np.array(test_attributes[0])
-        else:
-            train_features = np.array(train_features)
-            train_labels = np.array(train_labels)
-            if test_features is not None:
-                test_features = np.array(test_features)
-                test_labels = np.array(test_labels)
+        train_features = np.array(list(train_features.values()))
+        train_labels = list(train_labels.values())
+        train_labels_binary = [l[1] for l in train_labels]
+        train_labels = np.array(train_labels_binary)
+        print("RF label sample: ", train_labels[0])
+        if test_features is not None:
+            test_features = np.array(list(test_features.values()))
+            test_labels = list(test_labels.values())
+            test_labels_binary = [l[1] for l in test_labels]
+            test_labels = np.array(test_labels_binary)
 
-        wp = float(np.sum(train_labels)) / float(len(train_labels))
-        # wp = 1./wp
-
-        pos_count = 2. * np.sum(train_labels)
-        neg_count = 2. * (len(train_labels) - pos_count)
-        # wp = len(train_labels) / pos_count
-        # wn = len(train_labels) / neg_count
-        num_n = 1 - train_labels
-        wn = float(np.sum(num_n)) / float(len(train_labels))
-
-        # wn = float(len(train_labels)-np.sum(train_labels) - 1) / float(len(train_labels) - 1)
-        # bp = float(len(train_labels)) / 2*np.sum(train_labels)
-        # nl = 1 - train_labels
-        # bn = float(len(train_labels)) / 2*np.sum(nl)
-        print("Using class weights for negative: ", wn)
-        print("Using class weights for positive: ", wp)
+        wn = 1
+        wp = 1
+        if weighted_distribution:
+            pos_count = 2. * np.sum(train_labels)
+            neg_count = 2. * (len(train_labels) - pos_count)
+            num_n = 1 - train_labels
+            wn = float(len(train_labels)-np.sum(train_labels) - 1) / float(len(train_labels) - 1)
+            bp = float(len(train_labels)) / 2*np.sum(train_labels)
+            nl = 1 - train_labels
+            bn = float(len(train_labels)) / 2*np.sum(nl)
+            print("Using class weights for negative: ", wn)
+            print("Using class weights for positive: ", wp)
 
         rf = RandomForestClassifier(max_depth=depth,
-                                    n_estimators=n_trees)  # ,random_state=66, class_weight={0:wn,1:wp})#,random_state=666)#, class_weight={0:wp,1:1.})
-        # n_estimators=1000, random_state=42)  # Train the model on training data
+                                    n_estimators=n_trees, class_weight={0:wn,1:wp}, random_state=666)
 
         rf.fit(train_features, train_labels)
 
         # Use the forest's predict method on the test data
         if test_features is not None:
-            # self.preds = rf.predict(test_features)  # Calculate the absolute errors
-
-            # self.preds = [p[1] for p in self.preds]
-
-            # test_features = np.array([arc.features for arc in self.msc.arcs])
             pred_proba_test = rf.predict_proba(test_features)
 
             # pred_proba_train = rf.predict_proba(train_features)
@@ -71,43 +155,27 @@ class RandomForest:
             # for arc, pred in zip(train_arcs, list(pred_proba_train)):
             #    arc.prediction = pred[1]#[1-pred[0], pred[0]]
             print("Forest pred sample ", pred_proba_test[0])
-            for arc, pred in zip(self.msc.arcs, list(pred_proba_test)):
-                arc.prediction = pred
+            for gid, pred in zip(test_gid_feat_dict.keys(),pred_proba_test):
+                self.node_gid_to_prediction[gid] = pred
 
-            # arcs = train_arcs + test_arcs
-            # self.msc.arcs = self.arcs
-
-            # self.pred_proba_train = []
-            # train_labels = []
-
-            # pred_proba = list(pred_proba_test) + list(pred_proba_train)
-
-            # labels = np.array([int(arc.label[1]) for arc in self.msc.arcs])
-
-            # list(test_labels) + list(train_labels)
             preds = pred_proba_test  # np.array([[1-p[1],p[1]] for p in pred_proba_test])#
             preds[preds >= 0.5] = 1.
             preds[preds < 0.5] = 0.
             preds = [l[len(l) - 1] for l in preds]
 
-            # if len(test_labels[0]) == 2:
-            #    test_labels = [l[1] for l in test_labels]
-
             # errors = abs(self.preds - self.labels)  # Print out the mean absolute error (mae)
             # round(np.mean(errors), 2), 'degrees.')
             print('----------------------------')
-            mse = rf.score(test_features, test_labels)  # np.array(list(test_features) + list(train_features)),
+            mse = rf.score(test_features, test_labels_binary)  # np.array(list(test_features) + list(train_features)),
             #                                       np.array(list(test_labels) + list(train_labels)))
             print('Mean Absolute Error:', mse)
-            p, r, fs = self.compute_quality_metrics(preds, test_labels, for_print=mse)
-            precision, recall = self.precision_and_recall(predictions=preds, labels=test_labels)
+            #p, r, fs = compute_quality_metrics(preds, test_labels_binary)
 
-            return [mse, precision, recall], p, r, fs
+            return preds, test_labels, node_gid_to_prediction #,p, r, fs, mse,
 
-    def feature_importance(self, features, labels, filename=None,  n_informative = 3, plot=False):
+    def feature_importance(self, features, feature_names, labels, filename=None,  n_informative = 3, plot=False):
         # Build a classification task using 3 informative features
-        if self.number_features is None and self.features is not None:
-            self.number_features = self.features[0].shape[0]
+        number_features = features[0].shape[0]
 
         #X, y = make_classification(n_samples=1000,
         #                           n_features=self.number_features,
@@ -133,10 +201,10 @@ class RandomForest:
         # Print the feature ranking
         print("Feature ranking:")
 
-        if self.feature_names is not None and filename is not None:
+        if feature_names is not None and filename is not None:
             feat_importance_file = open(filename+"featImportance.txt", "w+")
-            for f in range(len(self.feature_names)):#X.shape[1]):
-                feat_importance_file.write(str(f + 1) + ' ' + self.feature_names[indices[f]] + ' ' + str(indices[f])
+            for f in range(len(feature_names)):#X.shape[1]):
+                feat_importance_file.write(str(f + 1) + ' ' + feature_names[indices[f]] + ' ' + str(indices[f])
                                            +' '+str(importances[indices[f]])+"\n")
             feat_importance_file.close()
 
@@ -149,4 +217,4 @@ class RandomForest:
             plt.xticks(range(X.shape[1]), indices)
             plt.xlim([-1, X.shape[1]])
             plt.show()
-            return indices, self.feature_names
+            return indices, feature_names

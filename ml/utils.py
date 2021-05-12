@@ -272,6 +272,75 @@ def random_walk_embedding(G, walk_length, number_walks, out_file, load_graph=Fal
     with open(out_file+'-walks.txt', "w") as fp:
         fp.write("\n".join([str(p[0]) + "\t" + str(p[1]) for p in pairs]))
     
+def get_train_test_val_partitions(node_gid_to_partition, gid_to_node, test_all=False):
+    training_set = []
+    test_set = []
+    val_set = []
+    for gid in node_gid_to_partition.keys():
+        partition = node_gid_to_partition[gid]
+        if partition == 'train':
+            training_set.append(gid_to_node[gid])
+        if partition == 'val':
+            val_set.append(gid_to_node[gid])
+        elif not test_all:
+            test_set.append(gid_to_node[gid])
+        if test_all:
+            test_set.append(gid_to_node[gid])
+    return training_set, test_set, val_set
+
+#
+# Create prediction and label array
+# where idx prediction is idx of label for same node
+def make_binary_prediction_label_pairs(predictions, labels):
+    predictions_b = predictions
+    labels_b = []
+    for l in labels:
+        labels_b.append(l)
+    predictions_b = np.array(predictions_b)
+    labels_b = np.array(labels_b)
+    predictions_b[predictions_b > 0.5] = 1.
+    predictions_b[predictions_b <= 0.5] = 0.
+    return predictions_b, labels_b
+
+def get_partition_feature_label_pairs(node_gid_to_partition, node_gid_to_feature,
+                                      node_gid_to_label, test_all=False):
+    training_gid_to_labels = {}
+    test_gid_to_labels = {}
+    val_gid_to_labels = {}
+    training_gid_to_feats = {}
+    test_gid_to_feats = {}
+    val_gid_to_feats = {}
+
+    all_gid_to_feats = {}
+    all_gid_to_labels = {}
+
+    for gid in node_gid_to_partition.keys():
+        partition = node_gid_to_partition[gid]
+        if partition == 'train':
+            training_gid_to_labels[gid] = node_gid_to_label[gid]
+            training_gid_to_feats[gid] = node_gid_to_feature[gid]
+        if partition == 'val':
+            val_gid_to_labels[gid] = node_gid_to_label[gid]
+            val_gid_to_feats[gid] = node_gid_to_feature[gid]
+        elif not test_all:
+            test_gid_to_labels[gid] = node_gid_to_label[gid]
+            test_gid_to_feats[gid] = node_gid_to_feature[gid]
+        if test_all:
+            test_gid_to_labels[gid] = node_gid_to_label[gid]
+            test_gid_to_feats[gid] = node_gid_to_feature[gid]
+        all_gid_to_feats[gid] = node_gid_to_feature[gid]
+        all_gid_to_labels[gid] = node_gid_to_label[gid]
+
+    partition_label_dict = {'train': training_gid_to_labels,
+            'test': test_gid_to_labels,
+            'val': val_gid_to_labels,
+            'all': all_gid_to_labels}
+    partition_feature_dict = {'train': training_gid_to_feats,
+            'test': test_gid_to_feats,
+            'val': val_gid_to_feats,
+            'all':all_gid_to_feats}
+
+    return partition_label_dict, partition_feature_dict
 
 if __name__ == "__main__":
     """ Run random walks """

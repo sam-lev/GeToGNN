@@ -16,39 +16,22 @@ class MLP:
         self.batch_size = batch_size #= 100
         self.display_step = epochs//2
 
-        if feature_map is not None and feature_map:
-            train_set = feature_map['train']
-            self.train_features = np.array(train_set[1])
-            self.train_pos_labels   = np.array(train_set[0])
-            self.train_neg_labels = 1 - self.train_pos_labels
-            self.train_labels = np.array([[n , p] for n, p in zip(self.train_neg_labels,
-                                                                  self.train_pos_labels)])
 
+        self.train_features = list(train_features.values())
+        self.train_pos_labels = np.array(list(train_labels.values()))
+        #if len(train_labels[0]) == 1:
+        self.train_neg_labels = 1 - np.array(self.train_pos_labels)
+        self.train_labels = np.array(list(train_labels.values())) #np.array([[n, p] for n, p in zip(self.train_neg_labels,
+        #                                                         self.train_pos_labels)])
+        self.test_features = list(test_features)
+        self.test_pos_labels = np.array(list(test_labels.values()))
+        #if len(test_labels[0]) == 1:
+        self.test_neg_labels = 1 - np.array(self.test_pos_labels)
+        self.test_labels = np.array(list(test_labels.values()))#np.array([[n, p] for n, p in zip(self.test_neg_labels,
+        #                                                        self.test_pos_labels)])
 
-            test_set = feature_map['test']
-            self.test_features = np.array(test_set[1])
-            self.test_pos_labels = np.array(test_set[0])
-            self.test_neg_labels = 1 - self.test_pos_labels
-            self.test_labels = np.array([[n, p] for n, p in zip(self.test_neg_labels,
-                                                                 self.test_pos_labels)])
-
-
-        else:
-            self.train_features = np.array(train_features)
-            self.train_pos_labels = train_labels
-            #if len(train_labels[0]) == 1:
-            self.train_neg_labels = 1 - np.array(self.train_pos_labels)
-            self.train_labels = np.array(train_labels) #np.array([[n, p] for n, p in zip(self.train_neg_labels,
-            #                                                         self.train_pos_labels)])
-            self.test_features = test_features
-            self.test_pos_labels = test_labels
-            #if len(test_labels[0]) == 1:
-            self.test_neg_labels = 1 - np.array(self.test_pos_labels)
-            self.test_labels = np.array(test_labels)#np.array([[n, p] for n, p in zip(self.test_neg_labels,
-            #                                                        self.test_pos_labels)])
-
-        self.features = features #np.array(features)
-        self.labels = np.array(labels)
+        self.features = list(features)#np.array(features)
+        self.labels = np.array(list(labels.values()))
 
         self.num_examples = self.train_labels.shape[0]
         self.total_batch = self.num_examples // batch_size

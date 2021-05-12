@@ -5,7 +5,7 @@ import imageio
 import numpy as np
 from localsetup import LocalSetup
 
-LocalSetup = LocalSetup('slurm')
+LocalSetup = LocalSetup()
 from data_ops.utils import *
 
 class dataflow:
