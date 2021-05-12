@@ -1,6 +1,10 @@
 # File Types     #
 ##################
 
+#   Config Files  # 
+###################
+localsetup.py
+
 # Compiled source #
 ###################
 *.com
