@@ -19,10 +19,13 @@ LocalSetup = LocalSetup()
 
 class runner:
     def __init__(self, experiment_name, window_file_base = None
-                 , sample_idx=2):
+                 , sample_idx=2, multi_run = True):
 
         # base attributes shared between models
         self.attributes = Attributes()
+
+        # perform one or multiple runs
+        self.multi_run = multi_run
 
         #
         # Experiment resources
@@ -39,21 +42,28 @@ class runner:
         #
         # input
         #
-        self.name = ['retinal', 'neuron1',
-                     'neuron2', 'mat2_lines',
-                     'berghia','faults_exmouth'][self.sample_idx]
+        self.name = ['retinal',                            # 0
+                     'neuron1',                            # 1
+                     'neuron2',                            # 2
+                     'mat2_lines',                         # 3
+                     'berghia',                            # 4
+                     'faults_exmouth',                     # 5
+                     'transform_tests'][self.sample_idx]   # 6
+
         self.image = ['im0236_o_700_605.raw',
                  'MAX_neuron_640_640.raw',
                  'MAX__0030_Image0001_01_o_1737_1785.raw',
                  'sub_CMC_example_o_969_843.raw',
                  'berghia_o_891_897.raw',
-                 'att_0_460_446_484.raw'][self.sample_idx]  # neuron1
+                 'att_0_460_446_484.raw',
+                'diadem16_transforms_o_1000_1000.raw'][self.sample_idx]  # neuron1
         self.label_file = ['im0236_la2_700_605.raw.labels_2.txt',
                       'MAX_neuron_640_640.raw.labels_3.txt',
                       'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_4.txt',
                       'sub_CMC_example_l1_969_843.raw.labels_0.txt',
                       'berghia_prwpr_e4_891_896.raw.labels_3.txt',
-                      'att_L3_0_460_446_484.raw.labels_0.txt'][self.sample_idx]  # neuron1
+                      'att_L3_0_460_446_484.raw.labels_0.txt',
+                      'diadem16_transforms_s1_1000_1000.raw.labels_14.txt'][self.sample_idx]  # neuron1
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
         self.ground_truth_label_file = os.path.join(LocalSetup.project_base_path, 'datasets',
@@ -75,15 +85,15 @@ class runner:
 
     def start(self, model='getognn'):
         if model == 'getognn':
-            self.run_getognn()
+            self.run_getognn(self.multi_run)
         if model == 'mlp':
-            self.run_mlp()
+            self.run_mlp(self.multi_run)
         if model == 'random_forest':
-            self.run_random_forest()
+            self.run_random_forest(self.multi_run)
 
 
 
-    def run_getognn(self):
+    def run_getognn(self, multi_run ):
         #
         # Train single run of getognn and obtrain trained model
         #
@@ -109,6 +119,23 @@ class runner:
         compute_getognn_metrics(getognn=getognn)
 
         #
+        # Feature Importance
+        #
+        partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
+            getognn.node_gid_to_partition,
+            getognn.node_gid_to_feature,
+            getognn.node_gid_to_label,
+            test_all=True)
+        gid_features_dict = partition_feat_dict['all']
+        gid_label_dict = partition_label_dict['all']
+        getognn.load_feature_names()
+        getognn.feature_importance(feature_names=getognn.feature_names,
+                              features=gid_features_dict,
+                              labels=gid_label_dict,
+                                   plot=True)
+        getognn.write_feature_importance()
+
+        #
         # Perform remainder of runs and don't need to read feats again
         #
         if not getognn.params['load_features']:
@@ -125,9 +152,10 @@ class runner:
                                   sample_idx=self.sample_idx,
                                   model_name=self.model_name,
                                   format=format)
-        run_manager.perform_runs()
+        if multi_run:
+            run_manager.perform_runs()
 
-    def run_mlp(self):
+    def run_mlp(self, multi_run ):
         train_set, test_set, val_set = get_train_test_val_partitions(self.attributes.node_gid_to_partition,
                                                                      self.attributes.gid_gnode_dict,
                                                                      test_all=True)
@@ -137,7 +165,7 @@ class runner:
                                                                                       test_all=True)
         run_params = self.attributes.params
         gid_features_dict = partition_feat_dict['all']
-        gid_label_dict = partition_feat_dict['all']
+        gid_label_dict = partition_label_dict['all']
         train_gid_label_dict = partition_label_dict['train']
         train_gid_feat_dict = partition_feat_dict['train']
         mlp_accuracy, mlp_p, mlp_r, mlp_fs = MLP(features=gid_features_dict, labels=gid_label_dict,
@@ -156,7 +184,7 @@ class runner:
         manr_mlp = mlp_accuracy[2]
         mlp_accuracy = mlp_accuracy[0]
 
-    def run_random_forest(self):
+    def run_random_forest(self, multi_run ):
 
 
         RF = RandomForest(training_selection_type='box',
@@ -205,6 +233,13 @@ class runner:
 
         compute_prediction_metrics('random_forest', predictions, labels, out_folder)
 
+        RF.load_feature_names()
+        RF.feature_importance(feature_names=RF.feature_names,
+                              features=gid_features_dict,
+                              labels=gid_label_dict)
+        RF.write_feature_importance()
+
+
         #
         # Perform remainder of runs and don't need to read feats again
         #
@@ -222,7 +257,8 @@ class runner:
                                   sample_idx=self.sample_idx,
                                   model_name=self.model_name,
                                   format=format)
-        run_manager.perform_runs()
+        if multi_run:
+            run_manager.perform_runs()
 
     def update_run_info(self, experiment_folder_name=None):
         self.attributes.update_run_info(write_folder=experiment_folder_name)
@@ -277,5 +313,5 @@ class experiment_logger:
             #shutil.copy(self.window_list_file, self.experiment_folder)
 
         write_input_info()
-        write_experiment_info()
+        #write_experiment_info()
 

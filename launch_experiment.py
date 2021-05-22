@@ -1,11 +1,15 @@
 from proc_manager import experiment_manager
 
-exp_runner = experiment_manager.runner(experiment_name="exp_fourth_halfstep_getognn"
-                                       , sample_idx=0,
-                                       window_file_base='retinal_eighth_halfStep.txt')
-exp_runner.start('getognn')
-#exp_runner.update_run_info(experiment_folder_name="exp_1_randForest")
-exp_runner = experiment_manager.runner(experiment_name="exp_fourth_halfstep_randForest"
-                                       , sample_idx=0,
-                                       window_file_base='retinal_eighth_halfStep.txt')
-exp_runner.start('random_forest')
+#for dim in [str(16), str(64), str(256)]:
+for exp in ["getognn_2nbrsample"]:#, "getognn_4nbrsample", "getognn_meanpoolAgg"]:
+    exp_runner = experiment_manager.runner(experiment_name=exp
+                                           , sample_idx=6,
+                                           window_file_base='quarterWindow_fullStep.txt',
+                                           multi_run=False)
+    exp_runner.start('getognn')
+
+# launch random Forest
+#exp_runner = experiment_manager.runner(experiment_name="randForest_fourth_halfstep"
+#                                       , sample_idx=6,
+#                                       window_file_base='transform_fourth_halfStep_windows.txt')
+#exp_runner.start('random_forest')

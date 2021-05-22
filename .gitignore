@@ -5,6 +5,17 @@
 ###################
 localsetup.py
 
+
+#  logs and stats #
+###################
+test_stats.txt
+val_stats.txt
+
+
+#   graphs       #
+##################
+*.json
+
 # Compiled source #
 ###################
 *.com

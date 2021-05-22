@@ -371,7 +371,7 @@ class GeToFeatureGraph(GeToGraph):
         gid_feats_file.close()
         feats_file.close()
 
-    def write_feature_names(self, filename):
+    def write_feature_names(self):
         msc_feats_file = os.path.join(self.experiment_folder,'features', "featnames.txt")
         print("&&&& writing feature namesin: ", msc_feats_file)
         feats_file = open(msc_feats_file, "w+")
@@ -379,7 +379,19 @@ class GeToFeatureGraph(GeToGraph):
             feats_file.write(fname + "\n")
         feats_file.close()
 
-    def load_gnode_features(self, filename):
+    def load_feature_names(self):
+        msc_feats_file = os.path.join(self.experiment_folder, 'features', "featnames.txt")
+        print("&&&& Reading feature names from: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "r")
+        feat_lines = feats_file.readlines()
+        self.feature_names = []
+        for f in feat_lines:
+            self.feature_names.append(f)
+        print(self.feature_names)
+        feats_file.close()
+
+
+    def load_gnode_features(self):
         msc_feats_file = os.path.join( self.experiment_folder,'features', "feats.txt")
         print("&&&& Reading features from: ", msc_feats_file)
         feats_file = open(msc_feats_file, "r")

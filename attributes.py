@@ -19,6 +19,7 @@ class Attributes:
         #self.select_points / points
         #self.select_key_map / key_map
         self.fname_to_featidx = {}
+        self.feature_names = []
         self.idx_to_feat = {}
 
         #
