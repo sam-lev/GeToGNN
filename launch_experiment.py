@@ -1,5 +1,5 @@
 from proc_manager import experiment_manager
-# send experiment runs
+# send experiment runs 
 #for dim in [str(16), str(64), str(256)]:
 for exp in ["getognn_2nbrsample"]:#, "getognn_4nbrsample", "getognn_meanpoolAgg"]:
     exp_runner = experiment_manager.runner(experiment_name=exp
