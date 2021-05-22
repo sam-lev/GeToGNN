@@ -6,6 +6,7 @@ import json
 from networkx.readwrite import json_graph
 import datetime
 
+#local imports
 from ml import gnn
 from ml.utils import format_data
 from ml.LinearRegression import LinearRegression
