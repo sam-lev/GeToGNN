@@ -41,11 +41,11 @@ class supervised_getognn:
         if not self.getognn.params['load_features']:
             self.getognn.compile_features()
         else:
-            self.getognn.load_gnode_features(filename=model_name)
+            self.getognn.load_gnode_features()
         if self.getognn.params['write_features']:
             self.getognn.write_gnode_features(self.getognn.session_name)
         if self.getognn.params['write_feature_names']:
-            self.getognn.write_feature_names(self.getognn.session_name)
+            self.getognn.write_feature_names()
 
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)

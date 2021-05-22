@@ -4,9 +4,12 @@ import time
 import samply
 import json
 from networkx.readwrite import json_graph
+from sklearn.ensemble import ExtraTreesClassifier
+import matplotlib.pyplot as plt
 
 from ui.arcselector import ArcSelector
 from getofeaturegraph import GeToFeatureGraph
+
 
 class MLGraph(GeToFeatureGraph):
     def __init__(self,run_num=0, parameter_file_number = None,
@@ -447,6 +450,63 @@ class MLGraph(GeToFeatureGraph):
 
         end_time = time.time()
         return (self.G_dict, self.node_gid_to_feat_idx , self.node_gid_to_label, self.features)
+
+    def feature_importance(self, features, feature_names, labels, n_informative = 3, plot=False):
+        # Build a classification task using 3 informative features
+        # Build a forest and compute the impurity-based feature importances
+
+        features = np.array(list(features.values()))
+        labels = list(labels.values())
+        forest = ExtraTreesClassifier(n_estimators=250,
+                                      random_state=666)
+
+        X = np.array(features)
+        y = np.array(labels)
+        forest.fit(X, y)
+        importances = forest.feature_importances_
+        std = np.std([tree.feature_importances_ for tree in forest.estimators_],
+                     axis=0)
+        # array of of index of decending importance feature
+        indices = np.argsort(importances)[::-1]
+
+        # Print the feature ranking
+        print("Feature ranking:")
+        self.feat_importance_dict = {}
+        if feature_names is not None:
+            for f in range(len(feature_names)):#X.shape[1]):
+                #                       fname_index   , name,                 importance
+                feat_importance_info = [f + 1, feature_names[indices[f]], importances[indices[f]]]
+                self.feat_importance_dict[indices[f]] = feat_importance_info
+
+        # Plot the impurity-based feature importances of the forest
+        if plot:
+            plt.figure()
+            plt.title("Feature importances")
+            plt.bar(range(X.shape[1]), importances[indices],
+                    color="r", yerr=std[indices], align="center")
+            plt.xticks(range(X.shape[1]), indices)
+            plt.xlim([-1, X.shape[1]])
+            plt.show()
+            return indices, feature_names
+        return self.feat_importance_dict
+
+    def write_feature_importance(self):
+        msc_pred_file = os.path.join(self.pred_session_run_path, "feat_importance.txt")
+        print("&&&& writing feature importances in: ", msc_pred_file)
+        pred_file = open(msc_pred_file, "w+")
+        top_ten = 10
+        for importance_rank in self.feat_importance_dict.keys():  # self.gid_gnode_dict.values():
+            feat_importance_info = self.feat_importance_dict[importance_rank]
+            feat_idx = feat_importance_info[0]
+            feat_name = feat_importance_info[1]
+            feat_importance = feat_importance_info[2]
+            pred_file.write(str(importance_rank) + ' ' + str(feat_idx) + ' ' +
+                            str(feat_name) + ' ' + str(feat_importance)+ "\n")
+            if top_ten > 0:
+                print("importance rank "+str(importance_rank) + ' feat_idx ' + str(feat_idx))
+                print('     feat_name ' +str(feat_name) + ' importance ' + str(feat_importance))
+                top_ten = top_ten - 1
+        pred_file.close()
 
     def write_arc_predictions(self, filename, path=None, msc=None, name=''):
         if name != '':

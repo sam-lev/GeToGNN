@@ -1,7 +1,6 @@
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
-from sklearn.ensemble import ExtraTreesClassifier
-import matplotlib.pyplot as plt
+
 import os
 from copy import deepcopy
 
@@ -156,7 +155,7 @@ class RandomForest(MLGraph):
             #    arc.prediction = pred[1]#[1-pred[0], pred[0]]
             print("Forest pred sample ", pred_proba_test[0])
             for gid, pred in zip(test_gid_feat_dict.keys(),pred_proba_test):
-                self.node_gid_to_prediction[gid] = pred
+                self.node_gid_to_prediction[gid] = pred[1]
 
             preds = pred_proba_test  # np.array([[1-p[1],p[1]] for p in pred_proba_test])#
             preds[preds >= 0.5] = 1.
@@ -173,48 +172,3 @@ class RandomForest(MLGraph):
 
             return preds, test_labels, node_gid_to_prediction #,p, r, fs, mse,
 
-    def feature_importance(self, features, feature_names, labels, filename=None,  n_informative = 3, plot=False):
-        # Build a classification task using 3 informative features
-        number_features = features[0].shape[0]
-
-        #X, y = make_classification(n_samples=1000,
-        #                           n_features=self.number_features,
-        #                           n_informative=n_informative,
-        #                           n_redundant=0,
-        #                           n_repeated=0,
-        #                           n_classes=2,
-        #                           random_state=0,
-        #                           shuffle=False)
-
-        # Build a forest and compute the impurity-based feature importances
-        forest = ExtraTreesClassifier(n_estimators=250,
-                                      random_state=666)
-
-        X = np.array(features)
-        y = np.array(labels)
-        forest.fit(X, y)
-        importances = forest.feature_importances_
-        std = np.std([tree.feature_importances_ for tree in forest.estimators_],
-                     axis=0)
-        indices = np.argsort(importances)[::-1]
-
-        # Print the feature ranking
-        print("Feature ranking:")
-
-        if feature_names is not None and filename is not None:
-            feat_importance_file = open(filename+"featImportance.txt", "w+")
-            for f in range(len(feature_names)):#X.shape[1]):
-                feat_importance_file.write(str(f + 1) + ' ' + feature_names[indices[f]] + ' ' + str(indices[f])
-                                           +' '+str(importances[indices[f]])+"\n")
-            feat_importance_file.close()
-
-        # Plot the impurity-based feature importances of the forest
-        if plot:
-            plt.figure()
-            plt.title("Feature importances")
-            plt.bar(range(X.shape[1]), importances[indices],
-                    color="r", yerr=std[indices], align="center")
-            plt.xticks(range(X.shape[1]), indices)
-            plt.xlim([-1, X.shape[1]])
-            plt.show()
-            return indices, feature_names

@@ -196,6 +196,9 @@ class Run_Manager:
                 self.model.write_arc_predictions(self.model.session_name)
                 self.model.draw_segmentation(dirpath=self.model.pred_session_run_path)
 
+                # need to read features by gid or idx
+                #self.model.feature_importance(gid_features_dict, feature_names, gid_label_dict, n_informative = 3, plot=False)
+
                 compute_prediction_metrics('random_forest', predictions, labels, out_folder)
 
             self.model.write_arc_predictions(self.model.session_name)
