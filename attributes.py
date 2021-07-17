@@ -1,5 +1,5 @@
 import os
-
+import numpy as np
 from data_ops.set_params import set_parameters
 from localsetup import LocalSetup
 
@@ -12,8 +12,16 @@ class Attributes:
         self.node_gid_to_partition = {}
         self.node_gid_to_feature = {}
         self.node_gid_to_feat_idx = {}
-        self.node_gid_to_nx_idx = {}
+        self.node_gid_to_graph_idx = {}
         self.node_gid_to_prediction = {}
+
+
+        self.getoelms = []
+        self.lin_adj_idx_to_getoelm_idx = {}
+        self.gid_to_getoelm_idx = {}
+        self.gid_geto_elm_dict = {}
+        self.graph_idx_to_gid = {}
+
         self.G = None
         #self.G_dict
         #self.select_points / points

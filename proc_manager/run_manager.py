@@ -10,7 +10,8 @@ LocalSetup = LocalSetup()
 __all__ = ['Run_Manager']
 
 class Run_Manager:
-    def __init__(self, model, training_window_file, features_file, sample_idx, model_name, format):
+    def __init__(self, model, training_window_file, features_file,
+                 sample_idx, model_name, format, learning_type='supervised'):
         f = open(training_window_file, 'r')
         self.box_dict = {}
         self.param_lines = f.readlines()
@@ -26,6 +27,8 @@ class Run_Manager:
         # path information
         self.input_folder = None
         self.experiment_folder = None
+
+        self.learning_type=learning_type
 
     def __group_pairs(self, lst):
         for i in range(0, len(lst), 2):
@@ -91,7 +94,7 @@ class Run_Manager:
             if self.model.params['collect_features']:
                 self.model.compile_features()
             elif self.model.params['load_features']:
-                self.model.load_gnode_features(self.features_file)
+                self.model.load_gnode_features()
 
             #if self.getognn.params['write_features']:
             #    self.getognn.write_gnode_features(self.getognn.session_name)
@@ -121,19 +124,25 @@ class Run_Manager:
 
             # must do cvt before assigning class
             # to ensure validation set doesn't remove all training nodes
-            validation_hops = 1
-            validation_samples = 1
+            validation_hops = self.model.params['validation_hops']
+            validation_samples = self.model.params['validation_samples']
             validation_set, validation_set_ids,\
             _, _ = self.model.cvt_sample_validation_set(hops=validation_hops,
                                                         samples=validation_samples)
             all_validation = self.model.validation_set_ids["positive"].union(self.model.validation_set_ids["negative"])
-            all_selected = self.model.selected_positive_arc_ids.union(self.model.selected_negative_arc_ids)
+            all_selected = [self.model.selected_positive_arc_ids, self.model.selected_negative_arc_ids]
+            #self.model.selected_positive_arc_ids.union(self.model.selected_negative_arc_ids)
             if not self.model.check_valid_partitions(all_selected, all_validation):
+                removed_box_file = open(os.path.join(self.model.LocalSetup.project_base_path,
+                                                     'datasets', self.model.params['write_folder'],
+                                                     'removed_windows.txt'), 'w+')
+                removed_box_file.write('x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
+                removed_box_file.write('y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
                 continue 
 
             for gid in all_validation:
                 self.model.node_gid_to_partition[gid] = 'val'
-            self.model.get_train_test_val_sugraph_split(collect_validation=True, validation_hops=1,
+            self.model.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
                                                         validation_samples=1)
             #if self.getognn.params['write_partitions']:
             self.model.write_gnode_partitions(self.model.session_name)
@@ -144,7 +153,7 @@ class Run_Manager:
                                                  name=self.model_name + '_' + self.model.params['name'])
 
             # random walks
-            if self.model.type == "Getognn" and not self.model.params['load_preprocessed_walks']:
+            if self.model.type == "Getognn" and not self.model.params['load_preprocessed_walks'] and self.model.params['random_context']:
                 walk_embedding_file = os.path.join(self.model.LocalSetup.project_base_path, 'datasets',
                                                    self.model.params['write_folder'], 'walk_embeddings',
                                                    'run-' + str(self.model.run_num) + '_walks')
@@ -184,12 +193,22 @@ class Run_Manager:
                 n_trees = run_params['number_forests']
                 tree_depth = run_params['forest_depth']
 
+                if run_params['forest_class_weights']:
+                    class_1_weight = run_params['class_1_weight']
+                    class_2_weight = run_params['class_2_weight']
+                else:
+                    class_1_weight = 1.0
+                    class_2_weight = 1.0
+
                 predictions, labels, node_gid_to_prediction = self.model.classifier(self.model.node_gid_to_prediction,
                                                                             train_labels=train_gid_label_dict,
                                                                             train_features=train_gid_feat_dict,
                                                                             test_labels=gid_label_dict,
                                                                             test_features=gid_features_dict,
                                                                             n_trees=n_trees,
+                                                                    class_1_weight=class_1_weight,
+                                                                    class_2_weight=class_2_weight,
+                                                                    weighted_distribution=run_params['forest_class_weights'],
                                                                             depth=tree_depth)
                 out_folder = self.model.pred_session_run_path
 

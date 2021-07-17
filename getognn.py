@@ -1,16 +1,18 @@
 import os
 import time
 import numpy as np
-import samply
+from copy import deepcopy
 import json
 from networkx.readwrite import json_graph
 import datetime
 
-from ml import gnn
+from ml import supervised_gnn
+from ml import unsupervised_gnn
 from ml.utils import format_data
 from ml.LinearRegression import LinearRegression
 from ml.utils import random_walk_embedding
 from mlgraph import MLGraph
+from getograph import  Attributes
 from ui.arcselector import ArcSelector
 from proc_manager import experiment_manager
 
@@ -98,31 +100,46 @@ class GeToGNN(MLGraph):
                            gpu=self.params['gpu'],
                            val_model=self.params['val_model'],
                            env=self.params['env']
-                           , max_degree=self.params['max_degree']
+                           , max_degree=self.params['max_node_degree']
                            ,degree_l1=self.params['degree_l1']
                            , degree_l2=self.params['degree_l2']
-                           , degree_l3=self.params['degree_l3'])
+                           , degree_l3=self.params['degree_l3'],
+                       hidden_dim_1=self.params['hidden_dim_1'],
+                       hidden_dim_2=self.params['hidden_dim_2'],
+                       concat=self.params['concat'],
+                       jumping_knowledge=self.params['jumping_knowledge'],
+                       jump_type=self.params['jump_type'])
 
-        G, features, node_gid_to_feat_idx  \
-            , walks, node_gid_to_label \
-            , _ \
-            , _ = format_data(dual=self.G,
-                              features=self.features,
-                              node_id=self.node_gid_to_feat_idx ,
-                              id_map=self.node_gid_to_feat_idx ,
-                              node_classes=self.node_gid_to_label,
-                              train_or_test='',
-                              scheme_required=True,
-                              load_walks=False)
-        self.gnn = gnn.unsupervised(aggregator=self.params['aggregator'], env=self.params['env'])
+        # format networkx idx to features and labels
+        nx_idx_to_feat_idx = {self.node_gid_to_graph_idx[gid]: feat for gid, feat
+                              in self.node_gid_to_feat_idx.items()}
+        nx_idx_to_label_idx = {self.node_gid_to_graph_idx[gid]: label for gid, label
+                               in self.node_gid_to_label.items()}
+        nx_idx_to_getoelm_idx = {self.node_gid_to_graph_idx[gid]: getoelm_idx for gid, getoelm_idx
+                                 in self.gid_to_getoelm_idx.items()}
+
+        G, features, nx_idx_to_feat_idx, _, nx_idx_to_label_idx , _ \
+        , _ = format_data(dual=self.G,
+                          features=self.features,
+                          node_id=nx_idx_to_feat_idx ,
+                          id_map=nx_idx_to_feat_idx ,
+                          node_classes=nx_idx_to_label_idx,
+                          train_or_test='',
+                          scheme_required=True,
+                          load_walks=False)
+
+        self.gnn = unsupervised_gnn.gnn(aggregator=self.params['aggregator'], env=self.params['env'])
 
         self.gnn.train(G=G,
                        learning_rate=self.params['learning_rate'],
                        load_walks=self.params['load_walks'],
                        feats=features,
-                       id_map=node_gid_to_feat_idx ,
-                       class_map=node_gid_to_label,
-                       embedding_file_out=self.params['embedding_name'],
+                       id_map=nx_idx_to_feat_idx,
+                       nx_idx_to_getoelm_idx= self.lin_adj_idx_to_getoelm_idx,
+                       geto_elements=  self.getoelms,
+                       class_map=nx_idx_to_label_idx,
+                       embedding_file_out='embedding',
+                       base_log_dir=self.params['experiment_folder'],
                        epochs=self.params['epochs'],
                        batch_size=self.params['batch_size'],
                        weight_decay=self.params['weight_decay'],
@@ -132,18 +149,39 @@ class GeToGNN(MLGraph):
                        env=self.params['env'],
                        use_embedding=None,
                        val_model=self.params['val_model']
-                       ,max_degree=self.params['max_degree']
-                       ,degree_l1=self.params['degree_l1']
-                       ,degree_l2=self.params['degree_l2']
-                       ,degree_l3=self.params['degree_l3']
+                       , max_degree=self.params['max_node_degree']
+                       , degree_l1=self.params['degree_l1']
+                       , degree_l2=self.params['degree_l2']
+                       , degree_l3=self.params['degree_l3']
                        , model_size=self.params['model_size']
-                       , out_dim_1=self.params['out_dim_1']
-                       , out_dim_2=self.params['out_dim_2']
-                       , total_features=self.params['total_features'])
+                       , dim_1=self.params['out_dim_1']
+                       , dim_2=self.params['out_dim_2'],
+                       hidden_dim_1=self.params['hidden_dim_1'],
+                       hidden_dim_2=self.params['hidden_dim_2'],
+                       concat=self.params['concat'],
+                       jumping_knowledge=self.params['jumping_knowledge'],
+                       jump_type=self.params['jump_type'])
 
     def supervised_train(self, **kwargs):
         for arg in kwargs:
             self.params[arg] = kwargs[arg]
+
+        wp=1.0
+        if self.params['getognn_class_weights']:
+            positive_sample_count = 0
+            negative_sample_count = 0
+            for node in self.G.nodes():
+                if self.G.node[node]["label"][0] > 0 and self.G.node[node]['train']:
+                    negative_sample_count += 1
+                if self.G.node[node]["label"][1] > 0 and self.G.node[node]['train']:
+                    positive_sample_count += 1
+            train_size = positive_sample_count + negative_sample_count
+            wn = float(train_size) / (2. * negative_sample_count)
+            wp = float(train_size) / (2. * positive_sample_count)
+            print("Using class weights for negative: ", wn)
+            print("Using class weights for positive: ", wp)
+            print("total training samples: ", train_size)
+            print("total positive samples: ", positive_sample_count)
 
         if self.params['getofeaturegraph_file']:
             print("loading")
@@ -153,6 +191,8 @@ class GeToGNN(MLGraph):
 
             if not self.params['embedding_file_out']:
                 embedding_name = datetime.datetime.now()
+
+
 
             self.gnn.train(train_prefix=self.params['getofeaturegraph_name'],
                            learning_rate=self.params['learning_rate'],
@@ -165,31 +205,44 @@ class GeToGNN(MLGraph):
                            gpu=self.params['gpu'],
                            val_model=self.params['val_model'],
                            env=self.params['env']
-                           , max_degree=self.params['max_degree']
+                           , max_degree=self.params['max_node_degree']
                            ,degree_l1=self.params['degree_l1']
                            , degree_l2=self.params['degree_l2']
                            , degree_l3=self.params['degree_l3'])
         else:
-            G, features, node_gid_to_feat_idx, _ , node_gid_to_label, _ , _ \
+
+            # format networkx idx to features and labels
+            nx_idx_to_feat_idx = {self.node_gid_to_graph_idx[gid]: feat for gid, feat
+                                  in self.node_gid_to_feat_idx.items()}
+            nx_idx_to_label_idx = {self.node_gid_to_graph_idx[gid]: label for gid, label
+                                   in self.node_gid_to_label.items()}
+            nx_idx_to_getoelm_idx = {self.node_gid_to_graph_idx[gid]: getoelm_idx for gid, getoelm_idx
+                                     in self.gid_to_getoelm_idx.items()}
+
+            G, features, nx_idx_to_feat_idx, _ , nx_idx_to_label_idx, _ , _ \
                 = format_data(dual=self.G.copy(),
                               features=self.features,
-                              node_id=self.node_gid_to_feat_idx ,
-                              id_map=self.node_gid_to_feat_idx ,
-                              node_classes=self.node_gid_to_label,
+                              node_id=nx_idx_to_feat_idx,
+                              id_map=nx_idx_to_feat_idx,
+                              node_classes=nx_idx_to_label_idx,
                               train_or_test='',
                               scheme_required=True,
                               load_walks=False)
-            self.gnn = gnn.supervised(aggregator=self.params['aggregator'],
-                                      env=self.params['env'],
-                                      msc_collection=None,
-                                      model_path=None)#self.params['model_path'])
+
+
+            self.gnn = supervised_gnn.gnn(aggregator=self.params['aggregator'],
+                                          env=self.params['env'],
+                                          msc_collection=None,
+                                          model_path=None)#self.params['model_path'])
             self.gnn.train(G=G,
                            learning_rate=self.params['learning_rate'],
                            load_walks=self.params['load_walks'],
                            random_context=self.params['random_context'],
                            feats=features,
-                           id_map=node_gid_to_feat_idx ,
-                           class_map=node_gid_to_label,
+                           id_map=nx_idx_to_feat_idx,#node_gid_to_feat_idx ,
+                           class_map=nx_idx_to_label_idx,#node_gid_to_label,
+                           nx_idx_to_getoelm_idx=self.lin_adj_idx_to_getoelm_idx,
+                           geto_elements=self.getoelms,
                            epochs=self.params['epochs'],
                            batch_size=self.params['batch_size'],
                            weight_decay=self.params['weight_decay'],
@@ -204,6 +257,7 @@ class GeToGNN(MLGraph):
                            hidden_dim_2=self.params['hidden_dim_2'],
                            use_embedding=None,
                            sigmoid=False,
+                           positive_class_weight=wp,
                            degree_l1=self.params['degree_l1'],
                            degree_l2=self.params['degree_l2'],
                            degree_l3=self.params['degree_l3'],
@@ -213,46 +267,46 @@ class GeToGNN(MLGraph):
                            jumping_knowledge=self.params['jumping_knowledge'],
                            jump_type=self.params['jump_type'])
 
-    def classify_with_embedding(self, MSCGNN_infer=None, test_prefix=None, trained_prefix=None
-                 , embedding_prefix=None, embedding_path_name=None, aggregator=None
-                 , learning_rate=None, MSCGNN=None, supervised=False, size='small'):
+    def embedding_regression_classifier(self, MSCGNN_infer=None, test_prefix=None, trained_prefix=None
+                                        , embedding_prefix=None, embedding_path_and_name=None, aggregator=None
+                                        , learning_rate=None, MSCGNN=None, supervised=False, size='small'):
         cwd = './'
         # embedding_path =  os.path.join(cwd,'log-dir',embedding_prefix+'-unsup-json_graphs','graphsage_mean_small_'+'0.100000')
-        if embedding_path_name is None and learning_rate is not None:
-            embedding_p = embedding_prefix + '-unsup-json_graphs' + '/' + aggregator + '_' + size if not supervised else embedding_prefix + '/' + aggregator + '_' + 'small'
-            embedding_p += ("_{lr:0.6f}").format(lr=learning_rate)
-        else:
-            embedding_p = embedding_path_name
+        #if embedding_path_name is None and learning_rate is not None:
+        #    embedding_p = embedding_prefix + '-unsup-json_graphs' + '/' + aggregator + '_' + size if not supervised else embedding_prefix + '/' + aggregator + '_' + 'small'
+        #    embedding_p += ("_{lr:0.6f}").format(lr=learning_rate)
+        #else:
+        #    embedding_p = embedding_path_name
         if test_prefix is not None and trained_prefix is not None and not self.G:
             trained_p = os.path.join(cwd, 'data', 'json_graphs', trained_prefix)
             test_p = os.path.join(cwd, 'data', 'json_graphs', test_prefix)
             trained_prfx = trained_prefix
             test_prfx = test_prefix
-            mscgnn_infer = LinearRegression(test_path=test_p, MSCGNN_infer=MSCGNN_infer
+            G_infered = LinearRegression(test_path=test_p, MSCGNN_infer=MSCGNN_infer
                                             , test_prefix=test_prfx, trained_path=trained_p
                                             , trained_prefix=trained_prfx, MSCGNN=self
-                                            , embedding_path=os.path.join(cwd, 'log-dir', embedding_p)).run()
-
+                                            , embedding_path=self.params['experiment_folder']).run()
+            self.G = G_infered
         elif self.G:
             G, feats, id_map, walks \
-                , class_map, number_negative_samples, number_positive_samples = format_data(dual=self.G,
+                , class_map, number_negative_samples, number_positive_samples = format_data(dual=self.G.copy(),
                                                                                             features=self.features,
-                                                                                            node_id=self.node_idx,
-                                                                                            id_map=self.node_idx,
+                                                                                            node_id=self.node_gid_to_feat_idx,
+                                                                                            id_map=self.node_gid_to_feat_idx,
                                                                                             node_classes=self.node_gid_to_label,
                                                                                             train_or_test='',
                                                                                             scheme_required=True,
                                                                                             load_walks=False)
 
-            mscgnn_infer = LinearRegression(G=G,
+            G_infered = LinearRegression(G=G,
                                             MSCGNN_infer=MSCGNN_infer,
                                             features=feats,
                                             labels=class_map,
                                             num_neg=10,  # len(self.negative_arcs),
                                             id_map=id_map,
-                                            MSCGNN=self,
-                                            embedding_path=os.path.join(cwd, 'log-dir', embedding_p)).run()
-            self.gnn.G = self.G
+                                            embedding_path=embedding_path_and_name).run()
+            self.G = G_infered
+        return self.G
 
     def run_random_walks(self, walk_embedding_file):
 
@@ -764,3 +818,172 @@ class GeToGNN(MLGraph):
         window_file.write('y_box' + ' ' + str(self.y_box) )
         window_file.close()
     """
+
+class supervised_getognn:
+    def __init__(self, model_name):
+        self.model_name = model_name
+        self.attributes = Attributes()
+
+    def build_getognn(self, sample_idx, experiment_num, experiment_name, window_file_base,
+                 parameter_file_number, format = 'raw', run_num=0, experiment_folder=None,
+                 name=None, image=None, label_file=None, msc_file=None,
+                 ground_truth_label_file=None, write_path=None, feature_file=None,
+                 window_file=None, model_name="GeToGNN"):
+
+
+
+        self.getognn = GeToGNN(training_selection_type='box',
+                          run_num=run_num,
+                          parameter_file_number = parameter_file_number,
+                          name=name,
+                          image=image,
+                          feature_file=feature_file,
+                          geomsc_fname_base = msc_file,
+                          label_file=ground_truth_label_file,
+                          write_folder=write_path,
+                        experiment_folder=experiment_folder,
+                         model_name=model_name,
+                          load_feature_graph_name=None,
+                          write_json_graph = False)
+
+        # features
+        if not self.getognn.params['load_features']:
+            self.getognn.compile_features()
+        else:
+            self.getognn.load_gnode_features()
+        if self.getognn.params['write_features']:
+            self.getognn.write_gnode_features(self.getognn.session_name)
+        if self.getognn.params['write_feature_names']:
+            self.getognn.write_feature_names()
+
+        self.getognn.build_geto_adj_list()
+
+        # training info, selection, partition train/val/test
+        self.getognn.read_labels_from_file(file=ground_truth_label_file)
+
+        training_set , test_and_val_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'], y_range=self.getognn.params['y_box'])
+
+        self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
+                                                 validation_samples = 1)
+
+
+
+        self.attributes = deepcopy(self.getognn.get_attributes())
+
+        if self.getognn.params['write_json_graph']:
+            self.getognn.write_json_graph_data(folder_path=self.getognn.pred_session_run_path, name=model_name + '_' + self.getognn.params['name'])
+
+
+        self.getognn.write_gnode_partitions(self.getognn.session_name)
+        self.getognn.write_selection_bounds(self.getognn.session_name)
+
+        # random walks
+        if not self.getognn.params['load_preprocessed_walks']:
+            walk_embedding_file = os.path.join(self.getognn.LocalSetup.project_base_path, 'datasets',
+                                               self.getognn.params['write_folder'],'walk_embeddings',
+                                               'run-'+str(self.getognn.run_num)+'_walks')
+            self.getognn.params['load_walks'] = walk_embedding_file
+            self.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
+
+
+
+    def train(self, getognn=None):
+        if getognn is not None:
+            self.getognn = getognn
+        #training
+        self.getognn.supervised_train()
+        G = self.getognn.get_graph()
+        self.getognn.equate_graph(G)
+
+        self.getognn.write_arc_predictions(self.getognn.session_name)
+        self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)
+        self.getognn = self.getognn
+        return self.getognn
+
+class unsupervised_getognn:
+    def __init__(self, model_name):
+        self.model_name = model_name
+        self.attributes = Attributes()
+
+    def build_getognn(self, sample_idx, experiment_num, experiment_name, window_file_base,
+                 parameter_file_number, format = 'raw', run_num=0, experiment_folder=None,
+                 name=None, image=None, label_file=None, msc_file=None,
+                 ground_truth_label_file=None, write_path=None, feature_file=None,
+                 window_file=None, model_name="GeToGNN"):
+
+
+
+        self.getognn = GeToGNN(training_selection_type='box',
+                          run_num=run_num,
+                          parameter_file_number = parameter_file_number,
+                          name=name,
+                          image=image,
+                          feature_file=feature_file,
+                          geomsc_fname_base = msc_file,
+                          label_file=ground_truth_label_file,
+                          write_folder=write_path,
+                        experiment_folder=experiment_folder,
+                         model_name=model_name,
+                          load_feature_graph_name=None,
+                          write_json_graph = False)
+
+        # features
+        if not self.getognn.params['load_features']:
+            self.getognn.compile_features()
+        else:
+            self.getognn.load_gnode_features()
+        if self.getognn.params['write_features']:
+            self.getognn.write_gnode_features(self.getognn.session_name)
+        if self.getognn.params['write_feature_names']:
+            self.getognn.write_feature_names()
+
+        self.getognn.build_geto_adj_list()
+
+        # training info, selection, partition train/val/test
+        self.getognn.read_labels_from_file(file=ground_truth_label_file)
+
+        training_set , test_and_val_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'], y_range=self.getognn.params['y_box'])
+
+        self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
+                                                 validation_samples = 1)
+
+
+
+        self.attributes = deepcopy(self.getognn.get_attributes())
+
+        if self.getognn.params['write_json_graph']:
+            self.getognn.write_json_graph_data(folder_path=self.getognn.pred_session_run_path, name=model_name + '_' + self.getognn.params['name'])
+
+
+        self.getognn.write_gnode_partitions(self.getognn.session_name)
+        self.getognn.write_selection_bounds(self.getognn.session_name)
+
+        # random walks
+        if not self.getognn.params['load_preprocessed_walks']:
+            walk_embedding_file = os.path.join(self.getognn.LocalSetup.project_base_path, 'datasets',
+                                               self.getognn.params['write_folder'],'walk_embeddings',
+                                               'run-'+str(self.getognn.run_num)+'_walks')
+            self.getognn.params['load_walks'] = walk_embedding_file
+            self.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
+
+
+
+    def train(self, getognn=None):
+        if getognn is not None:
+            self.getognn = getognn
+        #training
+        self.getognn.unsupervised_train()
+        #G = self.getognn.get_graph()
+        #self.getognn.equate_graph(G)
+
+        #self.getognn.write_arc_predictions(self.getognn.session_name)
+        #self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)
+        self.getognn = self.getognn
+        return self.getognn
+
+    def classify(self, embedding_name = None):
+        #
+        G = self.getognn.embedding_regression_classifier(embedding_path_and_name = embedding_name)
+        self.getognn.equate_graph(G)
+        self.getognn.write_arc_predictions(self.getognn.session_name)
+        self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)

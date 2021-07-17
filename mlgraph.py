@@ -334,10 +334,19 @@ class MLGraph(GeToFeatureGraph):
         return self.subgraph_sample_set, self.subgraph_sample_set_ids, subgraph_positive_arcs, subgraph_negative_arcs
 
     def check_valid_partitions(self, train, val):
-        train_copy = train.copy()
-        for vl in train.intersection(val):
+        train_pos_copy = train[0].copy()
+        train_neg_copy = train[1].copy()
+        train_copy = train_pos_copy.union(train_neg_copy)
+        for vl in train_copy.intersection(val):
             train_copy.remove(vl)
-        return not len(train_copy) == 0
+        if len(train_copy) == 0:
+            return False
+        for vl in val:
+            train_pos_copy.discard(vl)
+            train_neg_copy.discard(vl)
+        invalid = len(train_pos_copy) == 0 or len(train_neg_copy) == 0
+        return not invalid
+
 
     def get_train_test_val_sugraph_split(self, validation_hops = 1, validation_samples = 1,
                                          test_hops = None, test_samples = None, multiclass= False
@@ -380,10 +389,13 @@ class MLGraph(GeToFeatureGraph):
                    int(gnode.gid in self.positive_arc_ids),
                     0
                 ]
-            nx_gid = self.node_gid_to_nx_idx[gnode.gid]
+            nx_gid = self.node_gid_to_graph_idx[gnode.gid]
             node = self.G.node[nx_gid]
             node["features"] =  features#gnode.features.tolist()
             node["gid"] = gnode.gid
+            #getoelm = self.gid_geto_elm_dict[gnode.gid]
+            #polyline = getoelm.points
+            #node["geto_elm"] = polyline
             node["key"] = gnode.key
             node["box"] = gnode.box
             node["partition"] = partition
@@ -435,13 +447,13 @@ class MLGraph(GeToFeatureGraph):
                     self.node_gid_to_partition[gnode.gid] = 'train'
             gid_feat_idx += 1
 
-        for nx_gid, node in list(self.G.nodes_iter(data=True)):
-
-            for adj_edge in node["edges"]:
-                for adj_gnode_gid in self.gid_edge_dict[adj_edge].gnode_gids:
-                    adj_gnode_nx_id = self.node_gid_to_nx_idx[adj_gnode_gid]
-                    #if adj_gnode_nx_id != nx_gid:
-                    self.G.add_edge(nx_gid, adj_gnode_nx_id)
+        #for nx_gid, node in list(self.G.nodes_iter(data=True)):
+        #
+        #    for adj_edge in node["edges"]:
+        #        for adj_gnode_gid in self.gid_edge_dict[adj_edge].gnode_gids:
+        #            adj_gnode_nx_id = self.node_gid_to_graph_idx[adj_gnode_gid]
+        #            if adj_gnode_nx_id != nx_gid:
+        #                self.G.add_edge(nx_gid, adj_gnode_nx_id)
 
         self.G_dict = json_graph.node_link_data(self.G)
         s1 = json.dumps(self.G_dict)  # input graph

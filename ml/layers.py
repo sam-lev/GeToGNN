@@ -40,7 +40,8 @@ class Layer(object):
     """
 
     def __init__(self, **kwargs):
-        allowed_kwargs = {'name', 'logging', 'model_size', 'jump_type', 'jumping_knowledge', 'hidden_dim_1', 'hidden_dim_2'}
+        allowed_kwargs = {'name', 'logging', 'model_size', 'jump_type', 'jumping_knowledge',
+                          'hidden_dim_1','hidden_dim_2', 'geto_dims','geto_vec_dim'}
         for kwarg in kwargs.keys():
             assert kwarg in allowed_kwargs, 'Invalid keyword argument: ' + kwarg
         name = kwargs.get('name')

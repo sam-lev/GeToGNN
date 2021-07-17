@@ -81,11 +81,11 @@ class RandomForest(MLGraph):
         if not self.params['load_features']:
             self.compile_features()
         else:
-            self.load_gnode_features(filename=model_name)
+            self.load_gnode_features()#
         if self.params['write_features']:
             self.write_gnode_features(self.session_name)
         if self.params['write_feature_names']:
-            self.write_feature_names(self.session_name)
+            self.write_feature_names()#
 
         # training info, selection, partition train/val/test
         self.read_labels_from_file(file=ground_truth_label_file)
@@ -102,7 +102,8 @@ class RandomForest(MLGraph):
         self.write_selection_bounds(self.session_name)
 
     def classifier(self, node_gid_to_prediction, train_features=None, train_labels=None,
-                   test_features=None, test_labels=None, feature_map=False,
+                   test_features=None, test_labels=None, feature_map=False,class_1_weight=1.0,
+                   class_2_weight=1.0,
                    n_trees=10, depth=4, weighted_distribution=False):
         print("_____________________________________________________")
         print("                Random_Forest     ")
@@ -129,15 +130,12 @@ class RandomForest(MLGraph):
         wn = 1
         wp = 1
         if weighted_distribution:
-            pos_count = 2. * np.sum(train_labels)
-            neg_count = 2. * (len(train_labels) - pos_count)
-            num_n = 1 - train_labels
-            wn = float(len(train_labels)-np.sum(train_labels) - 1) / float(len(train_labels) - 1)
-            bp = float(len(train_labels)) / 2*np.sum(train_labels)
-            nl = 1 - train_labels
-            bn = float(len(train_labels)) / 2*np.sum(nl)
+            wn = float(len(train_labels)) / (2.*(len(train_labels) - np.sum(train_labels)))
+            wp = float(len(train_labels)) / (2.* np.sum(train_labels))
             print("Using class weights for negative: ", wn)
             print("Using class weights for positive: ", wp)
+            print("total training samples: ", len(train_labels))
+            print("total positive samples: ", np.sum(train_labels))
 
         rf = RandomForestClassifier(max_depth=depth,
                                     n_estimators=n_trees, class_weight={0:wn,1:wp}, random_state=666)

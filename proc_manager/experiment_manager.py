@@ -3,7 +3,8 @@ import shutil
 import numpy as np
 
 
-from supervised_getognn import supervised_getognn
+from getognn import supervised_getognn
+from getognn import unsupervised_getognn
 from getograph import Attributes
 from ml.Random_Forests import RandomForest
 from ml.MLP import MLP
@@ -19,7 +20,7 @@ LocalSetup = LocalSetup()
 
 class runner:
     def __init__(self, experiment_name, window_file_base = None
-                 , sample_idx=2, multi_run = True):
+                 , sample_idx=2, multi_run = True, parameter_file_number = 1):
 
         # base attributes shared between models
         self.attributes = Attributes()
@@ -48,7 +49,8 @@ class runner:
                      'mat2_lines',                         # 3
                      'berghia',                            # 4
                      'faults_exmouth',                     # 5
-                     'transform_tests'][self.sample_idx]   # 6
+                     'transform_tests',                    # 6
+                     'map_border'][self.sample_idx]        # 7
 
         self.image = ['im0236_o_700_605.raw',
                  'MAX_neuron_640_640.raw',
@@ -56,14 +58,16 @@ class runner:
                  'sub_CMC_example_o_969_843.raw',
                  'berghia_o_891_897.raw',
                  'att_0_460_446_484.raw',
-                'diadem16_transforms_o_1000_1000.raw'][self.sample_idx]  # neuron1
+                'diadem16_transforms_o_1000_1000.raw',
+                      'border1_636_2372.raw'][self.sample_idx]  # neuron1
         self.label_file = ['im0236_la2_700_605.raw.labels_2.txt',
                       'MAX_neuron_640_640.raw.labels_3.txt',
                       'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_4.txt',
                       'sub_CMC_example_l1_969_843.raw.labels_0.txt',
                       'berghia_prwpr_e4_891_896.raw.labels_3.txt',
                       'att_L3_0_460_446_484.raw.labels_0.txt',
-                      'diadem16_transforms_s1_1000_1000.raw.labels_14.txt'][self.sample_idx]  # neuron1
+                      'diadem16_transforms_s1_1000_1000.raw.labels_14.txt',
+                           'border1_636x2372.raw.labels_0.txt'][self.sample_idx]  # neuron1
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
         self.ground_truth_label_file = os.path.join(LocalSetup.project_base_path, 'datasets',
@@ -80,12 +84,15 @@ class runner:
         self.window_file = os.path.join(LocalSetup.project_base_path, "datasets",
                                    self.write_path,
                                    self.window_file_base)
-        self.parameter_file_number = 1
+        self.parameter_file_number = parameter_file_number
 
 
-    def start(self, model='getognn'):
+    def start(self, model='getognn', learning='supervised'):
         if model == 'getognn':
-            self.run_getognn(self.multi_run)
+            if learning == 'supervised':
+                self.run_supervised_getognn(self.multi_run)
+            else:
+                self.run_unsupervised_getognn(self.multi_run)
         if model == 'mlp':
             self.run_mlp(self.multi_run)
         if model == 'random_forest':
@@ -93,7 +100,7 @@ class runner:
 
 
 
-    def run_getognn(self, multi_run ):
+    def run_supervised_getognn(self, multi_run):
         #
         # Train single run of getognn and obtrain trained model
         #
@@ -132,14 +139,77 @@ class runner:
         getognn.feature_importance(feature_names=getognn.feature_names,
                               features=gid_features_dict,
                               labels=gid_label_dict,
-                                   plot=True)
+                                   plot=False)
+        getognn.write_feature_importance()
+
+        #
+        # Perform remainder of runs and don't need to read feats again
+        #
+        #if not getognn.params['load_features']:
+        getognn.params['write_features'] = False
+        getognn.params['load_features'] = True
+        getognn.params['write_feature_names'] = False
+        getognn.params['save_filtered_images'] = False
+        getognn.params['collect_features'] = False
+
+        run_manager = Run_Manager(model=getognn,
+                                  training_window_file=self.window_file,
+                                  features_file=self.feature_file,
+                                  sample_idx=self.sample_idx,
+                                  model_name=self.model_name,
+                                  format=format)
+        if multi_run:
+            run_manager.perform_runs()
+
+    def run_unsupervised_getognn(self, multi_run):
+        #
+        # Train single run of getognn and obtrain trained model
+        #
+        unsup_getognn = unsupervised_getognn(model_name=self.model_name)
+        unsup_getognn.build_getognn( sample_idx=self.sample_idx, experiment_num=self.experiment_num,
+                                   experiment_name=self.experiment_name,window_file_base=self.window_file_base,
+                                   parameter_file_number=self.parameter_file_number,
+                                   format = format, run_num=self.run_num,name=self.name, image=self.image,
+                                   label_file=self.label_file, msc_file=self.msc_file,
+                                   ground_truth_label_file=self.ground_truth_label_file,
+                                   experiment_folder = self.experiment_folder,
+                                   write_path=self.write_path, feature_file=self.feature_file,
+                                   window_file=None,model_name="GeToGNN")
+
+        self.attributes = unsup_getognn.attributes
+
+        embedding_name = os.path.join(self.experiment_folder,'embedding')
+
+
+        getognn = unsup_getognn.train()
+        unsup_getognn.classify(embedding_name=embedding_name)
+
+        #
+        # Get inference metrics
+        #
+        compute_getognn_metrics(getognn=getognn)
+
+        #
+        # Feature Importance
+        #
+        partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
+            getognn.node_gid_to_partition,
+            getognn.node_gid_to_feature,
+            getognn.node_gid_to_label,
+            test_all=True)
+        gid_features_dict = partition_feat_dict['all']
+        gid_label_dict = partition_label_dict['all']
+        getognn.load_feature_names()
+        getognn.feature_importance(feature_names=getognn.feature_names,
+                              features=gid_features_dict,
+                              labels=gid_label_dict,
+                                   plot=False)
         getognn.write_feature_importance()
 
         #
         # Perform remainder of runs and don't need to read feats again
         #
         if not getognn.params['load_features']:
-            getognn.params['load_features'] = False
             getognn.params['write_features'] = False
             getognn.params['load_features'] = True
             getognn.params['write_feature_names'] = False
@@ -151,7 +221,8 @@ class runner:
                                   features_file=self.feature_file,
                                   sample_idx=self.sample_idx,
                                   model_name=self.model_name,
-                                  format=format)
+                                  format=format,
+                                  learning_type='unsupervised')
         if multi_run:
             run_manager.perform_runs()
 
@@ -219,12 +290,21 @@ class runner:
         n_trees = run_params['number_forests']
         tree_depth = run_params['forest_depth']
 
+        if run_params['forest_class_weights']:
+            class_1_weight = run_params['class_1_weight']
+            class_2_weight = run_params['class_2_weight']
+        else:
+            class_1_weight = 1.0
+            class_2_weight = 1.0
         predictions, labels, node_gid_to_prediction = RF.classifier(self.attributes.node_gid_to_prediction,
                                                                     train_labels=train_gid_label_dict,
                                                                     train_features=train_gid_feat_dict,
                                                                     test_labels=gid_label_dict,
                                                                     test_features=gid_features_dict,
                                                                     n_trees=n_trees,
+                                                                    class_1_weight=class_1_weight,
+                                                                    class_2_weight=class_2_weight,
+                                                                    weighted_distribution=run_params['forest_class_weights'],
                                                                     depth=tree_depth)
         out_folder = self.attributes.pred_session_run_path
 

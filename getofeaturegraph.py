@@ -5,6 +5,7 @@ import numpy as np
 import copy
 import samply
 import scipy.stats
+import numpy.linalg as linalg
 import imageio
 from PIL import Image
 
@@ -31,6 +32,7 @@ from topology.utils import (
     get_pixel_values_from_vertices,
     get_centroid,
     translate_points_by_centroid,
+    get_points_from_vertices,
 )
 from localsetup import LocalSetup
 from ml.utils import load_data
@@ -172,17 +174,68 @@ class GeToFeatureGraph(GeToGraph):
             self.G.add_node(
                 nx_node_idx, edges=gnode.edge_gids, size=len(gnode.points)
             )
-            self.node_gid_to_nx_idx[gid] = nx_node_idx
+            self.node_gid_to_graph_idx[gid] = nx_node_idx
+            self.graph_idx_to_gid[nx_node_idx] = gid
             nx_node_idx += 1
 
         for nx_gid, node in list(self.G.nodes_iter(data=True)):
 
             for adj_edge in node["edges"]:
                 for adj_gnode_gid in self.gid_edge_dict[adj_edge].gnode_gids:
-                    adj_gnode_nx_id = self.node_gid_to_nx_idx[adj_gnode_gid]
-                    #if adj_gnode_nx_id != nx_gid:
-                    self.G.add_edge(nx_gid, adj_gnode_nx_id)
+                    node_gid = self.graph_idx_to_gid[nx_gid]
+                    adj_gnode_nx_id = self.node_gid_to_graph_idx[adj_gnode_gid]
+                    if adj_gnode_gid != node_gid:
+                        self.G.add_edge(nx_gid, adj_gnode_nx_id)
+
         return self.G.copy()
+
+    def build_geto_adj_list(self):
+        #
+        # compute gepometric / topo attributes
+        # for geto adjacency matrix
+        def row_major_index(row, col , num_col):
+            lin_index = row*num_col + col
+            return lin_index
+
+        num_nodes = len(self.gid_gnode_dict.values())
+        self.getoelms = []#np.ones((num_nodes,num_nodes))
+        #self.lin_adj_idx_to_getoelm_idx = []
+        lin_getoelm_idx = 0
+        for gnode in self.gid_gnode_dict.values():
+            centroid = get_centroid(gnode)
+            node_translated_vec = translate_points_by_centroid([gnode], centroid)
+            #get_points_from_vertices([gnode], sampled=True)
+
+            gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
+            self.lin_adj_idx_to_getoelm_idx[(gnode_nx_idx, gnode_nx_idx)] = lin_getoelm_idx
+            self.getoelms.append([1.0])
+            lin_getoelm_idx += 1
+            for adj_edge in gnode.edge_gids:
+                for adj_gnode_gid in self.gid_edge_dict[adj_edge].gnode_gids:
+                    adj_gnode_nx_id = self.node_gid_to_graph_idx[adj_gnode_gid]
+                    seen = (gnode_nx_idx,adj_gnode_nx_id) in self.lin_adj_idx_to_getoelm_idx.keys() or (adj_gnode_nx_id, gnode_nx_idx) in self.lin_adj_idx_to_getoelm_idx.keys()
+                    if seen:
+                        continue
+                    if adj_gnode_nx_id != gnode_nx_idx:
+                        adj_gnode = self.gid_gnode_dict[adj_gnode_gid]
+                        nbr_centroid = get_centroid(adj_gnode)
+                        nbr_translated_vec = translate_points_by_centroid([adj_gnode],nbr_centroid)
+                        #get_points_from_vertices([adj_gnode], sampled=True)
+
+                        cos_sim_numerator = linalg.norm(node_translated_vec,axis=0) @ linalg.norm(nbr_translated_vec,axis=0)
+                        cos_sim_denominator = linalg.norm(node_translated_vec)*linalg.norm(nbr_translated_vec)
+                        cos_sim = cos_sim_numerator/cos_sim_denominator if cos_sim_denominator != 0 else 0.0
+                        #lin_adj_getoelm_idx = row_major_index(gnode_nx_idx%num_nodes, adj_gnode_nx_id%num_nodes, num_col=num_nodes)
+
+                        self.lin_adj_idx_to_getoelm_idx[(gnode_nx_idx,adj_gnode_nx_id)] = lin_getoelm_idx
+                        #self.lin_adj_idx_to_getoelm_idx[(adj_gnode_nx_id, gnode_nx_idx)] = lin_getoelm_idx
+                        self.getoelms.append([cos_sim])#[1.0-cos_sim, cos_sim])
+                        lin_getoelm_idx += 1
+
+        self.getoelms = np.array(self.getoelms).astype(dtype=np.float32)
+        print('min cosim', np.min(self.getoelms.flatten()))
+        print("    * : Number GeTo Elements ", self.getoelms.size)
+        print(self.getoelms[0:10])
 
     def compile_features(self, image=None, return_labels=False, save_filtered_images=False,
                          min_number_features=1, number_features=5, selection=None):
@@ -190,6 +243,7 @@ class GeToFeatureGraph(GeToGraph):
         start_time = time.time()
 
         self.set_default_features()
+
 
         gnode_features = []
         feature_names = []
@@ -215,6 +269,7 @@ class GeToFeatureGraph(GeToGraph):
                     feature_names.append('centroid_coord_'+str(i))
                     self.fname_to_featidx['centroid'] = feature_order
                     feature_order += 1
+
 
             length = len(gnode.points)
             gnode_feature_row.append(length)
@@ -387,7 +442,7 @@ class GeToFeatureGraph(GeToGraph):
         self.feature_names = []
         for f in feat_lines:
             self.feature_names.append(f)
-        print(self.feature_names)
+        #print(self.feature_names)
         feats_file.close()
 
 

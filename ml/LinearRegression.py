@@ -141,7 +141,7 @@ class LinearRegression:
                 arc.prediction =  float(pred[0][1])#[0])#[int(pred[0]),int(pred[1])]
                 #arc.prediction =  pred[0]
 
-        pred_path = os.path.join(self.embedding_path.split("/")[:-1][0], self.embedding_path.split("/")[:-1][1],self.embedding_path.split("/")[:-1][2],'predicted_graph-G.json')
+        pred_path = os.path.join(self.embedding_path,'predicted_graph-G.json')
 
         if not os.path.exists(  pred_path):
             open( pred_path, 'w').close()
@@ -149,9 +149,10 @@ class LinearRegression:
             write_form = json_graph.node_link_data(test_graph_write)
             json.dump(write_form, graph_file)
         print("Prediction written to: ", pred_path)
-        if self.mscgnn_infer is not None:
-            self.mscgnn_infer.G = test_graph
-            return self.mscgnn_infer
+        #if self.mscgnn_infer is not None:
+        #    self.mscgnn_infer.G = test_graph
+        #    return self.mscgnn_infer
+        return test_graph
 
     def run(self):
         
@@ -174,15 +175,15 @@ class LinearRegression:
             G_infer = json_graph.node_link_graph(json.load(open(self.test_path+"-G.json")))
             self.G_infer, self.inference_features, self.inference_id_map, self.inference_walks, self.inference_labels, self.inference_negative_samples, self.inference_positive_samples = load_data(self.test_path, load_walks=False, scheme_required=True, train_or_test='train')
         else:
-            G_infer = self.G_infer
+            G_infer = self.G#_infer
         #labels = json.load(open(self.trained_path+"-class_map.json"))
         labels = {int(i):l for i, l in self.labels.items()}#iteritems()} #for python3
         #labels_test = json.load(open(self.test_path+"-class_map.json"))
        
 
-        train_ids = [n for n in G.nodes()]# if  G.node[n]['train']]
-        
-        test_ids = [n for n in G_infer.nodes()]# if 'label' in G.node[n]]#(G.node[n]['test'] or G.node[n]['val'] or G.node[n]['train'])]
+        train_ids = [n for n in G.nodes() if  G.node[n]['train']]
+        test_ids = [n for n in G.nodes()]# if (G.node[n]['test'] or G.node[n]['val'] )]
+        #test_ids = [n for n in G_infer.nodes()]# if (G.node[n]['test'] or G.node[n]['val'] or G.node[n]['train'])]
 
         train_labels = np.array([labels[i] for i in train_ids])
         
@@ -227,7 +228,7 @@ class LinearRegression:
             #if not label_node_predictions:
             #    run_regression(train_feats, train_labels, test_feats, test_labels)
             #else:
-            self.run_regression(train_feats, train_labels, test_feats, test_labels, test_ids=test_ids, test_graph=G_infer)
+            G_infered = self.run_regression(train_feats, train_labels, test_feats, test_labels, test_ids=test_ids, test_graph=G_infer)
         else:
             print("EMBEDDING: ", self.embedding_path)
             embeds = np.load(self.embedding_path + "/val.npy")
@@ -248,9 +249,10 @@ class LinearRegression:
                 test_embeds = embeds[[self.id_map[id] for id in test_ids]]
             print("Running regression..")
             if not self.label_node_predictions:
-                self.run_regression(train_embeds, train_labels, test_embeds, test_labels)
+                G_infered = self.run_regression(train_embeds, train_labels, test_embeds, test_labels)
             else:
-                self.run_regression(train_embeds, train_labels, test_embeds, test_labels
-                                    , test_ids=test_ids, test_graph=G_infer, embeds=embeds, id_map=id_map)
-        if self.mscgnn_infer is not None:
-            return self.mscgnn_infer
+                G_infered = self.run_regression(train_embeds, train_labels, test_embeds, test_labels
+                                    , test_ids=test_ids, test_graph=G, embeds=embeds, id_map=id_map)
+        #if self.mscgnn_infer is not None:
+        #    return self.mscgnn_infer
+        return G_infered
