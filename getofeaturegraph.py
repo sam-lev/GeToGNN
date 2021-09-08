@@ -2,12 +2,14 @@ import os
 import time
 import networkx as nx
 import numpy as np
+import math as m
 import copy
 import samply
 import scipy.stats
 import numpy.linalg as linalg
 import imageio
 from PIL import Image
+from sklearn.preprocessing import PowerTransformer, RobustScaler
 
 from getograph import GeToGraph
 from data_ops.collect_data import collect_training_data, compute_geomsc, collect_datasets
@@ -23,17 +25,22 @@ from ml.features import (
     sobel_filter,
     cosine_similarity,
     hyperbolic_distance,
+    hyperbolic_distance_line,
+    get_points_from_vertices,
+    get_pixel_values_from_vertices,
+    translate_points_by_centroid,
+    get_centroid,
     laplacian_filter,
     sum_euclid,
     gaussian_fit,
+    slope,
+    end_to_end_euclid,
+    manhattan_distance,
+    mahalanobis_distance_arc,
+    cumulative_distance_from_centroid,
 )
 
-from topology.utils import (
-    get_pixel_values_from_vertices,
-    get_centroid,
-    translate_points_by_centroid,
-    get_points_from_vertices,
-)
+
 from localsetup import LocalSetup
 from ml.utils import load_data
 
@@ -189,7 +196,11 @@ class GeToFeatureGraph(GeToGraph):
 
         return self.G.copy()
 
-    def build_geto_adj_list(self):
+
+    def build_geto_adj_list(self, influence_type='weighted'):
+        print("    * : influence type", influence_type)
+
+
         #
         # compute gepometric / topo attributes
         # for geto adjacency matrix
@@ -197,45 +208,334 @@ class GeToFeatureGraph(GeToGraph):
             lin_index = row*num_col + col
             return lin_index
 
-        num_nodes = len(self.gid_gnode_dict.values())
+
         self.getoelms = []#np.ones((num_nodes,num_nodes))
+        self.geto_attr_names = []
+        self.lin_adj_idx_to_getoelm_idx = {}
         #self.lin_adj_idx_to_getoelm_idx = []
         lin_getoelm_idx = 0
+
+        check = 0
+
+        point_set = get_points_from_vertices(self.gid_gnode_dict.values())
+
+        inverse_covariance_points = np.linalg.inv(np.cov(point_set.T))
+        centroid = get_centroid(point_set)
+
+        # add geto attributes to neighbors geto_attr_vec
+        def add_name(name, geto_attr_names):
+            if len(self.getoelms) == 0:
+                geto_attr_names.append(name)
+            return geto_attr_names
+
+        def add_geto_attributes_to_self_vec(attribute_set, names, all_geto_attr, geto_attr_names):
+            for attr, name in zip(attribute_set, names):
+                all_geto_attr.append(attr)
+                geto_attr_names = add_name(name, geto_attr_names)
+            return all_geto_attr , geto_attr_names
+
         for gnode in self.gid_gnode_dict.values():
-            centroid = get_centroid(gnode)
+
+            geto_attr_vec = []
+
+
+
+            num_nodes = len(self.gid_gnode_dict.values())
             node_translated_vec = translate_points_by_centroid([gnode], centroid)
-            #get_points_from_vertices([gnode], sampled=True)
+            length_gnode = len(gnode.points)
 
             gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
-            self.lin_adj_idx_to_getoelm_idx[(gnode_nx_idx, gnode_nx_idx)] = lin_getoelm_idx
-            self.getoelms.append([1.0])
-            lin_getoelm_idx += 1
+
+            num_geto_features = 0
+
+            #
+            # selg geto attributes
+            #
+            node_degree = gnode.degree
+
+            hyperbolic_distance_arc = hyperbolic_distance_line(gnode.points)
+
+            end_to_end_hyperbolic_grad, end_to_end_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
+                                                                                         gnode.points[-1])
+            p1_centroid_hyperbolic_grad, p1_centroid_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
+                                                                                         centroid)
+            p2_centroid_hyperbolic_grad, p2_centroid_hyperbolic_dist = hyperbolic_distance(gnode.points[-1],
+                                                                                           centroid)
+
+            velocity_arc_x = np.gradient(np.array(gnode.points)[:,0])
+            velocity_arc_y = np.gradient(np.array(gnode.points)[:,1])
+            velocity_arc = list(np.array([[velocity_arc_x[i], velocity_arc_y[i]] for i in range(velocity_arc_y.size)]).flatten())
+
+            euclidean_sum_self = sum_euclid(gnode.points)
+            euclidean_dist_arc = end_to_end_euclid(gnode.points)
+            manhattan_distance_arc = manhattan_distance(gnode.points)
+            length_self = len(gnode.points)
+            slope_self = slope(gnode.points)
+            self_distance_from_centroid = cumulative_distance_from_centroid(gnode.points, centroid)
+            mahalanobis_distance_self = mahalanobis_distance_arc(gnode.points[0],
+                                                                gnode.points[-1],
+                                                                inverse_covariance_points) if len(gnode.points) >= 2 else 0
+            centroid_translated_points_self = translate_points_by_centroid([gnode],
+                                                                           centroid)
+
+            computed_self_attributes = []
+            self_attr_names = []
+            for i, p in enumerate(centroid_translated_points_self.flatten()):
+                computed_self_attributes.append(p)
+                if len(self.getoelms) == 0:
+                    self_attr_names = add_name('self_centroid_coord_' + str(i), self_attr_names)
+            '''computed_self_attributes += list(end_to_end_hyperbolic_grad.flatten())
+            computed_self_attributes += list(p1_centroid_hyperbolic_grad.flatten())
+            computed_self_attributes += list(p2_centroid_hyperbolic_grad.flatten())'''
+            computed_self_attributes += list(end_to_end_hyperbolic_dist.flatten())
+            computed_self_attributes += list(p1_centroid_hyperbolic_dist.flatten())
+            computed_self_attributes += list(p2_centroid_hyperbolic_dist.flatten())
+
+            if len(self.getoelms) == 0:
+                '''self_attr_names += ['hyperbolic-grad_e2e'+str(i) for i in
+                                    range(len(list(end_to_end_hyperbolic_grad.flatten())))]
+                self_attr_names += ['hyperbolic-grad_p1'+str(i) for i in
+                                    range(len(list(p1_centroid_hyperbolic_grad.flatten())))]
+                self_attr_names += ['hyperbolic-grad_p2'+str(i) for i in
+                                    range(len(list(p2_centroid_hyperbolic_grad.flatten())))]'''
+                self_attr_names += ['hyperbolic-dist_e2e'+str(i) for i in
+                                    range(len(list(end_to_end_hyperbolic_dist.flatten())))]
+                self_attr_names += ['hyperbolic-dist_p1' + str(i) for i in
+                                    range(len(list(p1_centroid_hyperbolic_dist.flatten())))]
+                self_attr_names += ['hyperbolic-dist_p2' + str(i) for i in
+                                    range(len(list(p2_centroid_hyperbolic_dist.flatten())))]
+
+            for attr_vec in velocity_arc:
+                computed_self_attributes += list(attr_vec.flatten())
+            if len(self.getoelms) == 0:
+                self_attr_names += ['velocity_arc_' + '_' + str(i) for i in
+                                      range(len(velocity_arc))]
+
+            computed_self_attributes += [
+                                   hyperbolic_distance_arc,
+                                   node_degree,
+                                   length_self,
+                                   slope_self,
+                                   euclidean_sum_self,
+                                   euclidean_dist_arc,
+                                   self_distance_from_centroid,
+                                   manhattan_distance_arc,
+                                   mahalanobis_distance_self]
+            if len(self.getoelms) == 0:
+                self_attr_names += [
+                         'hyperbolic_distance_arc',
+                         'node_degree',
+                         'length_self',
+                         'slope_self',
+                         'euclidean_sum_self',
+                         'euclidean_dist_arc',
+                         'self_distance_from_centroid',
+                         'manhattan_distance_arc',
+                         'mahalanobis_distance_self'
+                         ]
+
+            prod_nbr_attr = []
+            sum_nbr_attr = []
+            nbr_attr_names = []
             for adj_edge in gnode.edge_gids:
                 for adj_gnode_gid in self.gid_edge_dict[adj_edge].gnode_gids:
+                    nbr_geto_attr_vec = []
+                    # geto feature vector attributes for learning hidden
+                    # weighted representation
                     adj_gnode_nx_id = self.node_gid_to_graph_idx[adj_gnode_gid]
                     seen = (gnode_nx_idx,adj_gnode_nx_id) in self.lin_adj_idx_to_getoelm_idx.keys() or (adj_gnode_nx_id, gnode_nx_idx) in self.lin_adj_idx_to_getoelm_idx.keys()
                     if seen:
                         continue
-                    if adj_gnode_nx_id != gnode_nx_idx:
-                        adj_gnode = self.gid_gnode_dict[adj_gnode_gid]
-                        nbr_centroid = get_centroid(adj_gnode)
-                        nbr_translated_vec = translate_points_by_centroid([adj_gnode],nbr_centroid)
-                        #get_points_from_vertices([adj_gnode], sampled=True)
+                    if adj_gnode_nx_id == gnode_nx_idx:
+                        continue
+                    adj_gnode = self.gid_gnode_dict[adj_gnode_gid]
 
-                        cos_sim_numerator = linalg.norm(node_translated_vec,axis=0) @ linalg.norm(nbr_translated_vec,axis=0)
-                        cos_sim_denominator = linalg.norm(node_translated_vec)*linalg.norm(nbr_translated_vec)
-                        cos_sim = cos_sim_numerator/cos_sim_denominator if cos_sim_denominator != 0 else 0.0
-                        #lin_adj_getoelm_idx = row_major_index(gnode_nx_idx%num_nodes, adj_gnode_nx_id%num_nodes, num_col=num_nodes)
+                    nbr_translated_vec = translate_points_by_centroid([adj_gnode],centroid)
 
-                        self.lin_adj_idx_to_getoelm_idx[(gnode_nx_idx,adj_gnode_nx_id)] = lin_getoelm_idx
-                        #self.lin_adj_idx_to_getoelm_idx[(adj_gnode_nx_id, gnode_nx_idx)] = lin_getoelm_idx
-                        self.getoelms.append([cos_sim])#[1.0-cos_sim, cos_sim])
-                        lin_getoelm_idx += 1
+                    cos_sim_numerator = linalg.norm(node_translated_vec,axis=0) @ linalg.norm(nbr_translated_vec,axis=0)
+                    cos_sim_denominator = linalg.norm(node_translated_vec)*linalg.norm(nbr_translated_vec)
+                    cos_sim = cos_sim_numerator/cos_sim_denominator if cos_sim_denominator != 0 else 0.0
 
+                    end_to_adj_hyperbolic_grad, end_to_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
+                                                                                                 adj_gnode.points[-1])
+                    p1_adj_hyperbolic_grad, p1_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[-1],
+                                                                                         adj_gnode.points[-1])
+                    p3_adj_hyperbolic_grad, p3_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
+                                                                                         adj_gnode.points[-1])
+
+
+                    def twod_dot(x, y):
+                        dot = 0
+                        for i,j in zip(x,y):
+                            dot += np.dot(i,j)
+                        return dot
+
+                    dot_vecs = twod_dot(np.array(gnode.points), np.array(adj_gnode.points))
+                    #denom_prod_norm = linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points).T)
+                    inv_cos = np.clip(cos_sim_numerator/cos_sim_denominator,-1,1) if cos_sim_denominator != 0  else 0.0
+                    angle_adj = m.degrees(np.arccos(inv_cos))
+                    angle_adj = 90 if np.isnan(angle_adj) else angle_adj
+
+                    triangle_area = 0.5 * linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points)) * np.sin((angle_adj*np.pi)/180.)
+                    triangle_area2 = 0.5 * linalg.norm(np.array(centroid_translated_points_self) @ np.array(nbr_translated_vec).T)
+
+
+                    euclidean_dist_btwn_arcs_adj1_self1 = end_to_end_euclid([gnode.points[-1],
+                                                                             adj_gnode.points[-1]])
+                    euclidean_dist_btwn_arcs_adj1_self0 = end_to_end_euclid([gnode.points[0],
+                                                                             adj_gnode.points[-1]])
+                    euclidean_dist_btwn_arcs_adj0_self1 = end_to_end_euclid([gnode.points[-1],
+                                                                             adj_gnode.points[0]])
+
+                    mahalanobis_distance_adj = mahalanobis_distance_arc(adj_gnode.points[0],
+                                                                       adj_gnode.points[-1],
+                                                                       inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                    #mahalanobis_distance_adj = mahalanobis_distance_adj #- mahalanobis_distance_self
+                    mahalanobis_distance_adj1_self0 = mahalanobis_distance_arc(gnode.points[0],
+                                                                        adj_gnode.points[-1],
+                                                                        inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                    mahalanobis_distance_adj1_self1 = mahalanobis_distance_arc(gnode.points[-1],
+                                                                        adj_gnode.points[-1],
+                                                                        inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
+                    #mahalanobis_distance_adj0_self0 = mahalanobis_distance_arc(gnode.points[0],
+                    #                                                           adj_gnode.points[0],
+                    #                                                           inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                    mahalanobis_distance_adj0_self1 = mahalanobis_distance_arc(gnode.points[-1],
+                                                                               adj_gnode.points[0],
+                                                                               inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
+
+
+
+
+                    computed_nbr_attributes = []
+                    nbr_attr_names = []
+                    attr_vecs = [#end_to_adj_hyperbolic_grad,p1_adj_hyperbolic_grad,
+                                 #p3_adj_hyperbolic_grad,
+                                 end_to_adj_hyperbolic_dist,p1_adj_hyperbolic_dist,
+                                 p3_adj_hyperbolic_dist]
+                    attr_vec_names = [#'end_to_adj_hyperbolic_grad','p1_adj_hyperbolic_grad',
+                                 #'p3_adj_hyperbolic_grad',
+                                 'end_to_adj_hyperbolic_dist','p1_adj_hyperbolic_dist',
+                                 'p3_adj_hyperbolic_dist']
+                    for attr_vec_name, attr_vec in zip(attr_vec_names, attr_vecs):
+                        computed_nbr_attributes += list(attr_vec.flatten())
+                        if len(self.getoelms) == 0:
+                            nbr_attr_names += [attr_vec_name+'_' + str(i) for i in
+                                               range(len(list(attr_vec.flatten())))]
+
+                    computed_nbr_attributes += [dot_vecs, cos_sim, cos_sim_numerator, cos_sim_denominator,
+                                           triangle_area,
+                                           triangle_area2,
+                                           angle_adj,
+                                           euclidean_dist_btwn_arcs_adj1_self1,
+                                           euclidean_dist_btwn_arcs_adj1_self0,
+                                           euclidean_dist_btwn_arcs_adj0_self1,
+                                           mahalanobis_distance_adj1_self0,
+                                           mahalanobis_distance_adj1_self1,
+                                           mahalanobis_distance_adj0_self1]
+                    if len(self.getoelms) == 0:
+                        nbr_attr_names += ['dot_vecs', 'cos_sim','cos_sim_numerator','cos_sim_denominator',
+                                 'triangle_area',
+                                 'triangle_area2',
+                                 'angle_adj',
+                                           'euclidean_dist_btwn_arcs_adj1_self1',
+                                 'euclidean_dist_btwn_arcs_adj1_self0',
+                                           'euclidean_dist_btwn_arcs_adj0_self1',
+                                           'mahalanobis_distance_adj1_self0',
+                                 'mahalanobis_distance_adj1_self1',
+                                           'mahalanobis_distance_adj0_self1']
+
+                    #prod_nbr_attr = list(np.multiply(prod_nbr_attr,computed_nbr_attributes)) if len(prod_nbr_attr)!=0 \
+                    #    else computed_nbr_attributes
+                    #sum_nbr_attr = list(np.sum((sum_nbr_attr, computed_nbr_attributes),axis=0)) if len(sum_nbr_attr) != 0 \
+                    #    else computed_nbr_attributes
+                    prod_nbr_attr = []
+                    sum_nbr_attr += computed_nbr_attributes
+
+
+            nbr_edge_attributes = prod_nbr_attr + sum_nbr_attr
+            geto_attr_vec = computed_self_attributes + nbr_edge_attributes
+            #nbr_attributes =  nbr_attributes.flatten()
+
+
+            if len(self.getoelms) == 0:
+                self.geto_attr_names = self_attr_names + nbr_attr_names
+
+            if influence_type == 'weighted':
+                geto_attr_vec = [np.mean(geto_attr_vec)]
+
+            #geto_attr_vec = list(-1 * np.log(geto_attr_vec))
+
+            if check < 3:
+                print(geto_attr_vec)
+                check += 1
+            self.getoelms.append(geto_attr_vec)
+            self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx] = lin_getoelm_idx
+            lin_getoelm_idx += 1
+
+
+            num_geto_features = len(geto_attr_vec)
+
+
+
+        #
+        # padding and scaling of features to be more uniform due to large outliers
+        #
+        attr_idx = 0
+        variable_feat_lengths = []
+        variable_feat_lengths_only = []
+        for f_num, geto_attr in enumerate(self.getoelms):
+            variable_feat_lengths.append((attr_idx, len(geto_attr) - 1))
+            variable_feat_lengths_only.append(len(geto_attr))
+            attr_idx += len(geto_attr)-1
+
+        max_feat_vec_length = np.max(variable_feat_lengths_only)
+        getoelms = []
+        scaler = PowerTransformer(method='yeo-johnson')
+        #scaler = RobustScaler(with_scaling=True, with_centering=True,unit_variance=False)
+        '''geto_copy= self.getoelms.copy()
+        self.getoelms = np.array(sum(self.getoelms,[])).astype(dtype=np.float32)
+        getoelms_scaled = scaler.fit_transform(self.getoelms.reshape(-1, 1))
+        getoelms_scaled = getoelms_scaled.flatten()
+        getoelms_scaled = [list(getoelms_scaled[variable_feat_lengths[idx][0]+1:idx+variable_feat_lengths[idx][1]]) for
+                                idx in range(len(variable_feat_lengths))]
+        sanity_check = [list(self.getoelms[variable_feat_lengths[idx][0] + 1:idx + variable_feat_lengths[idx][1]])
+                           for
+                           idx in range(len(variable_feat_lengths))]'''
+        for getoelm in self.getoelms:
+            pad_size =  max_feat_vec_length - len(getoelm)
+            getoelm = scaler.fit_transform(np.array(getoelm).reshape(-1, 1))
+            getoelm = list(getoelm.flatten())
+            for i,z in enumerate(range(pad_size)):
+                getoelm.append(1.0)
+
+            getoelms.append(getoelm)
+
+
+
+        self.getoelms = getoelms
         self.getoelms = np.array(self.getoelms).astype(dtype=np.float32)
-        print('min cosim', np.min(self.getoelms.flatten()))
-        print("    * : Number GeTo Elements ", self.getoelms.size)
-        print(self.getoelms[0:10])
+
+        '''getoelms = []
+        self.getoelms = scaler.fit_transform(self.getoelms)
+        for getoelm in self.getoelms:
+            pad_size =  max_feat_vec_length - len(getoelm)
+            for i,z in enumerate(range(pad_size)):
+                reverse_idx = -1-i
+                getoelm[reverse_idx]=1.
+            getoelms.append(getoelm)
+            if check < 6:
+                print("scaled:")
+                print(getoelm)
+                print("")
+                #print("sanity")
+                #print(sanity_check[check])
+                #print('og:')
+                #print(geto_copy[check])
+                check += 1
+        self.getoelms = getoelms
+        self.getoelms = np.array(self.getoelms).astype(dtype=np.float32)
+        #self.getoelms[np.isnan(self.getoelms)] = 0.'''
 
     def compile_features(self, image=None, return_labels=False, save_filtered_images=False,
                          min_number_features=1, number_features=5, selection=None):
@@ -250,33 +550,12 @@ class GeToFeatureGraph(GeToGraph):
         feature_idx = 0
         feature_order = 0
 
+
         for gnode in self.gid_gnode_dict.values():
 
             gnode_feature_row = []
 
-            euclidean_sum = sum_euclid(gnode.points)
-            gnode_feature_row.append(euclidean_sum)
-            if len(gnode_features) == 0:
-                feature_names.append('euclidean_sum_length')
-                self.fname_to_featidx['euclidean_sum_length'] = feature_order
-                feature_order += 1
 
-            centroid = get_centroid(gnode)
-            centroid_translated_points = translate_points_by_centroid([gnode], centroid)
-            for i, p in enumerate(centroid_translated_points.flatten()):
-                gnode_feature_row.append(p)
-                if len(gnode_features) == 0:
-                    feature_names.append('centroid_coord_'+str(i))
-                    self.fname_to_featidx['centroid'] = feature_order
-                    feature_order += 1
-
-
-            length = len(gnode.points)
-            gnode_feature_row.append(length)
-            if len(gnode_features) == 0:
-                feature_names.append("length_line")
-                self.fname_to_featidx['length'] = feature_order
-                feature_order += 1
 
             for image_name, im in self.images.items():
 
@@ -294,12 +573,12 @@ class GeToFeatureGraph(GeToGraph):
                         feature_order += 1
 
 
-            deg = gnode.degree
-            gnode_feature_row.append(deg)
-            if len(gnode_features) == 0:
-                feature_names.append("degree")
-                self.fname_to_featidx["degree"] = feature_order
-                feature_order += 1
+            #deg = gnode.degree
+            #gnode_feature_row.append(deg)
+            #if len(gnode_features) == 0:
+            #    feature_names.append("degree")
+            #    self.fname_to_featidx["degree"] = feature_order
+            #    feature_order += 1
 
 
 
@@ -426,11 +705,42 @@ class GeToFeatureGraph(GeToGraph):
         gid_feats_file.close()
         feats_file.close()
 
+    def write_geto_features(self, filename):
+        if not os.path.exists(os.path.join(self.experiment_folder,'features')):
+            os.makedirs(os.path.join(self.experiment_folder,'features'))
+        msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_feats.txt")
+        msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "idx_to_getoelm_idx.txt")
+        print("&&&& writing features in: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "w+")
+        gid_feats_file = open(msc_gid_to_feats_file, "w+")
+        lines = 1
+        for gnode in self.gid_gnode_dict.values():
+            gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
+            nl = '\n' if lines != len(self.gid_gnode_dict) else ''
+            gid_feats_file.write(str(gnode_nx_idx)+' '+
+                                 str(self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx])+nl)
+            feature_vec = self.getoelms[gnode_nx_idx]
+            feats_file.write(str(gnode_nx_idx)+ ' ')
+            for f in feature_vec[0:-1]:
+                feats_file.write(str(f)+' ')
+            feats_file.write(str(feature_vec[-1]) + nl)
+            lines += 1
+        gid_feats_file.close()
+        feats_file.close()
+
     def write_feature_names(self):
         msc_feats_file = os.path.join(self.experiment_folder,'features', "featnames.txt")
         print("&&&& writing feature namesin: ", msc_feats_file)
         feats_file = open(msc_feats_file, "w+")
         for fname in self.feature_names:
+            feats_file.write(fname + "\n")
+        feats_file.close()
+
+    def write_geto_feature_names(self):
+        msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_featnames.txt")
+        print("&&&& writing feature namesin: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "w+")
+        for fname in self.geto_attr_names:
             feats_file.write(fname + "\n")
         feats_file.close()
 
@@ -445,6 +755,16 @@ class GeToFeatureGraph(GeToGraph):
         #print(self.feature_names)
         feats_file.close()
 
+    def load_geto_feature_names(self):
+        msc_feats_file = os.path.join(self.experiment_folder, 'features', "geto_featnames.txt")
+        print("&&&& Reading feature names from: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "r")
+        feat_lines = feats_file.readlines()
+        self.geto_attr_names = []
+        for f in feat_lines:
+            self.geto_attr_names.append(f)
+        #print(self.feature_names)
+        feats_file.close()
 
     def load_gnode_features(self):
         msc_feats_file = os.path.join( self.experiment_folder,'features', "feats.txt")
@@ -471,3 +791,23 @@ class GeToFeatureGraph(GeToGraph):
         for l in feat_lines:
             gid_featidx = l.split(' ')
             self.node_gid_to_feat_idx[int(gid_featidx[0])] = int(gid_featidx[1])
+
+    def load_geto_features(self):
+        self.getoelms = []
+        self.lin_adj_idx_to_getoelm_idx = {}
+        msc_feats_file = os.path.join( self.experiment_folder,'features', "geto_feats.txt")
+        print("&&&& Reading features from: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "r")
+        feat_lines = feats_file.readlines()
+        feats_file.close()
+        features = []
+        geto_idx = 0
+        for v in feat_lines:
+            gid_feats = v.split(' ')
+            gnode_nx_idx = int(gid_feats[0])
+            self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx] = geto_idx
+            geto_idx += 1
+            features.append(np.array(gid_feats[1:]))
+        self.getoelms = np.array(features)
+        feats_file.close()
+

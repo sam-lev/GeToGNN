@@ -18,7 +18,8 @@ class RandomForest(MLGraph):
                  model_name=None, load_feature_graph_name=False,image=None, **kwargs):
 
         self.details = "Random forest classifier with feature importance"
-        self.type = "Random Forest"
+
+        self.type = "random_forest"
 
         self.params = {}
         if parameter_file_number is None:

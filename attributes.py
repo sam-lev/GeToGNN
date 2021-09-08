@@ -16,8 +16,8 @@ class Attributes:
         self.node_gid_to_prediction = {}
 
 
-        self.getoelms = []
-        self.lin_adj_idx_to_getoelm_idx = {}
+        self.getoelms = None
+        self.lin_adj_idx_to_getoelm_idx = None
         self.gid_to_getoelm_idx = {}
         self.gid_geto_elm_dict = {}
         self.graph_idx_to_gid = {}

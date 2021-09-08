@@ -10,7 +10,7 @@ import networkx as nx
 
 from localsetup import LocalSetup
 from attributes import Attributes
-from topology.utils import (
+from ml.features import (
     get_centroid,
     translate_points_by_centroid,
 )
@@ -36,7 +36,7 @@ class GeToElement:
                 i for i in self.__group_xy([float(i) for i in tmplist[2:]])
             ] #read the rest of the the points in the arc as xy tuples
         if self.dim == 1:
-            self.centroid = get_centroid(self)
+            self.centroid = get_centroid(self.points)
             self.vec = translate_points_by_centroid([self], self.centroid)
 
     def make_id(self):

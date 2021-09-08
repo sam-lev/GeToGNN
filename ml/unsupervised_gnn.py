@@ -585,6 +585,7 @@ class gnn:
                 # Training step
                 outs = sess.run([merged, model.opt_op, model.loss, model.ranks, model.aff_all,
                                  model.mrr, model.outputs1], feed_dict=feed_dict)
+                #geto opt op
                 train_cost = outs[2]
                 train_mrr = outs[5]
                 if train_shadow_mrr is None:

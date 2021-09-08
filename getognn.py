@@ -21,7 +21,7 @@ class GeToGNN(MLGraph):
                  geomsc_fname_base = None, label_file=None,
                  model_name=None, load_feature_graph_name=False,image=None, **kwargs):
 
-        self.type = "Getognn"
+        self.type = "getognn"
 
         self.params = {}
         if parameter_file_number is None:
@@ -160,7 +160,8 @@ class GeToGNN(MLGraph):
                        hidden_dim_2=self.params['hidden_dim_2'],
                        concat=self.params['concat'],
                        jumping_knowledge=self.params['jumping_knowledge'],
-                       jump_type=self.params['jump_type'])
+                       jump_type=self.params['jump_type'],
+                       geto_loss=self.params['geto_loss'])
 
     def supervised_train(self, **kwargs):
         for arg in kwargs:
@@ -210,7 +211,6 @@ class GeToGNN(MLGraph):
                            , degree_l2=self.params['degree_l2']
                            , degree_l3=self.params['degree_l3'])
         else:
-
             # format networkx idx to features and labels
             nx_idx_to_feat_idx = {self.node_gid_to_graph_idx[gid]: feat for gid, feat
                                   in self.node_gid_to_feat_idx.items()}
@@ -849,14 +849,36 @@ class supervised_getognn:
         # features
         if not self.getognn.params['load_features']:
             self.getognn.compile_features()
+            self.getognn.write_gnode_features(self.getognn.session_name)
+            self.getognn.write_feature_names()
         else:
             self.getognn.load_gnode_features()
+            self.getognn.load_feature_names()
+            #if 'geto' in self.getognn.params['aggregator']:
+            #    self.getognn.load_geto_features()
+            #    self.getognn.load_geto_feature_names()
+
         if self.getognn.params['write_features']:
             self.getognn.write_gnode_features(self.getognn.session_name)
+
         if self.getognn.params['write_feature_names']:
             self.getognn.write_feature_names()
 
-        self.getognn.build_geto_adj_list()
+        if self.getognn.params['load_geto_attr']:
+            if 'geto' in self.getognn.params['aggregator']:
+                self.getognn.load_geto_features()
+                self.getognn.load_geto_feature_names()
+        else:
+            if 'geto' in self.getognn.params['aggregator']:
+                self.getognn.build_geto_adj_list(influence_type=self.getognn.params['geto_influence_type'])
+                self.getognn.write_geto_features(self.getognn.session_name)
+                self.getognn.write_geto_feature_names()
+        if self.getognn.params['write_feature_names']:
+            if 'geto' in self.getognn.params['aggregator']:
+                self.getognn.write_geto_feature_names()
+        if self.getognn.params['write_features']:
+            if 'geto' in self.getognn.params['aggregator']:
+                self.getognn.write_geto_features(self.getognn.session_name)
 
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)
@@ -884,6 +906,11 @@ class supervised_getognn:
                                                'run-'+str(self.getognn.run_num)+'_walks')
             self.getognn.params['load_walks'] = walk_embedding_file
             self.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
+        else:
+            walk_embedding_file = os.path.join(self.getognn.LocalSetup.project_base_path, 'datasets',
+                                               self.getognn.params['write_folder'], 'walk_embeddings',
+                                               'run-' + str(self.getognn.run_num) + '_walks')
+            self.getognn.params['load_walks'] = walk_embedding_file
 
 
 

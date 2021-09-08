@@ -119,6 +119,7 @@ class gnn:
                        nx_idx_to_getoelm_idx=None,
                        geto_weights=None,
                        geto_elements=None,
+                       geto_loss=False,
                        hidden_dim_1=None, hidden_dim_2 = None, random_context=True
               , gpu=0, val_model='cvt', model_size="small", sigmoid=False, env='multivax'):
 
@@ -178,11 +179,12 @@ class gnn:
             self.nx_idx_to_getoelm_idx = nx_idx_to_getoelm_idx
             self.geto_weights = geto_weights
             self.geto_elements = geto_elements
-            self.getoinformed = self.nx_idx_to_getoelm_idx is not None
+            self.use_geto = self.nx_idx_to_getoelm_idx is not None
 
             self.concat = concat  # mean aggregator only one to perform concat
             self.dim_feature_space = int((dim + 1) / 2) if concat else dim
             self.jump_type = jump_type
+            self.geto_loss = geto_loss
             print('.... Jump Type is: ', jump_type)
             #end vomit#####################################
 
@@ -269,6 +271,7 @@ class gnn:
               geto_elements=None,
               jumping_knowledge = False,
               jump_type = 'pool',
+              geto_loss = False,
               hidden_dim_1=None, hidden_dim_2=None,
               positive_class_weight=1.0
               , weight_decay=0.001, polarity=6, use_embedding=None
@@ -287,6 +290,7 @@ class gnn:
                             nx_idx_to_getoelm_idx=nx_idx_to_getoelm_idx,
                             geto_weights=geto_weights,
                             geto_elements=geto_elements,
+                            geto_loss=geto_loss,
                             hidden_dim_1=hidden_dim_1, hidden_dim_2=hidden_dim_2
               , weight_decay=weight_decay, polarity=polarity, use_embedding=use_embedding
               , gpu=gpu, val_model=val_model, model_size=model_size, sigmoid=sigmoid, env=env)
@@ -367,7 +371,8 @@ class gnn:
         finished = False
         while not finished:
             if infer_feed_dict is None:
-                feed_dict_val, batch_labels, finished, _ = minibatch_iter.incremental_node_val_feed_dict(size, iter_num,
+                feed_dict_val, batch_labels, finished, _ = minibatch_iter.incremental_node_val_feed_dict(size,
+                                                                                                         iter_num,
                                                                   test=test, inference=inference)
                 if inference:
                     finished = True
@@ -411,41 +416,20 @@ class gnn:
                                class_map=None, id_map = None, name_prefix='', infer=False):
         # Define placeholders
         inf_batch_shape=None
-        if False:#inf_batch_shape is not None:
-            print("setting", inf_batch_shape)
-            bs = tf.placeholder_with_default(inf_batch_shape, shape=(), name=name_prefix +'batch_size')
-            #labels = np.vstack([self._make_label_vec(node,class_map,num_classes) for node in batch])
-            print("labels shape", labels.shape)
-            ls = tf.placeholder_with_default(labels,shape=(inf_batch_shape, num_classes)
-                                             , name=name_prefix+'labels')
-            #ls2= tf.placeholder_with_default(labels, shape=(inf_batch_shape, num_classes)
-            #                                 , name=name_prefix +'_infer_'+'labels2')
-            batch_from_map = [id_map[n] for n in batch]
-            b = tf.placeholder_with_default(batch_from_map, shape=(inf_batch_shape)
-                                            , name=name_prefix+'batch')
-            dpo = tf.placeholder_with_default(0., shape=(), name=name_prefix+'dropout')
-            #b1 = tf.placeholder_with_default(batch_from_map, shape=(inf_batch_shape)
-            #                                 , name=name_prefix + '_infer_'+'batch1')
-            training_bullshit_ph = tf.get_default_graph().get_tensor_by_name('batch_size')
-            assert bs == training_bullshit_ph
-            old_labels= tf.get_default_graph().get_tensor_by_name('labels')
-            assert ls ==old_labels
-            old_batch = tf.get_default_graph().get_tensor_by_name('batch')
-            assert b == old_batch
-            old_dropout = tf.get_default_graph().get_tensor_by_name('dropout')
-            assert dpo == old_dropout
 
-        else:
-            bs = tf.placeholder(tf.int32, shape=(), name="batch_size")
-            ls = tf.placeholder(tf.float32, shape=(inf_batch_shape, num_classes), name="labels")
-            #ls2 = tf.placeholder(tf.float32, shape=(inf_batch_shape, num_classes), name=name_prefix + 'labels2')
-            b = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="batch")
-            dpo = tf.placeholder_with_default(0., shape=(),  name="dropout")
-            #b1 = tf.placeholder(tf.int32, shape=(inf_batch_shape), name=name_prefix + 'batch1')
+
+        bs = tf.placeholder(tf.int32, shape=(), name="batch_size")
+        ls = tf.placeholder(tf.float32, shape=(inf_batch_shape, num_classes), name="labels")
+        #ls2 = tf.placeholder(tf.float32, shape=(inf_batch_shape, num_classes), name=name_prefix + 'labels2')
+        b = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="batch")
+        geto_batch = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="getobatch")
+        dpo = tf.placeholder_with_default(0., shape=(),  name="dropout")
+        #b1 = tf.placeholder(tf.int32, shape=(inf_batch_shape), name=name_prefix + 'batch1')
         if not infer:
             placeholders = {
                 'labels': ls,
                 'batch': b,
+                'getobatch': geto_batch,
                 'dropout': dpo,
                 'batch_size': bs, #tf.placeholder(tf.int32,inf_batch_shape, name=name_prefix+'batch_size'),
             }
@@ -453,6 +437,7 @@ class gnn:
             placeholders = {
                 'batch' : b,
                 'labels' : ls,
+                'getobatch': geto_batch,
                 #'batch1' : b1,                         #tf.placeholder(tf.int32, shape=(None), name='batch1'),
                 #'batch2' : ls2,                        #tf.placeholder(tf.int32, shape=(None), name='batch2'),
                 # negative samples for all nodes in the batch
@@ -521,8 +506,8 @@ class gnn:
         adj_info = tf.Variable(initial_value=minibatch.adj, shape=minibatch.adj.shape
                                , trainable=False, name="adj_info", dtype=tf.int32)
 
-        geto_adj_info_ph = tf.placeholder(tf.int32, shape=minibatch.geto_adj.shape)
-        geto_adj_info = tf.Variable(geto_adj_info_ph, trainable=False, name="geto_adj_info")
+        geto_adj_info_ph = tf.placeholder(tf.int32, shape=minibatch.geto_adj.shape) if self.use_geto else None
+        geto_adj_info = tf.Variable(geto_adj_info_ph, trainable=False, name="geto_adj_info") if self.use_geto  else None
 
         print(" ... Using aggregator: ", FLAGS.model)
 
@@ -543,6 +528,7 @@ class gnn:
                                         minibatch.deg,
                                         layer_infos,
                                         concat=self.concat,
+                                        geto_loss=self.geto_loss,
                                         jumping_knowledge=FLAGS.jumping_knowledge,
                                         jump_type=self.jump_type,
                                         hidden_dim_1_agg=FLAGS.hidden_dim_1_agg,
@@ -561,6 +547,7 @@ class gnn:
                                         features,
                                         adj_info,
                                         minibatch.deg,
+                                        geto_loss=self.geto_loss,
                                         jumping_knowledge=FLAGS.jumping_knowledge,
                                         jump_type=self.jump_type,
                                         hidden_dim_agg=FLAGS.hidden_dim_1_agg,
@@ -581,6 +568,7 @@ class gnn:
                                         features,
                                         adj_info,
                                         minibatch.deg,
+                                        geto_loss=self.geto_loss,
                                         layer_infos=layer_infos,
                                         aggregator_type="seq",
                                         model_size=FLAGS.model_size,
@@ -604,6 +592,7 @@ class gnn:
                                         adj_info,
                                         minibatch.deg,
                                         concat=self.concat,
+                                        geto_loss=self.geto_loss,
                                         jumping_knowledge=FLAGS.jumping_knowledge,
                                         jump_type = self.jump_type,
                                         hidden_dim_1_agg=FLAGS.hidden_dim_1_agg,
@@ -629,6 +618,7 @@ class gnn:
                                         features,
                                         adj_info,
                                         minibatch.deg,
+                                        geto_loss=self.geto_loss,
                                         jumping_knowledge=FLAGS.jumping_knowledge,
                                         jump_type=self.jump_type,
                                         hidden_dim_1_agg=FLAGS.hidden_dim_1_agg,
@@ -655,6 +645,7 @@ class gnn:
                                        geto_elements=self.geto_elements,
                                        geto_adj_info=geto_adj_info,
                                        concat=self.concat,
+                                        geto_loss=self.geto_loss,
                                        jumping_knowledge=self.FLAGS.jumping_knowledge,
                                        jump_type=self.jump_type,
                                        hidden_dim_1_agg=self.FLAGS.hidden_dim_1_agg,
@@ -681,6 +672,7 @@ class gnn:
                                        geto_elements=self.geto_elements,
                                        geto_adj_info=geto_adj_info,
                                        concat=self.concat,
+                                        geto_loss=self.geto_loss,
                                        jumping_knowledge=self.FLAGS.jumping_knowledge,
                                        jump_type=self.jump_type,
                                        hidden_dim_1_agg=self.FLAGS.hidden_dim_1_agg,
@@ -710,6 +702,7 @@ class gnn:
                                         concat=self.concat,
                                         jumping_knowledge=FLAGS.jumping_knowledge,
                                         jump_type=self.jump_type,
+                                        geto_loss=self.geto_loss,
                                         hidden_dim_1_agg=FLAGS.hidden_dim_1_agg,
                                         hidden_dim_2_agg=FLAGS.hidden_dim_2_agg,
                                         positive_class_weight=FLAGS.positive_class_weight,
@@ -719,19 +712,126 @@ class gnn:
                                         sigmoid_loss=FLAGS.sigmoid,
                                         identity_dim=FLAGS.identity_dim,
                                         logging=True)
-        elif self.FLAGS.model == 'hidden-geto_maxpool':
+        elif self.FLAGS.model == 'hidden-geto_meanpool':
             sampler = UniformNeighborSampler(adj_info, geto_adj_info=geto_adj_info)
-            layer_infos = [SAGEInfo("node_hidden-geto_maxpool", sampler, self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
+            layer_infos = [SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                    self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
             # SAGEInfo("node_maxpool", sampler, FLAGS.samples_2, FLAGS.dim_2)]
             for i in range(3, self.depth + 1):
                 # layer_infos.append(SAGEInfo("node_maxpool", sampler, FLAGS.samples_1, FLAGS.dim_1))
-                layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler, self.FLAGS.samples_2, self.FLAGS.dim_2))
-            layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler, self.FLAGS.samples_2, self.FLAGS.dim_2))
+                layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                            self.FLAGS.samples_2, self.FLAGS.dim_2))
+            layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                        self.FLAGS.samples_2, self.FLAGS.dim_1))
 
             model = SupervisedGraphsage(num_classes, placeholders,
                                         features,
                                         adj_info,
                                         minibatch.deg,
+                                        geto_elements=self.geto_elements,
+                                        geto_adj_info=geto_adj_info,
+                                        concat=self.concat,
+                                        geto_loss=self.geto_loss,
+                                        jumping_knowledge=FLAGS.jumping_knowledge,
+                                        jump_type=self.jump_type,
+                                        hidden_dim_1_agg=FLAGS.hidden_dim_1_agg,
+                                        hidden_dim_2_agg=FLAGS.hidden_dim_2_agg,
+                                        positive_class_weight=FLAGS.positive_class_weight,
+                                        layer_infos=layer_infos,
+                                        aggregator_type="hidden-geto_meanpool",
+                                        model_size=FLAGS.model_size,
+                                        sigmoid_loss=FLAGS.sigmoid,
+                                        identity_dim=FLAGS.identity_dim,
+                                        logging=True)
+        elif self.FLAGS.model == 'geto-edge':
+            sampler = GeToInformedNeighborSampler(adj_info,
+                                                  batch_size=FLAGS.batch_size,
+                                                  geto_adj_info=geto_adj_info,
+                                                  adj_probs=self.geto_elements,
+                                                  resampling_rate=0)
+            layer_infos = [SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                    self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
+            # SAGEInfo("node_maxpool", sampler, FLAGS.samples_2, FLAGS.dim_2)]
+            for i in range(3, self.depth + 1):
+                # layer_infos.append(SAGEInfo("node_maxpool", sampler, FLAGS.samples_1, FLAGS.dim_1))
+                layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                            self.FLAGS.samples_2, self.FLAGS.dim_2))
+            layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                        self.FLAGS.samples_2, self.FLAGS.dim_1))
+
+            model = SupervisedGraphsage(num_classes, placeholders,
+                                        features,
+                                        adj_info,
+                                        minibatch.deg,
+                                        geto_elements=self.geto_elements,
+                                        geto_adj_info=geto_adj_info,
+                                        concat=self.concat,
+                                        geto_loss=self.geto_loss,
+                                        jumping_knowledge=FLAGS.jumping_knowledge,
+                                        jump_type=self.jump_type,
+                                        hidden_dim_1_agg=FLAGS.hidden_dim_1_agg,
+                                        hidden_dim_2_agg=FLAGS.hidden_dim_2_agg,
+                                        positive_class_weight=FLAGS.positive_class_weight,
+                                        layer_infos=layer_infos,
+                                        aggregator_type="geto-edge",
+                                        model_size=FLAGS.model_size,
+                                        sigmoid_loss=FLAGS.sigmoid,
+                                        identity_dim=FLAGS.identity_dim,
+                                        logging=True)
+        elif self.FLAGS.model == 'hidden-geto-meanpool_geto-sampling':
+            sampler = GeToInformedNeighborSampler(adj_info,
+                                                  batch_size=FLAGS.batch_size,
+                                                  geto_adj_info=geto_adj_info,
+                                                  adj_probs=self.geto_elements,
+                                                  resampling_rate=0)
+            layer_infos = [SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                    self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
+            # SAGEInfo("node_maxpool", sampler, FLAGS.samples_2, FLAGS.dim_2)]
+            for i in range(3, self.depth + 1):
+                # layer_infos.append(SAGEInfo("node_maxpool", sampler, FLAGS.samples_1, FLAGS.dim_1))
+                layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                            self.FLAGS.samples_2, self.FLAGS.dim_2))
+            layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                        self.FLAGS.samples_2, self.FLAGS.dim_1))
+
+            model = SupervisedGraphsage(num_classes, placeholders,
+                                        features,
+                                        adj_info,
+                                        minibatch.deg,
+                                        geto_elements=self.geto_elements,
+                                        geto_adj_info=geto_adj_info,
+                                        concat=self.concat,
+                                        geto_loss=self.geto_loss,
+                                        jumping_knowledge=FLAGS.jumping_knowledge,
+                                        jump_type=self.jump_type,
+                                        hidden_dim_1_agg=FLAGS.hidden_dim_1_agg,
+                                        hidden_dim_2_agg=FLAGS.hidden_dim_2_agg,
+                                        positive_class_weight=FLAGS.positive_class_weight,
+                                        layer_infos=layer_infos,
+                                        aggregator_type="hidden-geto_meanpool",
+                                        model_size=FLAGS.model_size,
+                                        sigmoid_loss=FLAGS.sigmoid,
+                                        identity_dim=FLAGS.identity_dim,
+                                        logging=True)
+        elif self.FLAGS.model == 'hidden-geto_maxpool':
+            sampler = UniformNeighborSampler(adj_info, geto_adj_info=geto_adj_info)
+            layer_infos = [SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                    self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
+            # SAGEInfo("node_maxpool", sampler, FLAGS.samples_2, FLAGS.dim_2)]
+            for i in range(3, self.depth + 1):
+                # layer_infos.append(SAGEInfo("node_maxpool", sampler, FLAGS.samples_1, FLAGS.dim_1))
+                layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                            self.FLAGS.samples_2, self.FLAGS.dim_2))
+            layer_infos.append(SAGEInfo("node_hidden-geto_maxpool", sampler,
+                                        self.FLAGS.samples_2, self.FLAGS.dim_1))
+
+            model = SupervisedGraphsage(num_classes, placeholders,
+                                        features,
+                                        adj_info,
+                                        minibatch.deg,
+                                        geto_loss=self.geto_loss,
+                                        geto_elements=self.geto_elements,
+                                        geto_adj_info=geto_adj_info,
                                         concat=self.concat,
                                         jumping_knowledge=FLAGS.jumping_knowledge,
                                         jump_type=self.jump_type,
@@ -749,7 +849,8 @@ class gnn:
                                                   geto_adj_info=geto_adj_info,
                                                   adj_probs=self.geto_elements,
                                                   resampling_rate=0)
-            layer_infos = [SAGEInfo("node_geto-sampling_geto-meanpool", sampler, self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
+            layer_infos = [SAGEInfo("node_geto-sampling_geto-meanpool", sampler,
+                                    self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
             # SAGEInfo("node_maxpool", sampler, FLAGS.samples_2, FLAGS.dim_2)]
             for i in range(3, self.depth + 1):
                 # layer_infos.append(SAGEInfo("node_maxpool", sampler, FLAGS.samples_1, FLAGS.dim_1))
@@ -760,6 +861,7 @@ class gnn:
                                        features,
                                        adj_info,
                                        minibatch.deg,
+                                        geto_loss=self.geto_loss,
                                        geto_elements=self.geto_elements,
                                        geto_weights=self.geto_elements,
                                        geto_adj_info=geto_adj_info,
@@ -790,6 +892,7 @@ class gnn:
                                        features,
                                        adj_info,
                                        minibatch.deg,
+                                        geto_loss=self.geto_loss,
                                        geto_elements=self.geto_elements,
                                        geto_weights=self.geto_elements,
                                        geto_adj_info=geto_adj_info,
@@ -819,8 +922,10 @@ class gnn:
         #summary_writer = tf.summary.FileWriter(self.log_dir(), sess.graph)
 
         # Init variables
-        sess.run(tf.global_variables_initializer(), feed_dict={adj_info_ph: minibatch.adj, geto_adj_info_ph:minibatch.geto_adj})
-
+        if self.use_geto:
+            sess.run(tf.global_variables_initializer(), feed_dict={adj_info_ph: minibatch.adj, geto_adj_info_ph:minibatch.geto_adj})
+        else:
+            sess.run(tf.global_variables_initializer(), feed_dict={adj_info_ph: minibatch.adj})
         print("Training adj graph shape: ", minibatch.adj.shape)
         print("Test trian adj shape: ", minibatch.test_adj.shape)
         # save during training
@@ -834,6 +939,9 @@ class gnn:
 
         train_adj_info = tf.assign(adj_info, minibatch.adj)
         val_adj_info = tf.assign(adj_info, minibatch.test_adj,name='adj_assign')
+        if self.use_geto:
+            train_geto_adj_info = tf.assign(geto_adj_info, minibatch.geto_adj)
+            val_geto_adj_info = tf.assign(geto_adj_info, minibatch.test_geto_adj, name='geto_adj_assign')
         for epoch in range(FLAGS.epochs):
             minibatch.shuffle()
 
@@ -847,7 +955,12 @@ class gnn:
 
                 t = time.time()
                 # Training step
-                outs = sess.run([merged, model.opt_op, model.loss, model.preds], feed_dict=feed_dict)
+                outs = sess.run([merged, model.opt_op, model.loss, model.preds],
+                                feed_dict=feed_dict)
+                if self.geto_loss and "hidden" in self.FLAGS.model:
+                    geto_outs = sess.run([merged, model.geto_opt_op, model.geto_loss, model.geto_preds],
+                                    feed_dict=feed_dict)
+                    geto_train_cost = geto_outs[2]
                 train_cost = outs[2]
 
                 preds = self.pred_values(outs[-1])
@@ -857,7 +970,8 @@ class gnn:
                     # Validation
                     sess.run(val_adj_info.op)
                     if FLAGS.validate_batch_size == -1:
-                        val_cost, val_f1_mic, val_f1_mac, duration = self.incremental_evaluate(sess, model, minibatch,
+                        val_cost, val_f1_mic, val_f1_mac, duration = self.incremental_evaluate(sess, model,
+                                                                                               minibatch,
                                                                                           FLAGS.batch_size)
                     else:
                         val_cost, val_f1_mic, val_f1_mac, duration = self.evaluate(sess, model, minibatch,
@@ -883,6 +997,16 @@ class gnn:
                           "val_f1_mic=", "{:.5f}".format(val_f1_mic),
                           "val_f1_mac=", "{:.5f}".format(val_f1_mac),
                           "time=", "{:.5f}".format(avg_time))
+                    if self.geto_loss and "hidden" in self.FLAGS.model:
+                        geto_train_f1_mic, geto_train_f1_mac = self.calc_f1(labels, geto_outs[-1])
+                        print("Iter:", '%04d' % iter,
+                              "geto_train_loss=", "{:.5f}".format(geto_train_cost),
+                              "geto_train_f1_mic=", "{:.5f}".format(geto_train_f1_mic),
+                              "geto_train_f1_mac=", "{:.5f}".format(geto_train_f1_mac))
+                              #"val_loss=", "{:.5f}".format(val_cost),
+                              #"val_f1_mic=", "{:.5f}".format(val_f1_mic),
+                              #"val_f1_mac=", "{:.5f}".format(val_f1_mac),
+                              #"time=", "{:.5f}".format(avg_time))
 
                 iter += 1
                 total_steps += 1

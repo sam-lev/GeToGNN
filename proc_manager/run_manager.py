@@ -1,9 +1,13 @@
 import numpy as np
 import os
 
+from ml.MLP import mlp
 from ml.utils import get_partition_feature_label_pairs
 from metrics.model_metrics import compute_prediction_metrics
 from metrics.model_metrics import compute_getognn_metrics
+from compute_multirun_metrics import multi_run_metrics
+from data_ops.set_params import set_parameters
+
 from localsetup import LocalSetup
 LocalSetup = LocalSetup()
 
@@ -11,7 +15,7 @@ __all__ = ['Run_Manager']
 
 class Run_Manager:
     def __init__(self, model, training_window_file, features_file,
-                 sample_idx, model_name, format, learning_type='supervised'):
+                 sample_idx, model_name, format, learning_type='supervised', parameter_file_number=1):
         f = open(training_window_file, 'r')
         self.box_dict = {}
         self.param_lines = f.readlines()
@@ -29,6 +33,8 @@ class Run_Manager:
         self.experiment_folder = None
 
         self.learning_type=learning_type
+
+        self.parameter_file_number = parameter_file_number
 
     def __group_pairs(self, lst):
         for i in range(0, len(lst), 2):
@@ -95,6 +101,14 @@ class Run_Manager:
                 self.model.compile_features()
             elif self.model.params['load_features']:
                 self.model.load_gnode_features()
+                if self.model.type == 'getognn' and 'geto' in self.model.params['aggregator']:
+                    self.model.load_geto_features()
+
+            if not self.model.params['load_geto_attr'] and self.model.type == 'getognn' and 'geto' in self.model.params['aggregator']:
+                    self.model.build_geto_adj_list(influence_type=self.model.params['geto_influence_type'])
+                    self.model.write_geto_features(self.model.session_name)
+                    self.model.write_geto_feature_names()
+
 
             #if self.getognn.params['write_features']:
             #    self.getognn.write_gnode_features(self.getognn.session_name)
@@ -115,11 +129,16 @@ class Run_Manager:
             print(".. length test: ", len(test_set))
             # skip box if no training arcs present in region
             if cardinality_training_sets <= 1 or flag_class_empty:
+                removed_file = os.path.join(self.model.LocalSetup.project_base_path,
+                                                     'datasets', self.model.params['write_folder'],
+                                                     'removed_windows.txt')
+                if not os.path.exists(removed_file):
+                    open(removed_file, 'w').close()
                 removed_box_file = open(os.path.join(self.model.LocalSetup.project_base_path,
                                                      'datasets', self.model.params['write_folder'],
-                                                     'removed_windows.txt'),'w+')
-                removed_box_file.write('x_box '+str(X_BOX[0][0])+','+str(X_BOX[0][1])+'\n')
-                removed_box_file.write('y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+                                                     'removed_windows.txt'),'a+')
+                removed_box_file.write(str(self.model.run_num)+' x_box '+str(X_BOX[0][0])+','+str(X_BOX[0][1])+'\n')
+                removed_box_file.write(str(self.model.run_num)+' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
                 continue
 
             # must do cvt before assigning class
@@ -135,9 +154,9 @@ class Run_Manager:
             if not self.model.check_valid_partitions(all_selected, all_validation):
                 removed_box_file = open(os.path.join(self.model.LocalSetup.project_base_path,
                                                      'datasets', self.model.params['write_folder'],
-                                                     'removed_windows.txt'), 'w+')
-                removed_box_file.write('x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
-                removed_box_file.write('y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+                                                     'removed_windows.txt'), 'a+')
+                removed_box_file.write(str(self.model.run_num)+' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
+                removed_box_file.write(str(self.model.run_num)+' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
                 continue 
 
             for gid in all_validation:
@@ -148,12 +167,12 @@ class Run_Manager:
             self.model.write_gnode_partitions(self.model.session_name)
             self.model.write_selection_bounds(self.model.session_name)
 
-            if self.model.type == "Getognn" and self.model.params['write_json_graph']:
+            if self.model.type == "getognn" and self.model.params['write_json_graph']:
                 self.model.write_json_graph_data(folder_path=self.model.pred_session_run_path,
                                                  name=self.model_name + '_' + self.model.params['name'])
 
             # random walks
-            if self.model.type == "Getognn" and not self.model.params['load_preprocessed_walks'] and self.model.params['random_context']:
+            if self.model.type == "getognn" and not self.model.params['load_preprocessed_walks'] and self.model.params['random_context']:
                 walk_embedding_file = os.path.join(self.model.LocalSetup.project_base_path, 'datasets',
                                                    self.model.params['write_folder'], 'walk_embeddings',
                                                    'run-' + str(self.model.run_num) + '_walks')
@@ -161,7 +180,7 @@ class Run_Manager:
                 self.model.run_random_walks(walk_embedding_file=walk_embedding_file)
 
             #training
-            if self.model.type == "Getognn":
+            if self.model.type == "getognn":
                 self.model.supervised_train()
                 G = self.model.get_graph()
                 self.model.equate_graph(G)
@@ -176,7 +195,7 @@ class Run_Manager:
                 G = self.model.get_graph()
                 self.model.equate_graph(G)
 
-            if self.model.type == "Random Forest":
+            if self.model.type == "random_forest":
 
                 partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
                     self.model.node_gid_to_partition,
@@ -185,6 +204,8 @@ class Run_Manager:
                     test_all=True)
 
                 run_params = self.model.params
+                run_params = set_parameters(read_params_from=self.parameter_file_number,
+                                            experiment_folder=self.model.params['write_folder'])
                 gid_features_dict = partition_feat_dict['all']
                 gid_label_dict = partition_label_dict['all']
                 train_gid_label_dict = partition_label_dict['train']
@@ -219,9 +240,50 @@ class Run_Manager:
                 #self.model.feature_importance(gid_features_dict, feature_names, gid_label_dict, n_informative = 3, plot=False)
 
                 compute_prediction_metrics('random_forest', predictions, labels, out_folder)
+            if self.model.type == 'mlp':
+                partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
+                    self.model.attributes.node_gid_to_partition,
+                    self.model.attributes.node_gid_to_feature,
+                    self.model.attributes.node_gid_to_label,
+                    test_all=True)
+
+                run_params = self.model.attributes.params
+                gid_features_dict = partition_feat_dict['all']
+                gid_label_dict = partition_label_dict['all']
+                train_gid_label_dict = partition_label_dict['train']
+                train_gid_feat_dict = partition_feat_dict['train']
+
+                MLP = mlp(features=gid_features_dict, labels=gid_label_dict,
+                          train_labels=train_gid_label_dict,
+                          train_features=train_gid_feat_dict,
+                          test_labels=np.array(gid_label_dict),
+                          test_features=np.array(gid_features_dict),
+                          learning_rate=run_params['mlp_lr'],
+                          epochs=run_params['mlp_epochs'],
+                          batch_size=run_params['mlp_batch_size'],
+                          dim_hidden_1=run_params['mlp_out_dim_1'],
+                          dim_hidden_2=run_params['mlp_out_dim_2'],
+                          dim_hidden_3=run_params['mlp_out_dim_3'],
+                          feature_map=False)
+
+                preds, labels, accuracy = MLP.train()
+
+                out_folder = self.model.attributes.pred_session_run_path
+
+                MLP.write_arc_predictions(MLP.session_name)
+                MLP.draw_segmentation(dirpath=MLP.pred_session_run_path)
+
+                compute_prediction_metrics('mlp', preds, labels, out_folder)
 
             self.model.write_arc_predictions(self.model.session_name)
             self.model.draw_segmentation(dirpath=os.path.join(self.model.pred_session_run_path)) # , invert=True)
 
+        exp_folder = os.path.join(self.model.params['experiment_folder'] )
+        batch_metric_folder = os.path.join(exp_folder, 'batch_metrics')
+        if not os.path.exists(batch_metric_folder):
+            os.makedirs(batch_metric_folder)
+
+        multi_run_metrics(model=self.model.type, exp_folder=exp_folder,
+                          bins=7, runs='runs', plt_title=exp_folder.split('/')[-1])
         self.model.logger.write_experiment_info()
 

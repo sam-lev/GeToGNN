@@ -7,12 +7,14 @@ from getognn import supervised_getognn
 from getognn import unsupervised_getognn
 from getograph import Attributes
 from ml.Random_Forests import RandomForest
-from ml.MLP import MLP
+from ml.MLP import mlp
 from ml.utils import get_train_test_val_partitions
 from ml.utils import get_partition_feature_label_pairs
 from proc_manager.run_manager import *
 from metrics.model_metrics import compute_getognn_metrics
 from metrics.model_metrics import compute_prediction_metrics
+from data_ops.set_params import set_parameters
+
 from localsetup import LocalSetup
 LocalSetup = LocalSetup()
 
@@ -136,11 +138,12 @@ class runner:
         gid_features_dict = partition_feat_dict['all']
         gid_label_dict = partition_label_dict['all']
         getognn.load_feature_names()
-        getognn.feature_importance(feature_names=getognn.feature_names,
-                              features=gid_features_dict,
-                              labels=gid_label_dict,
-                                   plot=False)
-        getognn.write_feature_importance()
+        if getognn.params['feature_importance']:
+            getognn.feature_importance(feature_names=getognn.feature_names,
+                                  features=gid_features_dict,
+                                  labels=gid_label_dict,
+                                       plot=False)
+            getognn.write_feature_importance()
 
         #
         # Perform remainder of runs and don't need to read feats again
@@ -151,6 +154,7 @@ class runner:
         getognn.params['write_feature_names'] = False
         getognn.params['save_filtered_images'] = False
         getognn.params['collect_features'] = False
+        getognn.params['load_geto_attr'] = True
 
         run_manager = Run_Manager(model=getognn,
                                   training_window_file=self.window_file,
@@ -227,6 +231,8 @@ class runner:
             run_manager.perform_runs()
 
     def run_mlp(self, multi_run ):
+        run_params = set_parameters(read_params_from=self.parameter_file_number,
+                                    experiment_folder=self.write_path)
         train_set, test_set, val_set = get_train_test_val_partitions(self.attributes.node_gid_to_partition,
                                                                      self.attributes.gid_gnode_dict,
                                                                      test_all=True)
@@ -234,12 +240,64 @@ class runner:
                                                                                       self.attributes.node_gid_to_feature,
                                                                                       self.attributes.node_gid_to_label,
                                                                                       test_all=True)
+
+
         run_params = self.attributes.params
         gid_features_dict = partition_feat_dict['all']
         gid_label_dict = partition_label_dict['all']
         train_gid_label_dict = partition_label_dict['train']
         train_gid_feat_dict = partition_feat_dict['train']
-        mlp_accuracy, mlp_p, mlp_r, mlp_fs = MLP(features=gid_features_dict, labels=gid_label_dict,
+
+        MLP = mlp(features=gid_features_dict, labels=gid_label_dict,
+                  train_labels=train_gid_label_dict,
+                  train_features=train_gid_feat_dict,
+                  test_labels=np.array(gid_label_dict),
+                  test_features=np.array(gid_features_dict),
+                  learning_rate=run_params['mlp_lr'],
+                  epochs=run_params['mlp_epochs'],
+                  batch_size=run_params['mlp_batch_size'],
+                  dim_hidden_1=run_params['mlp_out_dim_1'],
+                  dim_hidden_2=run_params['mlp_out_dim_2'],
+                  dim_hidden_3=run_params['mlp_out_dim_3'],
+                  feature_map=False)
+
+        preds, labels, accuracy = MLP.train()
+
+        out_folder = self.attributes.pred_session_run_path
+
+        MLP.write_arc_predictions(MLP.session_name)
+        MLP.draw_segmentation(dirpath=MLP.pred_session_run_path)
+
+        compute_prediction_metrics('random_forest', preds, labels, out_folder)
+
+        MLP.load_feature_names()
+        MLP.feature_importance(feature_names=MLP.feature_names,
+                              features=gid_features_dict,
+                              labels=gid_label_dict)
+        MLP.write_feature_importance()
+
+        #
+        # Perform remainder of runs and don't need to read feats again
+        #
+        if not MLP.params['load_features']:
+            MLP.params['load_features'] = False
+            MLP.params['write_features'] = False
+            MLP.params['load_features'] = True
+            MLP.params['write_feature_names'] = False
+            MLP.params['save_filtered_images'] = False
+            MLP.params['collect_features'] = False
+
+        run_manager = Run_Manager(model=MLP,
+                                  training_window_file=self.window_file,
+                                  features_file=self.feature_file,
+                                  sample_idx=self.sample_idx,
+                                  model_name=self.model_name,
+                                  format=format,
+                                  parameter_file_number=self.parameter_file_number)
+        if multi_run:
+            run_manager.perform_runs()
+
+        mlp_accuracy, mlp_p, mlp_r, mlp_fs = mlp(features=gid_features_dict, labels=gid_label_dict,
                                                  train_labels=train_gid_label_dict,
                                                  train_features=train_gid_feat_dict,
                                                  test_labels=np.array(gid_label_dict),
@@ -282,6 +340,8 @@ class runner:
             test_all=True)
 
         run_params = self.attributes.params
+        run_params = set_parameters(read_params_from=self.parameter_file_number,
+                                     experiment_folder=self.write_path)
         gid_features_dict = partition_feat_dict['all']
         gid_label_dict = partition_label_dict['all']
         train_gid_label_dict = partition_label_dict['train']
@@ -336,7 +396,8 @@ class runner:
                                   features_file=self.feature_file,
                                   sample_idx=self.sample_idx,
                                   model_name=self.model_name,
-                                  format=format)
+                                  format=format,
+                                  parameter_file_number=self.parameter_file_number)
         if multi_run:
             run_manager.perform_runs()
 
