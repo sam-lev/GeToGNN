@@ -846,24 +846,6 @@ class supervised_getognn:
                           load_feature_graph_name=None,
                           write_json_graph = False)
 
-        # features
-        if not self.getognn.params['load_features']:
-            self.getognn.compile_features()
-            self.getognn.write_gnode_features(self.getognn.session_name)
-            self.getognn.write_feature_names()
-        else:
-            self.getognn.load_gnode_features()
-            self.getognn.load_feature_names()
-            #if 'geto' in self.getognn.params['aggregator']:
-            #    self.getognn.load_geto_features()
-            #    self.getognn.load_geto_feature_names()
-
-        if self.getognn.params['write_features']:
-            self.getognn.write_gnode_features(self.getognn.session_name)
-
-        if self.getognn.params['write_feature_names']:
-            self.getognn.write_feature_names()
-
         if self.getognn.params['load_geto_attr']:
             if 'geto' in self.getognn.params['aggregator']:
                 self.getognn.load_geto_features()
@@ -873,19 +855,40 @@ class supervised_getognn:
                 self.getognn.build_geto_adj_list(influence_type=self.getognn.params['geto_influence_type'])
                 self.getognn.write_geto_features(self.getognn.session_name)
                 self.getognn.write_geto_feature_names()
+
+        # features
+        if not self.getognn.params['load_features']:
+            self.getognn.compile_features(include_geto=self.getognn.params['geto_as_feat'])
+            self.getognn.write_gnode_features(self.getognn.session_name)
+            self.getognn.write_feature_names()
+        else:
+            self.getognn.load_gnode_features()
+            self.getognn.load_feature_names()
+            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
+                self.getognn.load_geto_features()
+                self.getognn.load_geto_feature_names()
+
+        if self.getognn.params['write_features']:
+            self.getognn.write_gnode_features(self.getognn.session_name)
+
         if self.getognn.params['write_feature_names']:
-            if 'geto' in self.getognn.params['aggregator']:
+            self.getognn.write_feature_names()
+
+
+        if self.getognn.params['write_feature_names']:
+            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
                 self.getognn.write_geto_feature_names()
         if self.getognn.params['write_features']:
-            if 'geto' in self.getognn.params['aggregator']:
+            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
                 self.getognn.write_geto_features(self.getognn.session_name)
 
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)
 
-        training_set , test_and_val_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'], y_range=self.getognn.params['y_box'])
+        training_set , test_and_val_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'],
+                                                                                  y_range=self.getognn.params['y_box'])
 
-        self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
+        self.getognn.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,
                                                  validation_samples = 1)
 
 
