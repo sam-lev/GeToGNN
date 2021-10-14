@@ -40,9 +40,8 @@ for i in range(int(Y/((1./fraction)*Y)*int(1./step))):
         Y_END = int(Y-1)
     y_boxes.append("y_box "+str(Y_START)+','+str(Y_END))
 
-for x_box in x_boxes:
-    for y_box in y_boxes:
-        box_set.add((x_box, y_box))
+for x_box,y_box in zip(x_boxes,y_boxes):
+    box_set.add((x_box, y_box))
         
 window_file=open(str(fname),"w+")
 count = 0

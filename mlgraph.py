@@ -12,24 +12,34 @@ from getofeaturegraph import GeToFeatureGraph
 
 
 class MLGraph(GeToFeatureGraph):
-    def __init__(self,run_num=0, parameter_file_number = None,
-                 geomsc_fname_base = None, label_file=None,
-                 model_name=None, load_feature_graph_name=False,image=None, **kwargs):
+    def __init__(self,**kwargs):
 
-        self.params = {}
+        '''self.params = {}
         if parameter_file_number is None:
             self.params = kwargs
         else:
             for param in kwargs:
                 self.params[param] = kwargs[param]
+        run_num=0, parameter_file_number = None,
+                 geomsc_fname_base = None, label_file=None,
+                 model_name=None, load_feature_graph_name=False,image=None,
 
+                '''
 
-        super(MLGraph, self).__init__(parameter_file_number=parameter_file_number, run_num=run_num,
-                                      name=self.params['name'],geomsc_fname_base=geomsc_fname_base,
-                                      label_file=label_file,image=image,
-                                      write_folder=self.params['write_folder'],
-                                      model_name=model_name,load_feature_graph_name=load_feature_graph_name,
-                                      params=self.params)
+        super(MLGraph, self).__init__(parameter_file_number=kwargs['parameter_file_number'],
+                                      run_num=kwargs['run_num'],
+                                      name=kwargs['name'], geomsc_fname_base=kwargs['geomsc_fname_base'],
+                                      label_file=kwargs['label_file'], image=kwargs['image'],
+                                      write_folder=kwargs['write_folder'],
+                                      model_name=kwargs['model_name'],
+                                      load_feature_graph_name=kwargs['load_feature_graph_name'])
+        # super(MLGraph, self).__init__(parameter_file_number=parameter_file_number, run_num=run_num,
+        #                               name=kwargs['name'],geomsc_fname_base=geomsc_fname_base,
+        #                               label_file=label_file,image=image,
+        #                               write_folder=kwargs['write_folder'],
+        #                               model_name=model_name,
+        #                               load_feature_graph_name=load_feature_graph_name)
+        #                              params=self.params)
 
     def update_training_from_inference(self):
         self.selection_type = 'active'
@@ -141,9 +151,7 @@ class MLGraph(GeToFeatureGraph):
     def box_select_geomsc_training(self, x_range, y_range, image=None):
         self.selection_type = 'box'
 
-        print("&&&& doing selection")
-        print("&&&& Box X Range_",x_range)
-        print("&&&& Box Y Range_", y_range)
+
         self.x_box = x_range
         self.y_box = y_range
 
@@ -153,6 +161,8 @@ class MLGraph(GeToFeatureGraph):
         self.selected_negative_arc_ids = set()
         self.selected_test_arcs = set()
         self.selected_test_arc_ids = set()
+
+        self.node_gid_to_partition = {}
 
         if len(x_range) == 1:#np.array(x_range).shape == np.array([6,9]).shape:
             x_range = x_range[0]
@@ -168,7 +178,7 @@ class MLGraph(GeToFeatureGraph):
                 for p in points:
                     if x_range[0] <= p[0] <= x_range[1] and y_range[0] <= p[1] <= y_range[1]:
                         in_box = True
-                if in_box and gnode.z != 1:
+                if in_box and self.node_gid_to_partition[gnode.gid] != 'val':# and gnode.z != 1:
                     gnode.box = 1
                     gnode.partition = 'train'
                     self.node_gid_to_partition[gnode.gid] = 'train'
@@ -178,26 +188,28 @@ class MLGraph(GeToFeatureGraph):
                     else:
                         self.selected_negative_arcs.add(gnode)
                         self.selected_negative_arc_ids.add(gid)
-                else:
+                elif self.node_gid_to_partition[gnode.gid] == '' and self.node_gid_to_partition[gnode.gid] != 'val':
                     gnode.box = 0
                     gnode.partition = 'test'
                     self.node_gid_to_partition[gnode.gid] = 'test'
                     self.selected_test_arcs.add(gnode)
                     self.selected_test_arc_ids.add(gid)
         else:
+            for gnode in self.gid_gnode_dict.values():  # self.msc.arcs:
+                gid = gnode.gid
+                self.node_gid_to_partition[gnode.gid] = ''
             range_group = zip(x_range, y_range)
             for x_rng , y_rng in range_group:
-
                 for gnode in self.gid_gnode_dict.values():#self.msc.arcs:
                     gid = gnode.gid
-                    self.node_gid_to_partition[gnode.gid] = ''
+                    #self.node_gid_to_partition[gnode.gid] = ''
                     p1 = gnode.points[0]
                     p2 = gnode.points[-1]
                     in_box = False
-                    for p in (p1, p2):
+                    for p in gnode.points:#(p1, p2):
                         if x_rng[0] <= p[0] <= x_rng[1] and y_rng[0] <= p[1] <= y_rng[1]:
                             in_box = True
-                    if in_box and gnode.z != 1:
+                    if in_box and self.node_gid_to_partition[gnode.gid] != 'val':#'#gnode.z != 1:
                         gnode.box = 1
                         gnode.partition = 'train'
                         self.node_gid_to_partition[gnode.gid] = 'train'
@@ -207,12 +219,33 @@ class MLGraph(GeToFeatureGraph):
                         else:
                             self.selected_negative_arcs.add(gnode)
                             self.selected_negative_arc_ids.add(gid)
-                    else:
+                    elif self.node_gid_to_partition[gnode.gid] != 'train' and self.node_gid_to_partition[gnode.gid] != 'val':
                         gnode.box = 0
                         gnode.partition = 'test'
                         self.node_gid_to_partition[gnode.gid] = 'test'
                         self.selected_test_arcs.add(gnode)
                         self.selected_test_arc_ids.add(gid)
+                    # else:
+                    #     gnode.box = 0
+                    #     gnode.partition = 'test'
+                    #     self.node_gid_to_partition[gnode.gid] = 'test'
+                    #     self.selected_test_arcs.add(gnode)
+                    #     self.selected_test_arc_ids.add(gid)
+        print("    * : length training", len(self.selected_positive_arc_ids)+len(self.selected_negative_arc_ids))
+        print("    * : length test", len(self.selected_test_arc_ids))
+
+        num_test = len(self.selected_test_arc_ids)
+        if num_test == 0:
+            dummy_test_node = list(self.gid_gnode_dict.values())[1]
+            dummy_test_node.partition = 'test'
+            self.node_gid_to_partition[dummy_test_node.gid] = 'test'
+            dn = set()
+            dn_g = set()
+            dn_g.add(dummy_test_node)
+            dn.add(dummy_test_node.gid)
+            self.selected_test_arc_ids = dn
+            self.selected_test_arcs = dn_g
+
         self.positive_arc_ids = self.selected_positive_arc_ids
         self.negative_arc_ids = self.selected_negative_arc_ids
         self.positive_arcs = self.selected_positive_arcs
@@ -275,7 +308,8 @@ class MLGraph(GeToFeatureGraph):
         return self.subgraph_sample_set, self.subgraph_sample_set_ids, subgraph_positive_arcs, subgraph_negative_arcs
 
     def cvt_sample_test_set(self, samples, hops):
-        self.subgraph_sample_set, self.subgraph_sample_set_ids, subgraph_positive_arcs, subgraph_negative_arcs = self.cvt_sample_subgraphs(sample_gnode_set=self.gid_gnode_dict.values(),
+        self.subgraph_sample_set, self.subgraph_sample_set_ids, \
+        subgraph_positive_arcs, subgraph_negative_arcs = self.cvt_sample_subgraphs(sample_gnode_set=self.gid_gnode_dict.values(),
                                                                                    count=samples,
                                                                                    hops=hops)
         return self.subgraph_sample_set, self.subgraph_sample_set_ids, subgraph_positive_arcs, subgraph_negative_arcs
@@ -344,24 +378,51 @@ class MLGraph(GeToFeatureGraph):
         for vl in val:
             train_pos_copy.discard(vl)
             train_neg_copy.discard(vl)
+        print("    * : size train and val after removal of overlap: ", len(train_pos_copy), len(train_pos_copy), ' val ', len(val))
         invalid = len(train_pos_copy) == 0 or len(train_neg_copy) == 0
         return not invalid
 
 
     def get_train_test_val_sugraph_split(self, validation_hops = 1, validation_samples = 1,
                                          test_hops = None, test_samples = None, multiclass= False
-                                         , collect_validation=True):
+                                         , collect_validation=False):
+        collect_validation = False
         if collect_validation:
+            print("    * :", "collecting validation samples")
             self.validation_set , self.validation_set_ids, _ , _ = self.cvt_sample_validation_set(hops = validation_hops,
                                                                                                   samples= validation_samples)
             for gid in self.validation_set_ids["positive"].union(self.validation_set_ids["negative"]):
 
                 self.node_gid_to_partition[gid] = 'val'
+            
+            all_validation = self.validation_set_ids["positive"].union(self.validation_set_ids["negative"])
+            dummy_validation = 0
+        else:
+            dummy_validation_pos = list(self.gid_gnode_dict.values())[0]
+            dummy_validation_neg = list(self.gid_gnode_dict.values())[1]
+            dummy_validation_pos.partition = 'val'
+            dummy_validation_neg.partition = 'val'
+            self.node_gid_to_partition[dummy_validation_pos.gid] = 'val'
+            self.node_gid_to_partition[dummy_validation_neg.gid] = 'val'
+            dp = set()
+            dn = set()
+            dp_g = set()
+            dn_g = set()
+            dp_g.add(dummy_validation_pos)
+            dn_g.add(dummy_validation_neg)
+            dp.add(dummy_validation_pos.gid)
+            dn.add(dummy_validation_neg.gid)
+            self.validation_set_ids = {"positive": dp, "negative": dn}
+            self.validation_set = dp_g.union(dn_g)
+            for gid in self.validation_set_ids["positive"].union(self.validation_set_ids["negative"]):
 
-        all_validation = self.validation_set_ids["positive"].union(self.validation_set_ids["negative"])
+                self.node_gid_to_partition[gid] = 'val'
+            all_validation = dp.union(dn)
+
         all_selected = self.selected_positive_arc_ids.union(self.selected_negative_arc_ids)
 
         if test_samples is not None:
+            print("    * :", "collecting test samples")
             self.test_set, self.test_set_ids, _, _ =self.cvt_sample_test_set(samples=test_samples
                                             , hops=test_hops)
             all_test = self.test_set_ids["positive"].union(self.test_set_ids["negative"])
@@ -412,6 +473,9 @@ class MLGraph(GeToFeatureGraph):
             # labeled nodes assigned as train, test, or val
             if self.params['union_space']:
                 node["label"] =  label
+
+                print(" FDFSDFSDFSDFSDFSDF")
+
                 if self.selection_type == 'map':
                     node["label_accuracy"] = gnode.label_accuracy
                 node["prediction"] = []
@@ -482,7 +546,10 @@ class MLGraph(GeToFeatureGraph):
         indices = np.argsort(importances)[::-1]
 
         # Print the feature ranking
-        print("Feature ranking:")
+        print("    * Feature ranking: ")
+        print(importances.shape)
+        print(len(feature_names))
+        print(indices.shape)
         self.feat_importance_dict = {}
         if feature_names is not None:
             for f in range(len(feature_names)):#X.shape[1]):
@@ -520,10 +587,14 @@ class MLGraph(GeToFeatureGraph):
                 top_ten = top_ten - 1
         pred_file.close()
 
-    def write_arc_predictions(self, filename, path=None, msc=None, name=''):
+    def write_arc_predictions(self, dir=None, path=None, msc=None, name=''):
         if name != '':
             name = name+'.'
-        msc_pred_file = os.path.join(self.pred_session_run_path, name+"preds.txt")
+        if dir is not None:
+            pred_session_run_path = dir
+        else:
+            pred_session_run_path = self.pred_session_run_path
+        msc_pred_file = os.path.join(pred_session_run_path, name+"preds.txt")
         print("&&&& writing predictions in: ", msc_pred_file)
         pred_file = open(msc_pred_file,"w+")
         for gid in self.node_gid_to_prediction.keys():#self.gid_gnode_dict.values():
@@ -532,10 +603,14 @@ class MLGraph(GeToFeatureGraph):
 
     # write to file per line 'gid partition'
     # where partition = {train:0, test:1, val:2}
-    def write_gnode_partitions(self, name):
+    def write_gnode_partitions(self, dir=None, name='', x_box=None,y_box=None):
         if name != '':
             name = name+'.'
-        partitions_file = os.path.join(self.pred_session_run_path, name+'partitions.txt')
+        if dir is not None:
+            pred_session_run_path = dir
+        else:
+            pred_session_run_path = self.pred_session_run_path
+        partitions_file = os.path.join(pred_session_run_path, name+'partitions.txt')
         print("... Writing partitions file to:", partitions_file)
         partitions_file = open(partitions_file, "w+")
         for gid in self.gid_gnode_dict.keys():
@@ -545,10 +620,29 @@ class MLGraph(GeToFeatureGraph):
             partitions_file.write(str(gid) + ' ' + str(p) + "\n")
         partitions_file.close()
 
-    def write_selection_bounds(self, name):
-        window_file = os.path.join(self.pred_session_run_path, 'window.txt')
+    def write_selection_bounds(self,dir=None, name='',x_box=None,y_box=None):
+        if x_box is not None:
+            x_box = self.x_box
+            y_box = self.y_box
+        if dir is not None:
+            pred_session_run_path = dir
+        else:
+            pred_session_run_path = self.pred_session_run_path
+        print("    * : in write of bounds ", x_box, ' ', y_box)
+        window_file = os.path.join(pred_session_run_path, 'window.txt')
         print("... Writing bounds file to:", window_file)
+
         window_file = open(window_file, "w+")
-        window_file.write('x_box' + ' ' + str(self.x_box) + "\n")
-        window_file.write('y_box' + ' ' + str(self.y_box) )
+
+        X = self.image.shape[0]
+        Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
+        window_file.write(str(X)+"\n")
+        window_file.write(str(Y) + "\n")
+
+        no_new_line = len(y_box)
+        for x_box, y_box in zip(x_box,y_box):
+            no_new_line -= 1
+            end_line = '' if 0 == no_new_line else "\n"
+            window_file.write('x_box' + ' ' + str(x_box[0]) +','+str(x_box[1])+ "\n")
+            window_file.write('y_box' + ' ' + str(y_box[0]) +','+str(y_box[1])+ end_line)
         window_file.close()

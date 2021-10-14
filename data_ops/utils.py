@@ -23,3 +23,20 @@ def remove_small_regions(img, size):
     img = morphology.remove_small_objects(img, size)
     img = morphology.remove_small_holes(img, size)
     return img
+
+def linear_idx_from_coord(x, y, X, Y):
+    return y*X + x
+
+def coord_from_linear_idx(idx, dim_x, dim_y, x, y, z):
+    x = idx % (dim_x)
+    idx /= (dim_x)
+    y = idx % (dim_y)
+    idx /= (dim_y)
+    z = idx
+
+
+
+def dbgprint(x,name=""):
+    print("    *")
+    print("    *:", name, x)
+    print("    *")

@@ -331,10 +331,10 @@ class GeToGraph(Attributes):
                 y = 0#0  if invert else 1
                 scale = 255.
                 if partition == 'train':
-                    label_color = [51, 255, 51]
+                    label_color = [255, 51, 255]
                     scale = 1
                 if partition == 'val':
-                    label_color = [255, 51, 255]
+                    label_color = [51, 255, 51]
                     scale = 1
                 if len(mapped_image.shape) == 2:
                     for p in np.array(gnode.points):

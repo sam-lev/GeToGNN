@@ -3,6 +3,10 @@ import os
 
 LS = LocalSetup()
 
+
+def tobool(b):
+    return "True" in b
+
 def parse_params(param_dict):
     selection_type = int(param_dict['selection_type'])
 
@@ -23,8 +27,7 @@ def parse_params(param_dict):
     else:
         gpus = str(param_dict['gpu'])[:-1]
 
-    def tobool(b):
-        return "True" in b
+
 
     pers_cards = param_dict['persistence_cardinality']
     params_dict = {
@@ -38,7 +41,9 @@ def parse_params(param_dict):
         'save_filtered_images' :  tobool(param_dict['save_filtered_images']),
         'load_features': tobool(param_dict['load_features']),
         'load_geto_attr': tobool(param_dict['load_geto_attr']),
+        'geto_as_feat' : tobool(param_dict['geto_as_feat']),
         'write_feature_names' : tobool(param_dict['write_feature_names']),
+        'load_feature_names': tobool(param_dict['load_feature_names']),
         'collect_features' : tobool(param_dict['collect_features']),
         'feature_importance': tobool(param_dict['feature_importance']),
         'test_param' : tobool(param_dict['test_param']),
@@ -171,6 +176,12 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
             if ',' not in name_value[1]:
                 if type(old_val) == str:
                     param_dict[name_value[0]] = type(old_val)(param_dict_changed[name_value[0]][:-1])
+                elif type(old_val) == bool:
+                    param_dict[name_value[0]] = tobool(param_dict_changed[name_value[0]])
+                elif type(old_val) == int:
+                    param_dict[name_value[0]] = int(param_dict_changed[name_value[0]])
+                elif type(old_val) == float:
+                    param_dict[name_value[0]] = float(param_dict_changed[name_value[0]])
                 else:
                     param_dict[name_value[0]] = type(old_val)(param_dict_changed[name_value[0]])
             print("")

@@ -288,7 +288,8 @@ class NodeMinibatchIterator(object):
 
         self.val_nodes = [n for n in self.G.nodes() if self.G.node[n]['val']]
         #if train:
-        self.test_nodes = [n for n in self.G.nodes() if self.G.node[n]['test']]
+        self.test_nodes = [n for n in self.G.nodes() if self.G.node[n]['test'] ]
+        self.all_nodes = [n for n in self.G.nodes() ]
         #else:
         #    print("performing inference")
         #    self.test_nodes = [n for n in self.G.nodes()]
@@ -484,7 +485,7 @@ class NodeMinibatchIterator(object):
 
     def incremental_node_val_feed_dict(self, size, iter_num, test=False, inference=False):
         if test:
-            val_nodes = self.test_nodes
+            val_nodes = self.all_nodes#test_nodes
         else:
             val_nodes = self.val_nodes
         val_node_subset = val_nodes[iter_num*size:min((iter_num+1)*size, 

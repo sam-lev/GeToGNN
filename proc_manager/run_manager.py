@@ -15,10 +15,18 @@ __all__ = ['Run_Manager']
 
 class Run_Manager:
     def __init__(self, model, training_window_file, features_file,
-                 sample_idx, model_name, format, learning_type='supervised', parameter_file_number=1):
+                 sample_idx, model_name, format, learning_type='supervised',
+                 parameter_file_number=1, expanding_boxes=True,
+                 collect_validation=False):
+
+        self.collect_validation = collect_validation
+
+        self.expanding_boxes = expanding_boxes
+
         f = open(training_window_file, 'r')
         self.box_dict = {}
         self.param_lines = f.readlines()
+        f.close()
         self.model = model
         self.model.logger.record_filename(window_list_file=os.path.join(LocalSetup.project_base_path,
                                                                         training_window_file))
@@ -76,9 +84,16 @@ class Run_Manager:
             self.model.update_run_info()
 
             current_box_dict = {}
-            current_box = boxes[current_box_idx]
+            current_box_idx = None if current_box_idx==(len(boxes)-1)\
+                else current_box_idx+1
+            current_box = boxes[current_box_idx] if self.expanding_boxes is \
+                                                    False else boxes[0:current_box_idx]
+            if self.expanding_boxes:
+                current_box = [y for x in current_box for y in x]
+            print('    * : box set', current_box)
 
             for bounds in current_box:
+
                 name_value = bounds.split(' ')
                 print(name_value)
 
@@ -97,17 +112,25 @@ class Run_Manager:
                     i for i in self.__group_pairs([i for i in current_box_dict['y_box']])
                 ]
             # features
-            if self.model.params['collect_features']:
-                self.model.compile_features()
-            elif self.model.params['load_features']:
+            if self.model.params['load_features'] and self.model.features is None:
                 self.model.load_gnode_features()
-                if self.model.type == 'getognn' and 'geto' in self.model.params['aggregator']:
+                if self.model.getoelms is None and (self.model.params['geto_as_feat'] or self.model.params['load_geto_attr']):
                     self.model.load_geto_features()
-
-            if not self.model.params['load_geto_attr'] and self.model.type == 'getognn' and 'geto' in self.model.params['aggregator']:
+            else:
+                if self.model.features is None:
+                    self.model.compile_features(include_geto=self.model.params['geto_as_feat'])
+                if self.model.getoelms is None and (not self.model.params['geto_as_feat'] or not self.model.params['load_geto_attr']):
                     self.model.build_geto_adj_list(influence_type=self.model.params['geto_influence_type'])
-                    self.model.write_geto_features(self.model.session_name)
-                    self.model.write_geto_feature_names()
+
+            if self.model.params['write_features']:
+                self.model.write_gnode_features(self.model.session_name)
+                self.model.write_geto_features(self.model.session_name)
+
+            if self.model.params['write_feature_names']:
+                self.model.write_feature_names()
+                self.model.write_geto_feature_names()
+
+
 
 
             #if self.getognn.params['write_features']:
@@ -143,26 +166,46 @@ class Run_Manager:
 
             # must do cvt before assigning class
             # to ensure validation set doesn't remove all training nodes
-            validation_hops = self.model.params['validation_hops']
-            validation_samples = self.model.params['validation_samples']
-            validation_set, validation_set_ids,\
-            _, _ = self.model.cvt_sample_validation_set(hops=validation_hops,
+            if self.collect_validation:
+                print("    * : PERFORMING cvt sampling")
+                validation_hops = self.model.params['validation_hops']
+                validation_samples = self.model.params['validation_samples']
+                validation_set, validation_set_ids,\
+                _, _ = self.model.cvt_sample_validation_set(hops=validation_hops,
                                                         samples=validation_samples)
+                # all_validation = self.model.validation_set_ids["positive"].union(self.model.validation_set_ids["negative"])
+                # all_selected = [self.model.selected_positive_arc_ids, self.model.selected_negative_arc_ids]
+                # #self.model.selected_positive_arc_ids.union(self.model.selected_negative_arc_ids)
+                # if not self.model.check_valid_partitions(all_selected, all_validation):
+                #     removed_box_file = open(os.path.join(self.model.LocalSetup.project_base_path,
+                #                                       'datasets', self.model.params['write_folder'],
+                #                                          'removed_windows.txt'), 'a+')
+                #     removed_box_file.write(str(self.model.run_num)+' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
+                #     removed_box_file.write(str(self.model.run_num)+' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+                #     continue
+                #
+                # for gid in all_validation:
+                #     self.model.node_gid_to_partition[gid] = 'val'
+
+            self.model.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
+                                                        validation_samples=1)
+
             all_validation = self.model.validation_set_ids["positive"].union(self.model.validation_set_ids["negative"])
             all_selected = [self.model.selected_positive_arc_ids, self.model.selected_negative_arc_ids]
-            #self.model.selected_positive_arc_ids.union(self.model.selected_negative_arc_ids)
+            # self.model.selected_positive_arc_ids.union(self.model.selected_negative_arc_ids)
             if not self.model.check_valid_partitions(all_selected, all_validation):
                 removed_box_file = open(os.path.join(self.model.LocalSetup.project_base_path,
                                                      'datasets', self.model.params['write_folder'],
                                                      'removed_windows.txt'), 'a+')
-                removed_box_file.write(str(self.model.run_num)+' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
-                removed_box_file.write(str(self.model.run_num)+' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
-                continue 
+                removed_box_file.write(
+                    str(self.model.run_num) + ' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
+                removed_box_file.write(
+                    str(self.model.run_num) + ' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+                continue
 
             for gid in all_validation:
                 self.model.node_gid_to_partition[gid] = 'val'
-            self.model.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
-                                                        validation_samples=1)
+
             #if self.getognn.params['write_partitions']:
             self.model.write_gnode_partitions(self.model.session_name)
             self.model.write_selection_bounds(self.model.session_name)
@@ -283,7 +326,7 @@ class Run_Manager:
         if not os.path.exists(batch_metric_folder):
             os.makedirs(batch_metric_folder)
 
-        multi_run_metrics(model=self.model.type, exp_folder=exp_folder,
-                          bins=7, runs='runs', plt_title=exp_folder.split('/')[-1])
+        multi_run_metrics(model=self.model.type, exp_folder=exp_folder,bins=7,
+                          runs='runs', plt_title=exp_folder.split('/')[-1])
         self.model.logger.write_experiment_info()
 

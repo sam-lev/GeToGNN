@@ -5,7 +5,10 @@ import os
 from copy import deepcopy
 
 from mlgraph import MLGraph
+from getograph import  Attributes
 from proc_manager import experiment_manager
+from data_ops import set_parameters
+from data_ops.utils import dbgprint
 from metrics.prediction_score import f1
 from metrics.prediction_score import recall
 from metrics.prediction_score import precision
@@ -15,37 +18,48 @@ class RandomForest(MLGraph):
 
     def __init__(self, training_selection_type='box',run_num=0, parameter_file_number = None,
                  geomsc_fname_base = None, label_file=None,
-                 model_name=None, load_feature_graph_name=False,image=None, **kwargs):
+                 model_name=None, load_feature_graph_name=False,image=None,  **kwargs):
+
+        self.model_name = model_name
 
         self.details = "Random forest classifier with feature importance"
 
         self.type = "random_forest"
 
-        self.params = {}
+
+
+        #if self.params is None:
+        self.parameter_file_number = parameter_file_number
+
+        '''self.params = {}
         if parameter_file_number is None:
             self.params = kwargs
         else:
             for param in kwargs:
-                self.params[param] = kwargs[param]
+                self.params[param] = kwargs[param]'''
+
+        #self.write_folder = self.params['write_folder']
 
         self.G = None
         self.G_dict = {}
 
         super(RandomForest, self).__init__(parameter_file_number=parameter_file_number, run_num=run_num,
-                                      name=self.params['name'], geomsc_fname_base=geomsc_fname_base,
-                                      label_file=label_file, image=image, write_folder=self.params['write_folder'],
+                                      name=kwargs['name'], geomsc_fname_base=geomsc_fname_base,
+                                      label_file=label_file, image=image, write_folder=kwargs['write_folder'],
                                       model_name=model_name, load_feature_graph_name=load_feature_graph_name)
 
-        #                                     params=self.params)
 
-        for param in kwargs:
+        self.attributes = self.get_attributes()
+        '''for param in kwargs:
             self.params[param] = kwargs[param]
         # for param in kwargs['params']:
         #    self.params[param] = kwargs['params'][param]
         if 'params' in kwargs.keys():
             param_add_ons = kwargs['params']
             for k, v in param_add_ons.items():
-                self.params[k] = v
+                self.params[k] = v'''
+
+
 
         self.run_num = run_num
         self.logger = experiment_manager.experiment_logger(experiment_folder=self.experiment_folder,
@@ -78,27 +92,66 @@ class RandomForest(MLGraph):
 
 
 
+        dbgprint(self.params['geto_as_feat'], 'use geto')
+        dbgprint(self.params['load_features'], 'load feat')
+
+        if self.run_num > 0:
+            #
+            # Perform remainder of runs and don't need to read feats again
+            #
+            # if not UNet.params['load_features']:
+            self.params['load_features'] = True
+            self.params['write_features'] = False
+            self.params['load_features'] = True
+            self.params['write_feature_names'] = False
+            self.params['save_filtered_images'] = False
+            self.params['collect_features'] = False
+            self.params['load_preprocessed'] = True
+            self.params['load_geto_attr'] = True
+            self.params['load_feature_names'] = True
+
+        if self.params['load_geto_attr']:
+            if self.params['geto_as_feat']:
+                self.load_geto_features()
+                self.load_geto_feature_names()
+
         # features
         if not self.params['load_features']:
-            self.compile_features()
+            self.compile_features(include_geto=self.params['geto_as_feat'])
+            self.write_gnode_features(self.session_name)
+            self.write_feature_names()
         else:
-            self.load_gnode_features()#
+            self.load_gnode_features()
+            self.load_feature_names()
+
+            #if 'geto' in self.params['aggregator']:
+            #    self.load_geto_features()
+            #    self.load_geto_feature_names()
+
         if self.params['write_features']:
             self.write_gnode_features(self.session_name)
-        if self.params['write_feature_names']:
-            self.write_feature_names()#
 
+        if self.params['write_feature_names']:
+            self.write_feature_names()
+
+
+        if self.params['write_feature_names']:
+            if self.params['geto_as_feat']:
+                self.write_geto_feature_names()
+        if self.params['write_features']:
+            if self.params['geto_as_feat']:
+                self.write_geto_features(self.session_name)
         # training info, selection, partition train/val/test
         self.read_labels_from_file(file=ground_truth_label_file)
 
         training_set , test_and_val_set = self.box_select_geomsc_training(x_range=self.params['x_box'], y_range=self.params['y_box'])
 
-        self.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
+        self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,
                                                  validation_samples = 1)
 
 
 
-        self.attributes = deepcopy(self.get_attributes())
+        #self.attributes = deepcopy(self.get_attributes())
         self.write_gnode_partitions(self.session_name)
         self.write_selection_bounds(self.session_name)
 
@@ -137,6 +190,7 @@ class RandomForest(MLGraph):
             print("Using class weights for positive: ", wp)
             print("total training samples: ", len(train_labels))
             print("total positive samples: ", np.sum(train_labels))
+
 
         rf = RandomForestClassifier(max_depth=depth,
                                     n_estimators=n_trees, class_weight={0:wn,1:wp}, random_state=666)

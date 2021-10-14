@@ -9,10 +9,11 @@ import scipy.stats
 import numpy.linalg as linalg
 import imageio
 from PIL import Image
-from sklearn.preprocessing import PowerTransformer, RobustScaler
+from sklearn.preprocessing import PowerTransformer, RobustScaler, QuantileTransformer
 
 from getograph import GeToGraph
 from data_ops.collect_data import collect_training_data, compute_geomsc, collect_datasets
+from data_ops.utils import dbgprint
 from data_ops.set_params import set_parameters
 from ml.features import (
     mean_filter,
@@ -78,19 +79,19 @@ class GeToFeatureGraph(GeToGraph):
         self.run_num = run_num
 
 
-        """if parameter_file_number is not None:
-            self.params = set_parameters(read_params_from=parameter_file_number)
-        else:
-            self.params = kwargs['params']
-        """
-        for param in kwargs:
+        #if parameter_file_number is not None:
+        #    self.params = set_parameters(read_params_from=parameter_file_number)
+        #else:
+        #    self.params = kwargs['params']
+
+        '''for param in kwargs:
             self.params[param] = kwargs[param]
         #for param in kwargs['params']:
         #    self.params[param] = kwargs['params'][param]
         if 'params' in kwargs.keys():
             param_add_ons = kwargs['params']
             for k, v in param_add_ons.items():
-                self.params[k] = v
+                self.params[k] = v'''
 
 
 
@@ -123,7 +124,7 @@ class GeToFeatureGraph(GeToGraph):
         #
         # Data
         #
-        self.data_array, self.data_set = collect_datasets(name=self.params['name'],image=image,
+        self.data_array, self.data_set = collect_datasets(name=name,image=image,
                                                           dim_invert=self.params['dim_invert'],
                                                           format=self.params['format'])
 
@@ -134,14 +135,14 @@ class GeToFeatureGraph(GeToGraph):
             dataset=self.data_set,
             data_array=self.data_array,
             params=self.params,
-            name=self.params['name'],
+            name=name,
             format=format,
             msc_file=None,
             dim_invert=self.params['dim_invert'])
 
         self.image, self.msc_collection, self.mask, self.segmentation = self.train_dataloader[
             int(self.params['train_data_idx'])]
-        self.image = self.image if len(self.image.shape) == 2 else np.transpose(np.mean(self.image, axis=1), (1, 0))
+        #self.image = self.image if len(self.image.shape) == 2 else np.transpose(np.mean(self.image, axis=1), (1, 0))
 
         self.X = self.image.shape[0]
         self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
@@ -154,11 +155,11 @@ class GeToFeatureGraph(GeToGraph):
         #
         # build feature graph
         #
-        if load_feature_graph_name is None:
-            self.msc_graph_name = 'geomsc_feature_graph-' + str(self.params['number_features']) + '_dataset-' + name + model_name
-        else:
-            self.msc_graph_name = load_feature_graph_name
-            self.load_feature_graph()
+        #if load_feature_graph_name is None:
+        #    self.msc_graph_name = 'geomsc_feature_graph-' + str(self.params['number_features']) + '_dataset-' + name + model_name
+        #else:
+        #    self.msc_graph_name = load_feature_graph_name
+        #    self.load_feature_graph()
         """if self.G is None:
             self.G = self.build_graph()
         """
@@ -215,7 +216,7 @@ class GeToFeatureGraph(GeToGraph):
         #self.lin_adj_idx_to_getoelm_idx = []
         lin_getoelm_idx = 0
 
-        check = 0
+        check = 10
 
         point_set = get_points_from_vertices(self.gid_gnode_dict.values())
 
@@ -234,6 +235,13 @@ class GeToFeatureGraph(GeToGraph):
                 geto_attr_names = add_name(name, geto_attr_names)
             return all_geto_attr , geto_attr_names
 
+        prod_nbr_attr = []
+        sum_nbr_attr = []
+        nbr_attr_names = []
+        computed_self_attributes = []
+        self_attr_names = []
+
+        max_deg = 0
         for gnode in self.gid_gnode_dict.values():
 
             geto_attr_vec = []
@@ -279,11 +287,11 @@ class GeToFeatureGraph(GeToGraph):
                                                                            centroid)
 
             computed_self_attributes = []
-            self_attr_names = []
+            #self_attr_names = []
             for i, p in enumerate(centroid_translated_points_self.flatten()):
                 computed_self_attributes.append(p)
                 if len(self.getoelms) == 0:
-                    self_attr_names = add_name('self_centroid_coord_' + str(i), self_attr_names)
+                    self_attr_names += add_name('self_centroid_coord_' + str(i), self_attr_names)
             '''computed_self_attributes += list(end_to_end_hyperbolic_grad.flatten())
             computed_self_attributes += list(p1_centroid_hyperbolic_grad.flatten())
             computed_self_attributes += list(p2_centroid_hyperbolic_grad.flatten())'''
@@ -333,12 +341,22 @@ class GeToFeatureGraph(GeToGraph):
                          'manhattan_distance_arc',
                          'mahalanobis_distance_self'
                          ]
-
+                #self.geto_attr_names = self_attr_names
             prod_nbr_attr = []
             sum_nbr_attr = []
-            nbr_attr_names = []
+            #nbr_attr_names = []
+            if check < 1:
+                dbgprint(len(self_attr_names), 'len self geto attr')
+
             for adj_edge in gnode.edge_gids:
-                for adj_gnode_gid in self.gid_edge_dict[adj_edge].gnode_gids:
+                adj_gnode_gids = self.gid_edge_dict[adj_edge].gnode_gids
+                deg = len(gnode.edge_gids)
+                if deg > max_deg:
+                    max_deg = deg
+                first_neigh = 0
+                for adj_gnode_gid in adj_gnode_gids:
+                    if adj_gnode_gid == gnode.gid:
+                        continue
                     nbr_geto_attr_vec = []
                     # geto feature vector attributes for learning hidden
                     # weighted representation
@@ -390,25 +408,25 @@ class GeToFeatureGraph(GeToGraph):
                     mahalanobis_distance_adj = mahalanobis_distance_arc(adj_gnode.points[0],
                                                                        adj_gnode.points[-1],
                                                                        inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
-                    #mahalanobis_distance_adj = mahalanobis_distance_adj #- mahalanobis_distance_self
+                    mahalanobis_distance_adj = mahalanobis_distance_adj #- mahalanobis_distance_self
                     mahalanobis_distance_adj1_self0 = mahalanobis_distance_arc(gnode.points[0],
-                                                                        adj_gnode.points[-1],
-                                                                        inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                                                                         adj_gnode.points[-1],
+                                                                         inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
                     mahalanobis_distance_adj1_self1 = mahalanobis_distance_arc(gnode.points[-1],
-                                                                        adj_gnode.points[-1],
-                                                                        inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
-                    #mahalanobis_distance_adj0_self0 = mahalanobis_distance_arc(gnode.points[0],
-                    #                                                           adj_gnode.points[0],
-                    #                                                           inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                                                                         adj_gnode.points[-1],
+                                                                         inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
+                    # #mahalanobis_distance_adj0_self0 = mahalanobis_distance_arc(gnode.points[0],
+                    # #                                                           adj_gnode.points[0],
+                    # #                                                           inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
                     mahalanobis_distance_adj0_self1 = mahalanobis_distance_arc(gnode.points[-1],
-                                                                               adj_gnode.points[0],
-                                                                               inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
+                                                                                adj_gnode.points[0],
+                                                                                inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
 
 
 
 
                     computed_nbr_attributes = []
-                    nbr_attr_names = []
+                    #nbr_attr_names = []
                     attr_vecs = [#end_to_adj_hyperbolic_grad,p1_adj_hyperbolic_grad,
                                  #p3_adj_hyperbolic_grad,
                                  end_to_adj_hyperbolic_dist,p1_adj_hyperbolic_dist,
@@ -419,7 +437,7 @@ class GeToFeatureGraph(GeToGraph):
                                  'p3_adj_hyperbolic_dist']
                     for attr_vec_name, attr_vec in zip(attr_vec_names, attr_vecs):
                         computed_nbr_attributes += list(attr_vec.flatten())
-                        if len(self.getoelms) == 0:
+                        if len(self.getoelms) == 0 and first_neigh==0 :
                             nbr_attr_names += [attr_vec_name+'_' + str(i) for i in
                                                range(len(list(attr_vec.flatten())))]
 
@@ -433,9 +451,9 @@ class GeToFeatureGraph(GeToGraph):
                                            mahalanobis_distance_adj1_self0,
                                            mahalanobis_distance_adj1_self1,
                                            mahalanobis_distance_adj0_self1]
-                    if len(self.getoelms) == 0:
+                    if len(self.getoelms) == 0 and first_neigh == 0:
                         nbr_attr_names += ['dot_vecs', 'cos_sim','cos_sim_numerator','cos_sim_denominator',
-                                 'triangle_area',
+                             'triangle_area',
                                  'triangle_area2',
                                  'angle_adj',
                                            'euclidean_dist_btwn_arcs_adj1_self1',
@@ -444,11 +462,13 @@ class GeToFeatureGraph(GeToGraph):
                                            'mahalanobis_distance_adj1_self0',
                                  'mahalanobis_distance_adj1_self1',
                                            'mahalanobis_distance_adj0_self1']
+                        #self.geto_attr_names += nbr_attr_names
+                    first_neigh += 1
 
-                    #prod_nbr_attr = list(np.multiply(prod_nbr_attr,computed_nbr_attributes)) if len(prod_nbr_attr)!=0 \
-                    #    else computed_nbr_attributes
-                    #sum_nbr_attr = list(np.sum((sum_nbr_attr, computed_nbr_attributes),axis=0)) if len(sum_nbr_attr) != 0 \
-                    #    else computed_nbr_attributes
+                    if check < 1:
+                        print(len(nbr_attr_names), 'len nbr geto attr names')
+                        print(deg, 'deg')
+                        check+=1
                     prod_nbr_attr = []
                     sum_nbr_attr += computed_nbr_attributes
 
@@ -458,8 +478,7 @@ class GeToFeatureGraph(GeToGraph):
             #nbr_attributes =  nbr_attributes.flatten()
 
 
-            if len(self.getoelms) == 0:
-                self.geto_attr_names = self_attr_names + nbr_attr_names
+
 
             if influence_type == 'weighted':
                 geto_attr_vec = [np.mean(geto_attr_vec)]
@@ -476,8 +495,12 @@ class GeToFeatureGraph(GeToGraph):
 
             num_geto_features = len(geto_attr_vec)
 
+        self.geto_attr_names = self_attr_names
+        #for i in range(2*(max_deg)):
+        #    self.geto_attr_names +=  nbr_attr_names
 
-
+        dbgprint(len(self.geto_attr_names), "len_geto_attr_names")
+        dbgprint(max_deg,'max degree')
         #
         # padding and scaling of features to be more uniform due to large outliers
         #
@@ -491,7 +514,9 @@ class GeToFeatureGraph(GeToGraph):
 
         max_feat_vec_length = np.max(variable_feat_lengths_only)
         getoelms = []
-        scaler = PowerTransformer(method='yeo-johnson')
+
+        scaler = QuantileTransformer(n_quantiles=1, output_distribution='normal')
+
         #scaler = RobustScaler(with_scaling=True, with_centering=True,unit_variance=False)
         '''geto_copy= self.getoelms.copy()
         self.getoelms = np.array(sum(self.getoelms,[])).astype(dtype=np.float32)
@@ -502,6 +527,7 @@ class GeToFeatureGraph(GeToGraph):
         sanity_check = [list(self.getoelms[variable_feat_lengths[idx][0] + 1:idx + variable_feat_lengths[idx][1]])
                            for
                            idx in range(len(variable_feat_lengths))]'''
+
         for getoelm in self.getoelms:
             pad_size =  max_feat_vec_length - len(getoelm)
             getoelm = scaler.fit_transform(np.array(getoelm).reshape(-1, 1))
@@ -511,10 +537,15 @@ class GeToFeatureGraph(GeToGraph):
 
             getoelms.append(getoelm)
 
+        pad_size_names = max_feat_vec_length - len(self.geto_attr_names)
+        for i, z in enumerate(range(pad_size_names)):
+            self.geto_attr_names.append(nbr_attr_names[i % len(nbr_attr_names)])
+
 
 
         self.getoelms = getoelms
         self.getoelms = np.array(self.getoelms).astype(dtype=np.float32)
+
 
         '''getoelms = []
         self.getoelms = scaler.fit_transform(self.getoelms)
@@ -536,13 +567,19 @@ class GeToFeatureGraph(GeToGraph):
         self.getoelms = getoelms
         self.getoelms = np.array(self.getoelms).astype(dtype=np.float32)
         #self.getoelms[np.isnan(self.getoelms)] = 0.'''
+        return self.getoelms
 
-    def compile_features(self, image=None, return_labels=False, save_filtered_images=False,
+    def compile_features(self, image=None, return_labels=False, include_geto=False,
+                         save_filtered_images=False,
                          min_number_features=1, number_features=5, selection=None):
 
         start_time = time.time()
 
         self.set_default_features()
+
+        if include_geto:
+            if self.getoelms is None:
+                self.getoelms = self.build_geto_adj_list(influence_type=self.params['geto_influence_type'])
 
 
         gnode_features = []
@@ -581,18 +618,45 @@ class GeToFeatureGraph(GeToGraph):
             #    feature_order += 1
 
 
+                #dbgprint(len(gnode_feature_row), "num features after geto")
 
+                #dbgprint(len(feature_names), 'len names b4')
+
+                #if len(gnode_features) == 0:
+                #    feature_names += self.geto_attr_names
+
+                #dbgprint(len(feature_names), 'len names')
+            if include_geto:
+                gnode_feature_row = np.array(gnode_feature_row)
+                gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
+                gnode_feature_row = np.hstack((gnode_feature_row, self.getoelms[gnode_nx_idx,:]))
             gnode_features.append(gnode_feature_row)
             gnode.features = np.array(gnode_feature_row).astype(dtype=np.float32)
             self.node_gid_to_feature[gnode.gid] = np.array(gnode_feature_row).astype(dtype=np.float32)
             self.node_gid_to_feat_idx[gnode.gid] = feature_idx
+
+
+
+
             feature_idx += 1
+
+
 
         gnode_features = np.array(gnode_features).astype(dtype=np.float32)
 
+        #if include_geto:
+        #    gnode_features = np.hstack((gnode_features, self.getoelms))
+
         self.number_features = len(feature_names)
-        self.feature_names = feature_names
-        print("number features: ", self.number_features)
+
+        dbgprint(len(feature_names), 'len names')
+        if self.getoelms is not None:
+            dbgprint(self.getoelms.shape, 'geto elm shape')
+        dbgprint(gnode_features.shape, 'gnode shape')
+
+        self.feature_names = feature_names if not include_geto else feature_names + self.geto_attr_names
+
+        dbgprint(len(self.feature_names), 'len names after')
         self.features = gnode_features
         end_time = time.time()
 
@@ -625,15 +689,15 @@ class GeToFeatureGraph(GeToGraph):
         self.feature_ops["min"] = lambda pixels: np.min(pixels)
         self.feature_ops["max"] = lambda pixels: np.max(pixels)
         self.feature_ops["median"] = lambda pixels: np.median(pixels)
-        self.feature_ops["mode"] = lambda pixels: scipy.stats.mode(np.round(pixels, 2))[0][0]
-        self.feature_ops["mean"] = lambda pixels: gaussian_fit(pixels)[0]
+        #self.feature_ops["mode"] = lambda pixels: scipy.stats.mode(np.round(pixels, 2))[0][0]
+        #self.feature_ops["mean"] = lambda pixels: gaussian_fit(pixels)[0]
 
         self.feature_ops["std"] = lambda pixels: gaussian_fit(pixels)[1]
         self.feature_ops["var"] = lambda pixels: gaussian_fit(pixels)[2]
 
-        self.feature_ops["skew"] = lambda pixels: scipy.stats.skew(pixels)
-        self.feature_ops["kurtosis"] = lambda pixels: scipy.stats.kurtosis(pixels)
-        self.feature_ops["range"] = lambda pixels: np.max(pixels) - np.min(pixels)
+        #self.feature_ops["skew"] = lambda pixels: scipy.stats.skew(pixels)
+        #self.feature_ops["kurtosis"] = lambda pixels: scipy.stats.kurtosis(pixels)
+        #self.feature_ops["range"] = lambda pixels: np.max(pixels) - np.min(pixels)
 
 
 
@@ -645,11 +709,11 @@ class GeToFeatureGraph(GeToGraph):
         for i in feature_scope:
             pow1 = 2*i #2 ** (i - 1)
             pow2 = i
-            if i >= 3:
-                self.images["laplacian"] = laplacian_filter(image_c, size=i)
-                image_c = copy.deepcopy(image_og)
-            self.images["mean_{}".format(i)] = mean_filter(image_c, i)
-            image_c = copy.deepcopy(image_og)
+            #if i >= 3:
+            #    self.images["laplacian"] = laplacian_filter(image_c, size=i)
+            #    image_c = copy.deepcopy(image_og)
+            #self.images["mean_{}".format(i)] = mean_filter(image_c, i)
+            #image_c = copy.deepcopy(image_og)
             self.images["variance_{}".format(i)] = variance_filter(
                 image_c, i
             )
@@ -672,11 +736,11 @@ class GeToFeatureGraph(GeToGraph):
         if self.params['save_filtered_images']:
             for name, image in self.images.items():
                 image = np.array(image).astype('uint8')
-                #Img = Image.fromarray(image)
+                Img = Image.fromarray(image)
                 if not os.path.exists(os.path.join(self.experiment_folder, 'filtered_images')):
                     os.makedirs(os.path.join(self.experiment_folder, 'filtered_images'))
-                #Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'))
-                imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.png'), image)
+                Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), quality=90)
+                #imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), image)
 
     def load_json_feature_graph(self):
         graph_path = os.path.join(self.pred_run_path, self.msc_graph_name)
@@ -706,27 +770,28 @@ class GeToFeatureGraph(GeToGraph):
         feats_file.close()
 
     def write_geto_features(self, filename):
-        if not os.path.exists(os.path.join(self.experiment_folder,'features')):
-            os.makedirs(os.path.join(self.experiment_folder,'features'))
-        msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_feats.txt")
-        msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "idx_to_getoelm_idx.txt")
-        print("&&&& writing features in: ", msc_feats_file)
-        feats_file = open(msc_feats_file, "w+")
-        gid_feats_file = open(msc_gid_to_feats_file, "w+")
-        lines = 1
-        for gnode in self.gid_gnode_dict.values():
-            gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
-            nl = '\n' if lines != len(self.gid_gnode_dict) else ''
-            gid_feats_file.write(str(gnode_nx_idx)+' '+
-                                 str(self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx])+nl)
-            feature_vec = self.getoelms[gnode_nx_idx]
-            feats_file.write(str(gnode_nx_idx)+ ' ')
-            for f in feature_vec[0:-1]:
-                feats_file.write(str(f)+' ')
-            feats_file.write(str(feature_vec[-1]) + nl)
-            lines += 1
-        gid_feats_file.close()
-        feats_file.close()
+        if self.getoelms is not None:
+            if not os.path.exists(os.path.join(self.experiment_folder,'features')):
+                os.makedirs(os.path.join(self.experiment_folder,'features'))
+            msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_feats.txt")
+            msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "idx_to_getoelm_idx.txt")
+            print("&&&& writing features in: ", msc_feats_file)
+            feats_file = open(msc_feats_file, "w+")
+            gid_feats_file = open(msc_gid_to_feats_file, "w+")
+            lines = 1
+            for gnode in self.gid_gnode_dict.values():
+                gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
+                nl = '\n' if lines != len(self.gid_gnode_dict) else ''
+                gid_feats_file.write(str(gnode_nx_idx)+' '+
+                                     str(self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx])+nl)
+                feature_vec = self.getoelms[gnode_nx_idx]
+                feats_file.write(str(gnode_nx_idx)+ ' ')
+                for f in feature_vec[0:-1]:
+                    feats_file.write(str(f)+' ')
+                feats_file.write(str(feature_vec[-1]) + nl)
+                lines += 1
+            gid_feats_file.close()
+            feats_file.close()
 
     def write_feature_names(self):
         msc_feats_file = os.path.join(self.experiment_folder,'features', "featnames.txt")
@@ -737,12 +802,13 @@ class GeToFeatureGraph(GeToGraph):
         feats_file.close()
 
     def write_geto_feature_names(self):
-        msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_featnames.txt")
-        print("&&&& writing feature namesin: ", msc_feats_file)
-        feats_file = open(msc_feats_file, "w+")
-        for fname in self.geto_attr_names:
-            feats_file.write(fname + "\n")
-        feats_file.close()
+        if self.getoelms is not None:
+            msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_featnames.txt")
+            print("&&&& writing feature namesin: ", msc_feats_file)
+            feats_file = open(msc_feats_file, "w+")
+            for fname in self.geto_attr_names:
+                feats_file.write(fname + "\n")
+            feats_file.close()
 
     def load_feature_names(self):
         msc_feats_file = os.path.join(self.experiment_folder, 'features', "featnames.txt")

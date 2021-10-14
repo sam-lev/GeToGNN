@@ -8,12 +8,14 @@ from getognn import unsupervised_getognn
 from getograph import Attributes
 from ml.Random_Forests import RandomForest
 from ml.MLP import mlp
+from ml.UNet import UNetwork, UNet_Trainer, UNet_Classifier
 from ml.utils import get_train_test_val_partitions
 from ml.utils import get_partition_feature_label_pairs
 from proc_manager.run_manager import *
 from metrics.model_metrics import compute_getognn_metrics
 from metrics.model_metrics import compute_prediction_metrics
 from data_ops.set_params import set_parameters
+from compute_multirun_metrics import multi_run_metrics
 
 from localsetup import LocalSetup
 LocalSetup = LocalSetup()
@@ -99,6 +101,8 @@ class runner:
             self.run_mlp(self.multi_run)
         if model == 'random_forest':
             self.run_random_forest(self.multi_run)
+        if model == 'unet':
+            self.run_unet(self.multi_run)
 
 
 
@@ -118,6 +122,7 @@ class runner:
                                    window_file=None,model_name="GeToGNN")
 
         self.attributes = sup_getognn.attributes
+
 
 
         getognn = sup_getognn.train()
@@ -219,6 +224,9 @@ class runner:
             getognn.params['write_feature_names'] = False
             getognn.params['save_filtered_images'] = False
             getognn.params['collect_features'] = False
+            getognn.params['load_preprocessed'] = True
+            getognn.params['load_geto_attr'] = True
+            getognn.params['load_feature_names'] = True
 
         run_manager = Run_Manager(model=getognn,
                                   training_window_file=self.window_file,
@@ -268,7 +276,7 @@ class runner:
         MLP.write_arc_predictions(MLP.session_name)
         MLP.draw_segmentation(dirpath=MLP.pred_session_run_path)
 
-        compute_prediction_metrics('random_forest', preds, labels, out_folder)
+        compute_prediction_metrics('mlp', preds, labels, out_folder)
 
         MLP.load_feature_names()
         MLP.feature_importance(feature_names=MLP.feature_names,
@@ -286,6 +294,9 @@ class runner:
             MLP.params['write_feature_names'] = False
             MLP.params['save_filtered_images'] = False
             MLP.params['collect_features'] = False
+            MLP.params['load_preprocessed'] = True
+            MLP.params['load_geto_attr'] = True
+            MLP.params['load_feature_names'] = True
 
         run_manager = Run_Manager(model=MLP,
                                   training_window_file=self.window_file,
@@ -293,11 +304,12 @@ class runner:
                                   sample_idx=self.sample_idx,
                                   model_name=self.model_name,
                                   format=format,
+                                  expanding_boxes=True,
                                   parameter_file_number=self.parameter_file_number)
         if multi_run:
             run_manager.perform_runs()
 
-        mlp_accuracy, mlp_p, mlp_r, mlp_fs = mlp(features=gid_features_dict, labels=gid_label_dict,
+        '''mlp_accuracy, mlp_p, mlp_r, mlp_fs = mlp(features=gid_features_dict, labels=gid_label_dict,
                                                  train_labels=train_gid_label_dict,
                                                  train_features=train_gid_feat_dict,
                                                  test_labels=np.array(gid_label_dict),
@@ -311,11 +323,141 @@ class runner:
                                                  feature_map=False)
         manp_mlp = mlp_accuracy[1]
         manr_mlp = mlp_accuracy[2]
-        mlp_accuracy = mlp_accuracy[0]
+        mlp_accuracy = mlp_accuracy[0]'''
 
+
+    #
+    #
+    #                   *     UNET            *
+    #
+    #
+    #
+    def run_unet(self,multi_run):
+
+        f = open(self.window_file, 'r')
+        param_lines = f.readlines() if multi_run else None
+        f.close()
+
+
+        param_lines = param_lines
+
+
+        training_size = len(param_lines) if multi_run else None
+
+        num_training = 1 if training_size is None else training_size
+        exp_folder = ''
+        input_folder = ''
+        label_file = ''
+        param_file = ''
+        for num_samp in range(num_training):
+
+
+            UNet = UNetwork(in_channel=1, out_channel=1,
+                            ground_truth_label_file=self.ground_truth_label_file,
+                            skip_connect=True,
+                            run_num=self.run_num,
+                            parameter_file_number = self.parameter_file_number,
+                            geomsc_fname_base = self.msc_file,
+                            label_file=self.ground_truth_label_file,
+                            model_name=self.model_name,
+                            load_feature_graph_name=False,
+                            image=self.image,
+                            name=self.name,
+                            write_folder=self.write_path,
+                            training_size=num_samp,
+                            region_list=param_lines)
+
+            trainer = UNet_Trainer(UNet)
+            results = trainer.launch_training(view_results=False)
+
+            train_losses, test_losses, F1_scores, best_f1, \
+            val_imgs, val_segs, sample_losses, val_img_preds, running_best_model = results
+            UNet.running_best_model = trainer.running_best_model
+
+            #
+            # Perform remainder of runs and don't need to read feats again
+            #
+            #if not UNet.params['load_features']:
+            UNet.params['load_features'] = True
+            UNet.params['write_features'] = False
+            UNet.params['load_features'] = True
+            UNet.params['write_feature_names'] = False
+            UNet.params['save_filtered_images'] = False
+            UNet.params['collect_features'] = False
+            UNet.params['load_preprocessed'] = True
+            UNet.params['load_geto_attr'] = True
+            UNet.params['load_feature_names'] = True
+
+            ### unet_classifier = UNet_Classifier(UNet, self.window_file)
+            ### inf_resuts = unet_classifier.infer(running_best_model ,infer_subsets=True, view_results=True)
+            inf_results = UNet.infer(running_best_model,training_window_file=self.window_file,
+                                     infer_subsets=True, view_results=False)
+
+            test_losses, val_imgs, val_segs, val_img_preds, running_val_loss,\
+            F1_score, labels, predictions = inf_results
+
+            exp_folder = os.path.join(UNet.params['experiment_folder'])
+            input_folder=UNet.input_folder
+            # batch_metric_folder = os.path.join(exp_folder, 'batch_metrics') if not multi_run \
+            #     else os.path.join(exp_folder,'runs',str(num_samp), 'batch_metrics')
+            # if not os.path.exists(batch_metric_folder):
+            #     os.makedirs(batch_metric_folder)
+            #
+            # out_folder = UNet.pred_session_run_path
+            #
+            # # compute_prediction_metrics('unet', predictions, labels, out_folder)
+            # #
+            # #UNet.write_arc_predictions(UNet.session_name)
+            # # UNet.draw_segmentation(dirpath=UNet.pred_session_run_path)
+            #
+            # multi_run_metrics(model=UNet.type, exp_folder=exp_folder, batch_multi_run=str(num_samp),
+            #                   bins=7, runs=os.path.join('runs',str(num_samp)),
+            #                   plt_title=exp_folder.split('/')[-1])
+
+
+
+            # if num_samp == num_training:
+            #     exp_folder = os.path.join(UNet.params['experiment_folder'])
+            #     batch_metric_folder = os.path.join(exp_folder, 'batch_metrics')
+            #     if not os.path.exists(batch_metric_folder):
+            #         os.makedirs(batch_metric_folder)
+            #     multi_run_metrics(model=UNet.type, exp_folder=exp_folder, batch_multi_run=True,
+            #                       bins=7, runs='runs', plt_title=exp_folder.split('/')[-1])
+            #     self.logger = experiment_logger(experiment_folder=self.experiment_folder,
+            #                                                        input_folder=UNet.input_folder)
+            #     topo_image_name = self.ground_truth_label_file.split('.labels')[0]
+            #     self.logger.record_filename(label_file=UNet.label_file,
+            #                                 parameter_list_file=UNet.param_file,
+            #                                 image_name=self.image,
+            #                                 topo_image_name=topo_image_name)
+        base_exp_folder = exp_folder
+        exp_folder = os.path.join(exp_folder, 'runs')
+
+        batch_metric_folder = base_exp_folder
+        if not os.path.exists(batch_metric_folder):
+            os.makedirs(batch_metric_folder)
+
+        # compute_prediction_metrics('unet', predictions, labels, out_folder)
+        #
+        # UNet.write_arc_predictions(UNet.session_name)
+        # UNet.draw_segmentation(dirpath=UNet.pred_session_run_path)
+
+        multi_run_metrics(model='metric', exp_folder=exp_folder,
+                          batch_multi_run=True, avg_multi=True,
+                          bins=7, runs='batch_metrics', metric='averages',
+                          plt_title=exp_folder.split('/')[-1])
+
+
+
+    #
+    #
+    #                     *  RANDOM FOREST *
+    #
+    #
     def run_random_forest(self, multi_run ):
 
-
+        #run_params = set_parameters(read_params_from=self.parameter_file_number,
+        #                            experiment_folder=self.write_path)
         RF = RandomForest(training_selection_type='box',
                           run_num=self.run_num,
                           parameter_file_number = self.parameter_file_number,
@@ -329,30 +471,30 @@ class runner:
                           load_feature_graph_name=None,
                           write_json_graph = False)
 
+        print("    * :", RF.params)
+
         RF.build_random_forest(ground_truth_label_file=self.ground_truth_label_file)
 
-        self.attributes = RF.attributes
+        print("   *:   feat names length", len(RF.feature_names))
 
         partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
-            self.attributes.node_gid_to_partition,
-            self.attributes.node_gid_to_feature,
-            self.attributes.node_gid_to_label,
+            RF.node_gid_to_partition,
+            RF.node_gid_to_feature,
+            RF.node_gid_to_label,
             test_all=True)
 
-        run_params = self.attributes.params
-        run_params = set_parameters(read_params_from=self.parameter_file_number,
-                                     experiment_folder=self.write_path)
+
         gid_features_dict = partition_feat_dict['all']
         gid_label_dict = partition_label_dict['all']
         train_gid_label_dict = partition_label_dict['train']
         train_gid_feat_dict = partition_feat_dict['train']
 
-        n_trees = run_params['number_forests']
-        tree_depth = run_params['forest_depth']
+        n_trees = RF.params['number_forests']
+        tree_depth = RF.params['forest_depth']
 
-        if run_params['forest_class_weights']:
-            class_1_weight = run_params['class_1_weight']
-            class_2_weight = run_params['class_2_weight']
+        if RF.params['forest_class_weights']:
+            class_1_weight = RF.params['class_1_weight']
+            class_2_weight = RF.params['class_2_weight']
         else:
             class_1_weight = 1.0
             class_2_weight = 1.0
@@ -364,32 +506,37 @@ class runner:
                                                                     n_trees=n_trees,
                                                                     class_1_weight=class_1_weight,
                                                                     class_2_weight=class_2_weight,
-                                                                    weighted_distribution=run_params['forest_class_weights'],
+                                                                    weighted_distribution=RF.params['forest_class_weights'],
                                                                     depth=tree_depth)
-        out_folder = self.attributes.pred_session_run_path
+        out_folder = RF.attributes.pred_session_run_path
 
         RF.write_arc_predictions(RF.session_name)
         RF.draw_segmentation(dirpath=RF.pred_session_run_path)
 
         compute_prediction_metrics('random_forest', predictions, labels, out_folder)
 
-        RF.load_feature_names()
-        RF.feature_importance(feature_names=RF.feature_names,
-                              features=gid_features_dict,
-                              labels=gid_label_dict)
-        RF.write_feature_importance()
+        #if RF.params['load_feature_names']:
+        #    RF.load_feature_names()
+        if RF.params['feature_importance']:
+            RF.feature_importance(feature_names=RF.feature_names,
+                                  features=gid_features_dict,
+                                  labels=gid_label_dict,
+                                  plot=False)
+            RF.write_feature_importance()
 
 
         #
         # Perform remainder of runs and don't need to read feats again
         #
         if not RF.params['load_features']:
-            RF.params['load_features'] = False
             RF.params['write_features'] = False
             RF.params['load_features'] = True
             RF.params['write_feature_names'] = False
             RF.params['save_filtered_images'] = False
             RF.params['collect_features'] = False
+            RF.params['load_preprocessed'] = True
+            RF.params['load_geto_attr'] = True
+            RF.params['load_feature_names'] = True
 
         run_manager = Run_Manager(model=RF,
                                   training_window_file=self.window_file,
