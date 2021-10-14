@@ -56,8 +56,8 @@ class RandomForest(MLGraph):
         #    self.params[param] = kwargs['params'][param]
         if 'params' in kwargs.keys():
             param_add_ons = kwargs['params']
-            for k, v in param_add_ons.items():
-                self.params[k] = v'''
+            for l, v in param_add_ons.items():
+                self.params[l] = v'''
 
 
 
