@@ -10,12 +10,17 @@ import networkx as nx
 
 from localsetup import LocalSetup
 from attributes import Attributes
-
+from ml.features import (
+    get_centroid,
+    translate_points_by_centroid,
+)
 
 class GeToElement:
     def __init__(self, dim = None, gid = None, points = None):
         self.dim = dim
         self.gid = gid
+        self.centroid = None
+        self.vec = None
         if dim is not None:
             self.points = points
 
@@ -30,6 +35,9 @@ class GeToElement:
         self.points = [
                 i for i in self.__group_xy([float(i) for i in tmplist[2:]])
             ] #read the rest of the the points in the arc as xy tuples
+        if self.dim == 1:
+            self.centroid = get_centroid(self.points)
+            self.vec = translate_points_by_centroid([self], self.centroid)
 
     def make_id(self):
         pass
@@ -87,6 +95,8 @@ class GeToGraph(Attributes):
         # indexing and hashing
         self.gid_gnode_dict = {}
         self.gid_edge_dict   = {}
+        self.gid_geto_attr_dict = {'spatial_points':None, 'dim':None}
+        self.gid_geto_elm_dict = {}
         self.key_arc_dict    = {}
         self.run_num=kwargs['run_num']
 
@@ -145,6 +155,7 @@ class GeToGraph(Attributes):
         node_lines = node_file.readlines()
         node_file.close()
 
+        #getoelm_idx = 0
         for l in geo_lines:
             elm = GeToElement()
             elm.read_line(l)
@@ -154,6 +165,10 @@ class GeToGraph(Attributes):
             if elm.dim == 1:
                 gnode = GeTognode(getoelm=elm)
                 self.gid_gnode_dict[gnode.gid] = gnode
+                #self.gid_geto_elm_dict[elm.gid] = elm
+                #self.getoelms.append(elm.vec)
+                #self.gid_to_getoelm_idx[elm.gid] = getoelm_idx
+                #getoelm_idx += 1
 
         for l in edge_lines:
             tmplist = l.split(' ')
@@ -172,6 +187,7 @@ class GeToGraph(Attributes):
 
             edge = self.gid_edge_dict[gid_edge]
             edge.add_vertices(gid_v1, gid_v2)
+
 
     def write_getograph(self, fname_base, labeled=False):
         nodesname = fname_base + ".mlg_nodes.txt"
@@ -303,22 +319,22 @@ class GeToGraph(Attributes):
                     label_color = cmap(0.56) if float(prediction[2]) > 0.5 else cmap(float(prediction[1]))
                 else:
                     if prediction == []:
-                        print('perd ' , prediction)
-                        print(gnode.gid)
-                        print(partition)
-                        print(self.node_gid_to_feature[gnode.gid])
+                        #print('perd ' , prediction)
+                        #print(gnode.gid)
+                        #print(partition)
+                        #print(self.node_gid_to_feature[gnode.gid])
                         continue
                     label_color = cmap(float(prediction[len(prediction) - 1]))
 
             if original_image is not None:
                 x = 1#  if invert else 0
                 y = 0#0  if invert else 1
-                scale = 254.
+                scale = 255.
                 if partition == 'train':
-                    label_color = [51, 255, 51]
+                    label_color = [255, 51, 255]
                     scale = 1
                 if partition == 'val':
-                    label_color = [255, 51, 255]
+                    label_color = [51, 255, 51]
                     scale = 1
                 if len(mapped_image.shape) == 2:
                     for p in np.array(gnode.points):
@@ -362,7 +378,7 @@ class GeToGraph(Attributes):
         return np.array([self.test_size, self.val_size, self.negative_training_size, self.positive_training_size, self.polyline_point_training_size])
 
     def equate_graph(self, G, clear_preds=False):
-        nx_idx_to_gid = {v: k for k, v in  self.node_gid_to_nx_idx.items()}
+        nx_idx_to_gid = self.graph_idx_to_gid #{v: k for k, v in  self.node_gid_to_nx_idx.items()}
         for nx_node_idx,node in enumerate(G.nodes_iter()):
             gid = nx_idx_to_gid[nx_node_idx]
             #arc = self.gid_map[gid] #self.arc_order[arcidx]#
@@ -381,7 +397,7 @@ class GeToGraph(Attributes):
                 gnode.box = 0
             if G.node[node]["prediction"] is not None and not clear_preds:
                 if G.node[node]["prediction"] == []:
-                    print(node)
+                    #print(node)
                     continue
                 gnode.prediction = G.node[node]["prediction"]
                 self.node_gid_to_prediction[gid] = G.node[node]["prediction"]

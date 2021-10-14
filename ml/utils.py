@@ -251,7 +251,7 @@ def run_random_walks(G, nodes, num_walks=N_WALKS, walk_len = WALK_LEN):
                 if curr_node != node:
                     pairs.append((node,curr_node))
                 curr_node = next_node
-        if count % 100 == 0:
+        if count % 1000 == 0:
             print("Done walks for", count, "nodes")
     return pairs
 
@@ -350,7 +350,7 @@ if __name__ == "__main__":
     G_data = json.load(open(graph_file))
     G = json_graph.node_link_graph(G_data)
     nodes = [n for n in G.nodes() if not G.node[n]["val"] and not G.node[n]["test"]]# [n for n in G.nodes() if 'train' in G.node[n] or 'val' in G.node[n] and (G.node[n]['train'] or G.node[n]['val'])]
-    print(len(nodes))
+
     G = G.subgraph(nodes)
     pairs = run_random_walks(G, nodes)
     with open(out_file+'-walks.txt', "w") as fp:

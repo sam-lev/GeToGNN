@@ -40,7 +40,8 @@ class Layer(object):
     """
 
     def __init__(self, **kwargs):
-        allowed_kwargs = {'name', 'logging', 'model_size', 'jump_type', 'jumping_knowledge', 'hidden_dim_1', 'hidden_dim_2'}
+        allowed_kwargs = {'name','name_weights', 'logging', 'model_size', 'jump_type', 'jumping_knowledge',
+                          'hidden_dim_1','hidden_dim_2', 'geto_dims','geto_vec_dim','use_geto'}
         for kwarg in kwargs.keys():
             assert kwarg in allowed_kwargs, 'Invalid keyword argument: ' + kwarg
         name = kwargs.get('name')
@@ -49,6 +50,7 @@ class Layer(object):
             name = layer + '_' + str(get_layer_uid(layer))
         self.name = name
         self.vars = {}
+        self.geto_vars = {}
         logging = kwargs.get('logging', False)
         self.logging = logging
         self.sparse_inputs = False
@@ -74,7 +76,7 @@ class Dense(Layer):
     """Dense layer."""
     def __init__(self, input_dim, output_dim, dropout=0., 
                  act=tf.nn.relu, placeholders=None, bias=True, featureless=False, 
-                 sparse_inputs=False, **kwargs):
+                 sparse_inputs=False, use_geto=False, name_weights='weights',**kwargs):
         super(Dense, self).__init__(**kwargs)
 
         self.dropout = dropout
@@ -85,21 +87,37 @@ class Dense(Layer):
         self.input_dim = input_dim
         self.output_dim = output_dim
 
+        self.use_geto = use_geto
+
         # helper variable for sparse dropout
         self.sparse_inputs = sparse_inputs
         if sparse_inputs:
             self.num_features_nonzero = placeholders['num_features_nonzero']
 
-        with tf.variable_scope(self.name + '_vars'):
-            self.vars['weights'] = tf.get_variable('weights', shape=(input_dim, output_dim),
-                                         dtype=tf.float32, 
-                                         initializer=tf.contrib.layers.xavier_initializer(),
-                                         regularizer=tf.contrib.layers.l2_regularizer(FLAGS.weight_decay))
-            if self.bias:
-                self.vars['bias'] = zeros([output_dim], name='bias')
+        if not use_geto:
+            with tf.variable_scope(self.name + '_vars'):
+                self.vars[self.name+'_weights'] = tf.get_variable(self.name+'_weights', shape=(input_dim, output_dim),
+                                             dtype=tf.float32,
+                                             initializer=tf.contrib.layers.xavier_initializer(),
+                                             regularizer=tf.contrib.layers.l2_regularizer(FLAGS.weight_decay))
+                if self.bias:
+                    self.vars['bias'] = zeros([output_dim], name='bias')
 
-        if self.logging:
-            self._log_vars()
+            if self.logging:
+                self._log_vars()
+        else:
+            with tf.variable_scope(self.name + '_vars'):
+                self.geto_vars[self.name + '_weights'] = tf.get_variable(self.name + '_weights',
+                                                                    shape=(input_dim, output_dim),
+                                                                    dtype=tf.float32,
+                                                                    initializer=tf.contrib.layers.xavier_initializer(),
+                                                                    regularizer=tf.contrib.layers.l2_regularizer(
+                                                                        FLAGS.weight_decay))
+                if self.bias:
+                    self.geto_vars['bias'] = zeros([output_dim], name='bias')
+
+            #if self.logging:
+            #    self._log_vars()
 
     def _call(self, inputs, name='call'):
         x = inputs
@@ -107,10 +125,17 @@ class Dense(Layer):
         x = tf.nn.dropout(x, 1-self.dropout, name=name+'dp')
 
         # transform
-        output = tf.matmul(x, self.vars['weights'], name=name+'mm')
+        if not self.use_geto:
+            output = tf.matmul(x, self.vars[self.name+'_weights'], name=name+'mm')
+            # bias
+            if self.bias:
+                output += self.vars['bias']
+        else:
+            output = tf.matmul(x, self.geto_vars[self.name + '_weights'], name=name + 'mm')
+            # bias
+            if self.bias:
+                output += self.geto_vars['bias']
 
-        # bias
-        if self.bias:
-            output += self.vars['bias']
+
 
         return self.act(output)

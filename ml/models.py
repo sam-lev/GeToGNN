@@ -9,7 +9,8 @@ from .metrics import *
 
 from .prediction import BipartiteEdgePredLayer
 from .aggregators import MeanAggregator, MaxPoolingAggregator, \
-    MeanPoolingAggregator, SeqAggregator, GCNAggregator, TwoMaxLayerPoolingAggregator
+    MeanPoolingAggregator, SeqAggregator, GCNAggregator, TwoMaxLayerPoolingAggregator,\
+    GeToMeanPoolAggregator
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
@@ -22,7 +23,7 @@ FLAGS = flags.FLAGS
 class Model(object):
     def __init__(self, **kwargs):
         allowed_kwargs = {'name', 'logging', 'model_size', 'jumping_knowledge', 'concat',
-                          'jump_type', 'hiddin_dim_1','hiddin_dim_2'}
+                          'jump_type', 'hiddin_dim_1','hiddin_dim_2','geto_loss'}
         for kwarg in kwargs.keys():
             assert kwarg in allowed_kwargs, 'Invalid keyword argument: ' + kwarg
         name = kwargs.get('name')
@@ -43,9 +44,11 @@ class Model(object):
         self.outputs = None
 
         self.loss = 0
+        self.geto_loss = 0
         self.accuracy = 0
         self.optimizer = None
         self.opt_op = None
+        self.geto_opt_op = None
 
     def _build(self):
         raise NotImplementedError
@@ -71,6 +74,7 @@ class Model(object):
         self._accuracy()
 
         self.opt_op = self.optimizer.minimize(self.loss)
+        self.geto_opt_op = self.optimizer.minimize(self.geto_loss)
 
     def predict(self):
         pass
@@ -123,7 +127,7 @@ class MLP(Model):
 
         # Cross entropy error
         if self.categorical:
-            self.loss += metrics.masked_softmax_cross_entropy(self.outputs, self.placeholders['labels'],
+            self.loss += masked_softmax_cross_entropy(self.outputs, self.placeholders['labels'],
                     self.placeholders['labels_mask'])
         # L2
         else:
@@ -132,11 +136,11 @@ class MLP(Model):
 
     def _accuracy(self):
         if self.categorical:
-            self.accuracy = metrics.masked_accuracy(self.outputs, self.placeholders['labels'],
+            self.accuracy = masked_accuracy(self.outputs, self.placeholders['labels'],
                     self.placeholders['labels_mask'])
 
     def _add_layer(self, in_dim, out_dim):
-        l = layers.Dense(input_dim=in_dim,
+        l = Dense(input_dim=in_dim,
                          output_dim=out_dim,
                          act=tf.nn.relu,
                          dropout=self.placeholders['dropout'],
@@ -145,7 +149,7 @@ class MLP(Model):
         return l
 
     def _add_transition(self, in_dim, out_dim):
-        l = layers.Dense(input_dim=in_dim,
+        l = Dense(input_dim=in_dim,
                          output_dim=out_dim,
                          act=lambda x: x,
                          dropout=self.placeholders['dropout'],
@@ -154,7 +158,7 @@ class MLP(Model):
         return l
 
     def _build(self):
-        self.layers.append(layers.Dense(input_dim=self.input_dim,
+        self.layers.append(Dense(input_dim=self.input_dim,
                                  output_dim=self.dims[1],
                                  act=tf.nn.relu,
                                  dropout=self.placeholders['dropout'],
@@ -167,7 +171,7 @@ class MLP(Model):
         #l = add_transition(self.dims[1], self.dims[1]) #perform pooling ect
         
 
-        self.layers.append(layers.Dense(input_dim=self.dims[1],
+        self.layers.append(Dense(input_dim=self.dims[1],
                                  output_dim=self.output_dim,
                                  act=lambda x: x,
                                  dropout=self.placeholders['dropout'],
@@ -202,6 +206,7 @@ class GeneralizedModel(Model):
         self._accuracy()
 
         self.opt_op = self.optimizer.minimize(self.loss)
+        self.geto_opt_op = self.optimizer.minimize(self.geto_loss)
 
 # SAGEInfo is a namedtuple that specifies the parameters 
 # of the recursive GraphSAGE layers
@@ -218,9 +223,12 @@ class SampleAndAggregate(GeneralizedModel):
     """
 
     def __init__(self, placeholders, features, adj, degrees,
-                 layer_infos, depth = 1, concat=True, jumping_knowledge=False, jump_type=None,
+                 layer_infos, geto_adj_info = None, depth = 1,
+                 geto_elements=None, geto_weights = None,
+                 concat=True, jumping_knowledge=False, jump_type=None,
                  aggregator_type="mean",
-            model_size="small", identity_dim=0,
+            model_size="small", identity_dim=0, geto_loss=False,
+                 hidden_dim_1_agg=None, hidden_dim_2_agg=None,
                  hidden_dim_1=None, hidden_dim_2=None,
             **kwargs):
         '''
@@ -249,14 +257,47 @@ class SampleAndAggregate(GeneralizedModel):
             self.aggregator_cls = MeanPoolingAggregator
         elif aggregator_type == "gcn":
             self.aggregator_cls = GCNAggregator
+        elif aggregator_type == "getomaxpool":
+            self.aggregator_cls = GeToMeanPoolAggregator
+            self.aggregator_cls.jumping_knowledge = jumping_knowledge
         else:
             raise Exception("Unknown aggregator: ", self.aggregator_cls)
+
+        self.aggregator_type = aggregator_type
+
+        self.hidden_geto_agg = "hidden" in aggregator_type or "edge" in aggregator_type
+
+        if hidden_dim_1_agg is not None:
+            print(">>> hidden dim 1 ", hidden_dim_1_agg,)
+            self.aggregator_cls.hidden_dim_1 = hidden_dim_1_agg
+        if hidden_dim_2_agg is not None:
+            self.aggregator_cls.hidden_dim_2 = hidden_dim_2_agg
 
         # get info from placeholders...
         self.inputs1 = placeholders["batch1"]
         self.inputs2 = placeholders["batch2"]
+
         self.model_size = model_size
         self.adj_info = adj
+
+        # For geometric / topologically informed aggregation
+        if geto_elements is not None and geto_adj_info is not None:
+            self.geto_elements = tf.Variable(tf.constant(geto_elements
+                                                         ,dtype=tf.float32), trainable=False)
+            self.geto_adj_info = geto_adj_info
+            self.hidden_geto_dict = {}
+        else:
+            self.geto_elements = geto_elements
+            self.geto_adj_info = geto_adj_info
+            self.hidden_geto_dict = None
+        self.getoinputs1 = placeholders["getobatch1"] if self.geto_elements is not None else None
+        self.getoinputs2 = placeholders["getobatch2"] if self.geto_elements is not None else None
+        self.geto_loss = geto_loss
+
+        #for weighted loss or aggregation
+        if geto_weights is not None:
+            self.geto_weights = tf.Variable(tf.constant(geto_weights
+                                                        ,dtype=tf.float32), trainable=False)
         if identity_dim > 0:
            self.embeds = tf.get_variable("node_embeddings", [adj.get_shape().as_list()[0], identity_dim])
         else:
@@ -272,23 +313,32 @@ class SampleAndAggregate(GeneralizedModel):
         self.degrees = degrees
         self.concat = concat
         self.jumping_knowledge = jumping_knowledge
-        self.hidden_dim_1 = hidden_dim_1
-        self.hidden_dim_2 = hidden_dim_2
+        self.hidden_dim_1 = hidden_dim_1_agg
+        self.hidden_dim_2 = hidden_dim_2_agg
         self.jump_type = jump_type
         self.depth = depth
         
         self.dims = [(0 if features is None else features.shape[1]) + identity_dim]
+
+        self.dims_geto_elms = [(0 if geto_elements is None else geto_elements.shape[1]) + identity_dim]
+
         self.dims.extend([layer_infos[i].output_dim for i in range(len(layer_infos))])
+        self.dims_geto_elms.extend([layer_infos[i].output_dim for i in range(len(layer_infos))])
+
+
+
         self.batch_size = placeholders["batch_size"]
         self.placeholders = placeholders
         self.layer_infos = layer_infos
+
+        self.sampler_type = layer_infos[0].neigh_sampler.name
 
         #lr = tf.get_variable('learning_rate', initializer=FLAGS.learning_rate, trainable=False)
         self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
 
         self.build()
 
-    def sample(self, inputs, layer_infos, batch_size=None):
+    def sample(self, inputs, layer_infos, batch_size=None, geto_inputs=None, geto_elms=None, geto_dims=None):
         """ Sample neighbors to be the supportive fields for multi-layer convolutions.
 
         Args:
@@ -299,6 +349,7 @@ class SampleAndAggregate(GeneralizedModel):
         if batch_size is None:
             batch_size = self.batch_size
         samples = [inputs]
+        geto_samples = None if self.geto_adj_info is None else [geto_inputs]
         # size of convolution support at each layer per node
         support_size = 1
         support_sizes = [support_size]
@@ -306,15 +357,32 @@ class SampleAndAggregate(GeneralizedModel):
             t = len(layer_infos) - k - 1
             support_size *= layer_infos[t].num_samples
             sampler = layer_infos[t].neigh_sampler
-            node = sampler((samples[k], layer_infos[t].num_samples))
-            samples.append(tf.reshape(node, [support_size * batch_size,]))
-            support_sizes.append(support_size)
-        return samples, support_sizes
+
+            if sampler.name != 'geto_informed':
+                sample_input = (samples[k], layer_infos[t].num_samples,
+                                None, None , None, None, None, None, None)
+            else:
+                if k == 0:
+                    geto_dims = self.dims_geto_elms[0]
+                #   geto_elms = self.geto_elements
+                sample_input = (samples[k], layer_infos[t].num_samples, geto_samples[k],
+                                geto_elms, geto_dims, support_size, k, layer_infos, batch_size)
+            if self.geto_adj_info is None:
+                node, _ = sampler(sample_input)
+                samples.append(tf.reshape(node, [support_size * batch_size, ]))
+                support_sizes.append(support_size)
+            else:
+                node, node_geto = sampler(sample_input)
+                geto_samples.append(tf.reshape(node_geto, [support_size * batch_size,]))
+                samples.append(tf.reshape(node, [support_size * batch_size,]))
+                support_sizes.append(support_size)
+        return samples, support_sizes, geto_samples
 
 
-    def aggregate(self, samples, input_features, dims, num_samples, support_sizes, batch_size=None,
-            aggregators=None, name=None, concat=False, model_size="small",
-            jumping_knowledge = False, jump_type=None, hidden_dim_1=None, hidden_dim_2=None):
+    def aggregate(self, samples, input_features, dims, num_samples, support_sizes,
+                  batch_size=None,aggregators=None, name=None, concat=False, model_size="small",
+            jumping_knowledge = False, jump_type=None, hidden_dim_1=None, hidden_dim_2=None,
+                hidden_geto=False,  geto_dims=None, geto_elms=None, getosamples=None,geto_loss=False):
         """ At each layer, aggregate hidden representations of neighbors to compute the hidden representations 
             at next layer.
         Args:
@@ -329,50 +397,88 @@ class SampleAndAggregate(GeneralizedModel):
         Returns:
             The hidden representation at the final layer for all nodes in batch
         """
-
+        use_geto = False
         if batch_size is None:
             batch_size = self.batch_size
 
+        if geto_dims is None:
+            geto_dims = [0] * len(num_samples)
         # length: number of layers + 1
         hidden = [tf.nn.embedding_lookup(input_features, node_samples) for node_samples in samples]
+        hidden_geto_elm = None if geto_elms is None else [tf.nn.embedding_lookup(geto_elms, node_samples) for node_samples in getosamples]
         new_agg = aggregators is None
+
+        name = self.aggregator_type
+
         if new_agg:
             aggregators = []
         for layer in range(len(num_samples)):
             if new_agg:
                 dim_mult = 2 if concat and (layer != 0) else 1
+                dim_mult_geto = 2 if concat and (layer != 0) and self.hidden_geto_agg else 1
+                geto_dims_in = layer if self.hidden_geto_agg else 0
+
+                print("    * : ",dim_mult)
                 # aggregator at current layer
                 if layer == len(num_samples) - 1:
                     aggregator = self.aggregator_cls(dim_mult*dims[layer], dims[layer+1], act=lambda x : x,
                             dropout=self.placeholders['dropout'],
                             jumping_knowledge=jumping_knowledge, jump_type=jump_type,
                             hidden_dim_1 = hidden_dim_1, hidden_dim_2 = hidden_dim_2,
-                            name=name, concat=concat, model_size=model_size)
+                            name=name+str(layer), concat=concat, model_size=model_size,
+                                                     geto_loss=geto_loss,
+                            geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],geto_dims_out = geto_dims[layer+1])
                 else:
                     aggregator = self.aggregator_cls(dim_mult*dims[layer], dims[layer+1],
-                            dropout=self.placeholders['dropout'],
+                            dropout=self.placeholders['dropout'],geto_loss=geto_loss,
                             jumping_knowledge=jumping_knowledge, jump_type=jump_type,
                             hidden_dim_1 = hidden_dim_1, hidden_dim_2 = hidden_dim_2,
-                            name=name, concat=concat, model_size=model_size)
+                            name=name+str(layer), concat=concat, model_size=model_size,
+                            geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],geto_dims_out = geto_dims[layer+1])
                 aggregators.append(aggregator)
             else:
                 aggregator = aggregators[layer]
             # hidden representation at current layer for all support nodes that are various hops away
             next_hidden = []
+            next_geto_hidden = []
             # as layer increases, the number of support nodes needed decreases
             for hop in range(len(num_samples) - layer):
                 dim_mult = 2 if concat and (layer != 0) else 1
+                dim_mult_geto = 2 if concat and (layer != 0) and self.hidden_geto_agg else 1
+                geto_dims_in = layer if self.hidden_geto_agg else 0
+                print("    * : ", self.hidden_geto_agg)
                 neigh_dims = [batch_size * support_sizes[hop], 
                               num_samples[len(num_samples) - hop - 1], 
-                              dim_mult*dims[layer]]
-                h = aggregator((hidden[hop],
-                                tf.reshape(hidden[hop + 1], neigh_dims)))
-                next_hidden.append(h)
+                              dim_mult * dims[layer]]
+
+                neigh_geto_dims = [batch_size * support_sizes[hop] ,
+                                   num_samples[len(num_samples) - hop - 1],
+                                    dim_mult_geto * geto_dims[geto_dims_in]]
+                neigh_feat_reshaped = (hidden[hop], tf.reshape(hidden[hop + 1], neigh_dims))
+                if geto_elms is None:
+                    node_and_neighbors = neigh_feat_reshaped
+                else:
+                    if self.hidden_geto_agg:
+                        node_and_neighbors = (neigh_feat_reshaped[0], neigh_feat_reshaped[1],
+                              hidden_geto_elm[hop], tf.reshape(hidden_geto_elm[hop + 1], neigh_geto_dims))
+                    else:
+                        node_and_neighbors = (neigh_feat_reshaped[0], neigh_feat_reshaped[1],
+                                              hidden_geto_elm[hop],
+                                              hidden_geto_elm[hop + 1])
+                #) #tf.reshape(hidden_geto_elm[hop + 1], neigh_geto_dims)
+                if geto_elms is None or not self.hidden_geto_agg:
+                    h = aggregator(node_and_neighbors)
+                    next_hidden.append(h)
+                else:
+                    h, geto_h = aggregator(node_and_neighbors)
+                    next_hidden.append(h)
+                    next_geto_hidden.append(geto_h)
             hidden = next_hidden
+            hidden_geto_elm = next_geto_hidden if geto_elms is not None and self.hidden_geto_agg else hidden_geto_elm
 
         if self.jumping_knowledge and not new_agg:
             rev_hidden = next_hidden
-            rev_hidden = rev_hidden.reverse()
+            rev_hidden.reverse()
             print(">>> rev hidden ", rev_hidden)
             h_jump = rev_hidden[0]
             for idx, l_vec in enumerate(rev_hidden[1:]):
@@ -396,8 +502,12 @@ class SampleAndAggregate(GeneralizedModel):
                         h_jump = tf.concat([from_h, from_h_next], axis=1)
 
             hidden = [h_jump]
-        return hidden[0], aggregators
-
+        if geto_elms is not None:
+            if self.sampler_type == 'geto_informed':
+                self.hidden_geto_dict = {geto_id:hidden_rep for geto_id, hidden_rep in zip(getosamples,hidden_geto_elm)}
+            return hidden[0], aggregators, hidden_geto_elm[0]
+        else:
+            return hidden[0], aggregators, hidden_geto_elm
     def _build(self):
         labels = tf.reshape(
                 tf.cast(self.placeholders['batch2'], dtype=tf.int64),
@@ -411,30 +521,44 @@ class SampleAndAggregate(GeneralizedModel):
             distortion=0.75,
             unigrams=self.degrees.tolist()))
 
-           
+        dim_mult = 2 if self.concat else 1
+
+        print("    * : GETO IS NONE", self.geto_elements is None)
         # perform "convolution"
-        samples1, support_sizes1 = self.sample(self.inputs1, self.layer_infos)
-        samples2, support_sizes2 = self.sample(self.inputs2, self.layer_infos)
+        samples1, support_sizes1, getosamples1 = self.sample(self.inputs1,
+                                                             self.layer_infos,
+                                                             geto_inputs=self.getoinputs1,
+                                                             geto_elms=self.geto_elements, #list(self.hidden_geto_dict.values())
+                                                             geto_dims=dim_mult * self.dims_geto_elms[-1])
+        samples2, support_sizes2, getosamples2 = self.sample(self.inputs2,
+                                                             self.layer_infos,
+                                                             geto_inputs=self.getoinputs2,
+                                                             geto_elms=self.geto_elements,#list(self.hidden_geto_dict.values())
+                                                             geto_dims=dim_mult * self.dims_geto_elms[-1])
         num_samples = [layer_info.num_samples for layer_info in self.layer_infos]
 
-        self.outputs1, self.aggregators = self.aggregate(samples1, [self.features], self.dims, num_samples,
-                support_sizes1, concat=self.concat, model_size=self.model_size,
+        self.outputs1, self.aggregators,self.getooutputs1 = self.aggregate(samples1, [self.features],
+                                                                           self.dims, num_samples,
+                support_sizes1, geto_dims=self.dims_geto_elms, concat=self.concat, model_size=self.model_size,
                 jumping_knowledge=self.jumping_knowledge, jump_type=self.jump_type,
-                hidden_dim_1 = self.hidden_dim_1, hidden_dim_2 = self.hidden_dim_2)
+                hidden_dim_1 = self.hidden_dim_1, hidden_dim_2 = self.hidden_dim_2,
+                geto_elms=self.geto_elements, getosamples=getosamples1)
 
-        self.outputs2, _ = self.aggregate(samples2, [self.features], self.dims, num_samples,
+        self.outputs2, _ ,self.getooutputs2= self.aggregate(samples2, [self.features], self.dims, num_samples,
                 support_sizes2, aggregators=self.aggregators, concat=self.concat,
-                model_size=self.model_size,
+                model_size=self.model_size, geto_dims=self.dims_geto_elms,
                 jumping_knowledge=self.jumping_knowledge, jump_type=self.jump_type,
-                hidden_dim_1 = self.hidden_dim_1, hidden_dim_2 = self.hidden_dim_2)
+                hidden_dim_1 = self.hidden_dim_1, hidden_dim_2 = self.hidden_dim_2,
+                geto_elms=self.geto_elements, getosamples=getosamples2)
 
-        neg_samples, neg_support_sizes = self.sample(self.neg_samples, self.layer_infos,
+        neg_samples, neg_support_sizes, neg_getosamples = self.sample(self.neg_samples, self.layer_infos,
             FLAGS.neg_sample_size)
-        self.neg_outputs, _ = self.aggregate(neg_samples, [self.features], self.dims, num_samples,
+        self.neg_outputs, _ , self.neg_geto_outputs = self.aggregate(neg_samples, [self.features], self.dims, num_samples,
                 neg_support_sizes, batch_size=FLAGS.neg_sample_size, aggregators=self.aggregators,
-                concat=self.concat, model_size=self.model_size,
+                concat=self.concat, model_size=self.model_size,geto_dims=self.dims_geto_elms,
                 jumping_knowledge=self.jumping_knowledge, jump_type=self.jump_type,
-                hidden_dim_1 = self.hidden_dim_1, hidden_dim_2 = self.hidden_dim_2)
+                hidden_dim_1 = self.hidden_dim_1, hidden_dim_2 = self.hidden_dim_2,
+                geto_elms=self.geto_elements, getosamples=neg_getosamples)
 
         dim_mult = 2 if self.concat else 1
         self.link_pred_layer = BipartiteEdgePredLayer(dim_mult*self.dims[-1],
@@ -445,6 +569,18 @@ class SampleAndAggregate(GeneralizedModel):
         self.outputs1 = tf.nn.l2_normalize(self.outputs1, 1)
         self.outputs2 = tf.nn.l2_normalize(self.outputs2, 1)
         self.neg_outputs = tf.nn.l2_normalize(self.neg_outputs, 1)
+
+        if self.geto_loss and self.hidden_geto_agg:
+            self.geto_link_pred_layer = BipartiteEdgePredLayer(dim_mult * self.dims_geto_elms[-1],
+                                                          dim_mult * self.dims_geto_elms[-1], self.placeholders,
+                                                          act=tf.nn.sigmoid,
+                                                          bilinear_weights=False,
+                                                          name='edge_predict',
+                                                               use_geto=False)
+
+            self.getooutputs1 = tf.nn.l2_normalize(self.getooutputs1, 1)
+            self.getooutputs2 = tf.nn.l2_normalize(self.getooutputs2, 1)
+            self.neg_geto_outputs = tf.nn.l2_normalize(self.neg_geto_outputs, 1)
 
     def build(self):
         self._build()
@@ -460,13 +596,34 @@ class SampleAndAggregate(GeneralizedModel):
         self.grad, _ = clipped_grads_and_vars[0]
         self.opt_op = self.optimizer.apply_gradients(clipped_grads_and_vars)
 
+        if False:#self.geto_elements is not None and self.hidden_geto_agg:
+            self.geto_loss = self.geto_loss / tf.cast(self.batch_size, tf.float32)
+            # self.loss = tf.divide(self.loss, tf.cast(self.batch_size, tf.float32), name="loss" )
+            geto_grads_and_vars = self.optimizer.compute_gradients(self.geto_loss)
+            clipped_geto_grads_and_vars = [(tf.clip_by_value(grad, -5.0, 5.0) if grad is not None else None, var)
+                                      for grad, var in geto_grads_and_vars]
+            self.geto_grad, _ = clipped_geto_grads_and_vars[0]
+            self.geto_opt_op = self.optimizer.apply_gradients(clipped_geto_grads_and_vars)
+
     def _loss(self):
         for aggregator in self.aggregators:
             for var in aggregator.vars.values():
                 self.loss += FLAGS.weight_decay * tf.nn.l2_loss(var)
 
-        self.loss += self.link_pred_layer.loss(self.outputs1, self.outputs2, self.neg_outputs) 
+        self.loss += self.link_pred_layer.loss(self.outputs1, self.outputs2, self.neg_outputs)
+
+        if False:#self.geto_elements is not None and self.hidden_geto_agg:
+            for aggregator in self.aggregators:
+                for var in aggregator.vars.values():
+                    self.geto_loss += FLAGS.weight_decay * tf.nn.l2_loss(var)
+
+            self.geto_loss += self.link_pred_layer.loss(self.getooutputs1,
+                                                        self.getooutputs2, self.neg_geto_outputs)
+            tf.summary.scalar('geto_loss', self.geto_loss)
+
         tf.summary.scalar('loss', self.loss)
+
+
 
     def _accuracy(self):
         # shape: [batch_size]

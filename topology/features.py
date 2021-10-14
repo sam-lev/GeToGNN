@@ -334,38 +334,10 @@ def hyperbolic_distance(point_a, point_b):
     #min_len = min(len(point_a), len(point_b))
 
     hyperbolic_metric = PoincareBall(2).metric
-    log_map = 0#hyperbolic_metric.log(np.array(point_b), np.array(point_a))
+    log_map = hyperbolic_metric.log(np.array(point_b), np.array(point_a))
     grad_hyperbolic = -2 * log_map
-    hyperbolic_dist = hyperbolic_metric.dist(np.array(point_b), np.array(point_a))
-    return grad_hyperbolic, hyperbolic_dist
-
-def hyperbolic_distance_line(points):
-    """Gradient of squared hyperbolic distance.
-
-    Gradient of the squared distance based on the
-    Ball representation according to point_a
-
-    Parameters
-    ----------
-    point_a : array-like, shape=[n_samples, dim]
-        First point in hyperbolic space.
-    point_b : array-like, shape=[n_samples, dim]
-        Second point in hyperbolic space.
-
-    Returns
-    -------
-    dist : array-like, shape=[n_samples, 1]
-        Geodesic squared distance between the two points.
-    """
-    #min_len = min(len(point_a), len(point_b))
-    hyperbolic_dist = 0
-    hyperbolic_metric = PoincareBall(2).metric
-    for i, point_a in enumerate(points[:-1]):
-        point_b = points[i+1]
-        #log_map = hyperbolic_metric.log(np.array(point_b), np.array(point_a))
-        #grad_hyperbolic = -2 * log_map
-        hyperbolic_dist += hyperbolic_metric.dist(np.array(point_b), np.array(point_a))
-    return hyperbolic_dist
+    #hyperbolic_dist = hyperbolic_metric.dist(np.array(point_b), np.array(point_a))
+    return grad_hyperbolic[1]#0# hyperbolic_dist
 
 def neighbor_filter(image, min_shift=1, max_shift=3):
     """Create a list of filters by shifting the image a single pixel at

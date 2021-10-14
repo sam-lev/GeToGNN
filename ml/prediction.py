@@ -11,7 +11,7 @@ FLAGS = flags.FLAGS
 
 class BipartiteEdgePredLayer(Layer):
     def __init__(self, input_dim1, input_dim2, placeholders, dropout=False, act=tf.nn.sigmoid,
-            loss_fn='xent', neg_sample_weights=1.0,
+            loss_fn='xent', neg_sample_weights=1.0, use_geto=False,
             bias=False, bilinear_weights=False, **kwargs):
         """
         Basic class that applies skip-gram-like loss
@@ -46,14 +46,22 @@ class BipartiteEdgePredLayer(Layer):
             if bilinear_weights:
                 #self.vars['weights'] = glorot([input_dim1, input_dim2],
                 #                              name='pred_weights')
-                self.vars['weights'] = tf.get_variable(
-                        'pred_weights', 
+                if not use_geto:
+                    self.vars['weights'] = tf.get_variable(
+                            'pred_weights',
+                            shape=(input_dim1, input_dim2),
+                            dtype=tf.float32,
+                            initializer=tf.contrib.layers.xavier_initializer())
+                else:
+                    self.geto_vars['weights'] = tf.get_variable(
+                        'pred_weights',
                         shape=(input_dim1, input_dim2),
-                        dtype=tf.float32, 
+                        dtype=tf.float32,
                         initializer=tf.contrib.layers.xavier_initializer())
 
             if self.bias:
                 self.vars['bias'] = zeros([self.output_dim], name='bias')
+
 
         if loss_fn == 'xent':
             self.loss_fn = self._xent_loss

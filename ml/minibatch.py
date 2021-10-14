@@ -20,21 +20,24 @@ class EdgeMinibatchIterator(object):
     fixed_n2v -- signals that the iterator is being used to retrain n2v with only existing nodes as context
     """
     def __init__(self, G, id2idx, 
-            placeholders, context_pairs=None, batch_size=100, max_degree=25,
+            placeholders, nx_idx_to_getoelm_idx=None,
+                 context_pairs=None, batch_size=100, max_degree=25,
             n2v_retrain=False, fixed_n2v=False,
             **kwargs):
 
         self.G = G
         self.nodes = G.nodes()
         self.id2idx = id2idx
+        self.id2getoidx = nx_idx_to_getoelm_idx
+        self.use_geto = self.id2getoidx is not None
         self.placeholders = placeholders
         self.batch_size = batch_size
         self.max_degree = max_degree
         self.batch_num = 0
 
         self.nodes = np.random.permutation(G.nodes())
-        self.adj, self.deg = self.construct_adj()
-        self.test_adj = self.construct_test_adj()
+        self.adj, self.deg, self.geto_adj = self.construct_adj()
+        self.test_adj, self.test_geto_adj = self.construct_test_adj()
         if context_pairs is None:
             edges = G.edges()
         else:
@@ -78,46 +81,96 @@ class EdgeMinibatchIterator(object):
         #degree_dict = {}
         #for i in range(1000):
         #    degree_dict[i] = 0
+        def row_major_index(row, col , num_col):
+            lin_index = row*num_col + col
+            return lin_index
 
         adj = len(self.id2idx)*np.ones((len(self.id2idx)+1, self.max_degree))
+        if self.use_geto:
+            geto_adj = np.ones((len(self.id2getoidx)+1, self.max_degree))
+            print("geto adjacency length:",len(geto_adj))
+            print("geto id map length:", len(self.id2getoidx))
+        else:
+            geto_adj = None
         deg = np.zeros((len(self.id2idx),))
         for nodeid in self.G.nodes():
             if self.G.node[nodeid]['test'] or self.G.node[nodeid]['val']:
                 continue
-            neighbors = np.array([self.id2idx[neighbor] 
-                for neighbor in self.G.neighbors(nodeid)
-                if (not self.G[nodeid][neighbor]['train_removed'])])
-            deg[self.id2idx[nodeid]] = len(neighbors)
-            if len(neighbors) == 0:
+            neighbor_ids = np.array([neighbor
+                      for neighbor in self.G.neighbors(nodeid)
+                      if (not self.G[nodeid][neighbor]['train_removed'])])
+            neighbors_feats = np.array([self.id2idx[neighbor]
+                for neighbor in neighbor_ids])
+            if self.use_geto:
+                neighbors_getoelms = np.array([self.id2getoidx[(nodeid,neighbor)]
+                                               if (nodeid,neighbor) in self.id2getoidx.keys() else self.id2getoidx[(neighbor,nodeid)]
+                                               for neighbor in neighbor_ids])
+            deg[self.id2idx[nodeid]] = len(neighbors_feats)
+            if len(neighbors_feats) == 0:
                 continue
-            if len(neighbors) > self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=False)
-            elif len(neighbors) < self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=True)
-
+            if len(neighbors_feats) > self.max_degree:
+                pruned_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                   self.max_degree, replace=False)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in pruned_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in pruned_neighors])
+                #np.random.choice(neighbors_feats, self.max_degree, replace=False)
+            elif len(neighbors_feats) < self.max_degree:
+                resampled_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                      self.max_degree, replace=True)
+                #np.random.choice(neighbors_feats, self.max_degree, replace=True)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in resampled_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in resampled_neighors])
             #occurance_degree  = degree_dict[len(neighbors)] + 1
             #degree_dict[len(neighbors)] += 1# occurance_degree
 
-            adj[self.id2idx[nodeid], :] = neighbors
-
+            adj[self.id2idx[nodeid], :] = neighbors_feats
+            if self.use_geto:
+                geto_adj[self.id2getoidx[(nodeid,nodeid)], :] = neighbors_getoelms
         #print("    observed degree counts")
         #print(degree_dict)
         #print(">>>>")
-        return adj, deg
+        return adj, deg, geto_adj
 
     def construct_test_adj(self):
         adj = len(self.id2idx)*np.ones((len(self.id2idx)+1, self.max_degree))
+        if self.use_geto:
+            geto_adj = np.ones((len(self.id2getoidx)+1, self.max_degree))
+        else:
+            geto_adj = None
         for nodeid in self.G.nodes():
-            neighbors = np.array([self.id2idx[neighbor] 
-                for neighbor in self.G.neighbors(nodeid)])
-            if len(neighbors) == 0:
+            #neighbors = np.array([self.id2idx[neighbor]
+            #    for neighbor in self.G.neighbors(nodeid)])
+            neighbor_ids = np.array([neighbor
+                                     for neighbor in self.G.neighbors(nodeid)])
+            neighbors_feats = np.array([self.id2idx[neighbor]
+                                        for neighbor in neighbor_ids])
+            if self.use_geto:
+                neighbors_getoelms = np.array([self.id2getoidx[(nodeid, neighbor)]
+                                               if (nodeid, neighbor) in self.id2getoidx.keys() else self.id2getoidx[(neighbor, nodeid)]
+                                               for neighbor in neighbor_ids])
+            if len(neighbors_feats) == 0:
                 continue
-            if len(neighbors) > self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=False)
-            elif len(neighbors) < self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=True)
-            adj[self.id2idx[nodeid], :] = neighbors
-        return adj
+            if len(neighbors_feats) > self.max_degree:
+                pruned_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                   self.max_degree, replace=False)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in pruned_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in pruned_neighors])
+                #neighbors = np.random.choice(neighbors, self.max_degree, replace=False)
+            elif len(neighbors_feats) < self.max_degree:
+                resampled_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                      self.max_degree, replace=True)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in resampled_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in resampled_neighors])
+                #neighbors = np.random.choice(neighbors, self.max_degree, replace=True)
+
+            adj[self.id2idx[nodeid], :] = neighbors_feats
+            if self.use_geto:
+                geto_adj[self.id2getoidx[(nodeid,nodeid)], :] = neighbors_getoelms
+        return adj, geto_adj
 
     def end(self):
         return self.batch_num * self.batch_size >= len(self.train_edges)
@@ -139,9 +192,14 @@ class EdgeMinibatchIterator(object):
 
         return feed_dict
 
+    #def update_batch_prediction(self, preds):
+    #    for i, nodeid in enumerate(self.current_batch):#, preds):
+    #        self.G.node[nodeid]['prediction'] = preds[-1][i,:]
     def update_batch_prediction(self, preds):
-        for i, nodeid in enumerate(self.current_batch):#, preds):
-            self.G.node[nodeid]['prediction'] = preds[-1][i,:]
+        batch1id = self.current_batch
+        a = b = c = 0
+        for i, n in enumerate(batch1id):
+            self.G.node[n]['prediction'] = preds[i]
 
     def next_minibatch_feed_dict(self):
         start_idx = self.batch_num * self.batch_size
@@ -208,13 +266,16 @@ class NodeMinibatchIterator(object):
     max_degree -- maximum size of the downsampled adjacency lists
     """
     def __init__(self, G, id2idx, 
-            placeholders, label_map, num_classes, 
+            placeholders, label_map, num_classes,
+                 nx_idx_to_getoelm_idx=None,
             batch_size=100, max_degree=25, train=True,
             **kwargs):
 
         self.G = G
         self.nodes = G.nodes()
         self.id2idx = id2idx
+        self.id2getoidx = nx_idx_to_getoelm_idx
+        self.use_geto = nx_idx_to_getoelm_idx is not None
         self.placeholders = placeholders
         self.batch_size = batch_size
         self.max_degree = max_degree
@@ -222,12 +283,13 @@ class NodeMinibatchIterator(object):
         self.label_map = label_map
         self.num_classes = num_classes
 
-        self.adj, self.deg = self.construct_adj()
-        self.test_adj = self.construct_test_adj()
+        self.adj, self.deg, self.geto_adj = self.construct_adj()
+        self.test_adj, self.test_geto_adj = self.construct_test_adj()
 
         self.val_nodes = [n for n in self.G.nodes() if self.G.node[n]['val']]
         #if train:
-        self.test_nodes = [n for n in self.G.nodes() if self.G.node[n]['test']]
+        self.test_nodes = [n for n in self.G.nodes() if self.G.node[n]['test'] ]
+        self.all_nodes = [n for n in self.G.nodes() ]
         #else:
         #    print("performing inference")
         #    self.test_nodes = [n for n in self.G.nodes()]
@@ -253,41 +315,101 @@ class NodeMinibatchIterator(object):
             pred_vec = [1. - pred , pred]
         return pred_vec
 
-    def construct_adj(self, train=True):
-        adj = len(self.id2idx)*np.ones((len(self.id2idx)+1, self.max_degree))
-        deg = np.zeros((len(self.id2idx),))
+    def construct_adj(self):
 
+        # degree_dict = {}
+        # for i in range(1000):
+        #    degree_dict[i] = 0
+        def row_major_index(row, col, num_col):
+            lin_index = row * num_col + col
+            return lin_index
+
+        adj = len(self.id2idx) * np.ones((len(self.id2idx) + 1, self.max_degree))
+
+        if self.use_geto:
+            geto_adj = np.ones((len(self.id2getoidx) + 1, self.max_degree)) if self.use_geto else None
+        else:
+            geto_adj = None
+
+        deg = np.zeros((len(self.id2idx),))
         for nodeid in self.G.nodes():
             if self.G.node[nodeid]['test'] or self.G.node[nodeid]['val']:
                 continue
-            neighbors = np.array([self.id2idx[neighbor] 
-                for neighbor in self.G.neighbors(nodeid)
-                if (not self.G[nodeid][neighbor]['train_removed'])])
-            #print(">>>" , neighbors)
-            #print("... ", self.max_degree)
-            deg[self.id2idx[nodeid]] = len(neighbors)
-            if len(neighbors) == 0:
+            neighbor_ids = np.array([neighbor
+                                     for neighbor in self.G.neighbors(nodeid)
+                                     if (not self.G[nodeid][neighbor]['train_removed'])])
+            neighbors_feats = np.array([self.id2idx[neighbor]
+                                        for neighbor in neighbor_ids])
+            if self.use_geto:
+                neighbors_getoelms = np.array([self.id2getoidx[neighbor]#(nodeid, neighbor)]
+                #                               if (nodeid, neighbor) in self.id2getoidx.keys() else self.id2getoidx[
+                #                                (neighbor, nodeid)]
+                                                for neighbor in neighbor_ids]) if self.use_geto else None
+            deg[self.id2idx[nodeid]] = len(neighbors_feats)
+            if len(neighbors_feats) == 0:
                 continue
-            if len(neighbors) > self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=False)
-            elif len(neighbors) < self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=True)
-            adj[self.id2idx[nodeid], :] = neighbors
-        return adj, deg
+            if len(neighbors_feats) > self.max_degree:
+                pruned_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                   self.max_degree, replace=False)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in pruned_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in pruned_neighors]) if self.use_geto else None
+                # np.random.choice(neighbors_feats, self.max_degree, replace=False)
+            elif len(neighbors_feats) < self.max_degree:
+                resampled_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                      self.max_degree, replace=True)
+                # np.random.choice(neighbors_feats, self.max_degree, replace=True)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in resampled_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in resampled_neighors]) if self.use_geto else None
+            # occurance_degree  = degree_dict[len(neighbors)] + 1
+            # degree_dict[len(neighbors)] += 1# occurance_degree
+
+            adj[self.id2idx[nodeid], :] = neighbors_feats
+            if self.use_geto:
+                geto_adj[self.id2getoidx[nodeid], :] = neighbors_getoelms if self.use_geto else None
+                #geto_adj[self.id2getoidx[(nodeid, nodeid)], :] = neighbors_getoelms if self.use_geto else None
+        # print("    observed degree counts")
+        # print(degree_dict)
+        # print(">>>>")
+        return adj, deg, geto_adj
 
     def construct_test_adj(self):
-        adj = len(self.id2idx)*np.ones((len(self.id2idx)+1, self.max_degree))
+        adj = len(self.id2idx) * np.ones((len(self.id2idx) + 1, self.max_degree))
+        geto_adj = np.ones((len(self.id2getoidx) + 1, self.max_degree)) if self.use_geto else None
         for nodeid in self.G.nodes():
-            neighbors = np.array([self.id2idx[neighbor] 
-                for neighbor in self.G.neighbors(nodeid)])
-            if len(neighbors) == 0:
+            # neighbors = np.array([self.id2idx[neighbor]
+            #    for neighbor in self.G.neighbors(nodeid)])
+            neighbor_ids = np.array([neighbor
+                                     for neighbor in self.G.neighbors(nodeid)])
+            neighbors_feats = np.array([self.id2idx[neighbor]
+                                        for neighbor in neighbor_ids])
+            if self.use_geto:
+                neighbors_getoelms = np.array([self.id2getoidx[neighbor]#(nodeid, neighbor)]
+                #                               if (nodeid, neighbor) in self.id2getoidx.keys() else self.id2getoidx[
+                #                                (neighbor, nodeid)]
+                                                for neighbor in neighbor_ids])
+            if len(neighbors_feats) == 0:
                 continue
-            if len(neighbors) > self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=False)
-            elif len(neighbors) < self.max_degree:
-                neighbors = np.random.choice(neighbors, self.max_degree, replace=True)
-            adj[self.id2idx[nodeid], :] = neighbors
-        return adj
+            if len(neighbors_feats) > self.max_degree:
+                pruned_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                   self.max_degree, replace=False)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in pruned_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in pruned_neighors])
+                # neighbors = np.random.choice(neighbors, self.max_degree, replace=False)
+            elif len(neighbors_feats) < self.max_degree:
+                resampled_neighors = np.random.choice(range(len(neighbors_feats)),
+                                                      self.max_degree, replace=True)
+                neighbors_feats = np.array([neighbors_feats[nbr] for nbr in resampled_neighors])
+                if self.use_geto:
+                    neighbors_getoelms = np.array([neighbors_getoelms[nbr] for nbr in resampled_neighors])
+
+            adj[self.id2idx[nodeid], :] = neighbors_feats
+            if self.use_geto:
+                geto_adj[self.id2getoidx[nodeid], :] = neighbors_getoelms
+                #geto_adj[self.id2getoidx[(nodeid, nodeid)], :] = neighbors_getoelms
+        return adj, geto_adj
 
     def end(self):
         return self.batch_num * self.batch_size >= len(self.train_nodes)
@@ -296,12 +418,14 @@ class NodeMinibatchIterator(object):
         batch1id = batch_nodes
         self.current_batch = batch1id
         batch1 = [self.id2idx[n] for n in batch1id]
+        getobatch1 = [self.id2getoidx[n] for n in batch1id] if self.use_geto else [0]
 
         labels = np.vstack([self._make_label_vec(node) for node in batch1id])
         if not inference:
             feed_dict = dict()
             feed_dict.update({self.placeholders['batch_size'] : len(batch1)})
             feed_dict.update({self.placeholders['batch']: batch1})
+            feed_dict.update({self.placeholders['getobatch']: getobatch1})
             feed_dict.update({self.placeholders['labels']: labels})
         else:
             feed_dict = self.placeholders
@@ -361,7 +485,7 @@ class NodeMinibatchIterator(object):
 
     def incremental_node_val_feed_dict(self, size, iter_num, test=False, inference=False):
         if test:
-            val_nodes = self.test_nodes
+            val_nodes = self.all_nodes#test_nodes
         else:
             val_nodes = self.val_nodes
         val_node_subset = val_nodes[iter_num*size:min((iter_num+1)*size, 

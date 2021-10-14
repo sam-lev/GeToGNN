@@ -3,6 +3,10 @@ import os
 
 LS = LocalSetup()
 
+
+def tobool(b):
+    return "True" in b
+
 def parse_params(param_dict):
     selection_type = int(param_dict['selection_type'])
 
@@ -23,8 +27,7 @@ def parse_params(param_dict):
     else:
         gpus = str(param_dict['gpu'])[:-1]
 
-    def tobool(b):
-        return "True" in b
+
 
     pers_cards = param_dict['persistence_cardinality']
     params_dict = {
@@ -37,8 +40,12 @@ def parse_params(param_dict):
         'write_partitions': tobool(param_dict['write_partitions']),
         'save_filtered_images' :  tobool(param_dict['save_filtered_images']),
         'load_features': tobool(param_dict['load_features']),
+        'load_geto_attr': tobool(param_dict['load_geto_attr']),
+        'geto_as_feat' : tobool(param_dict['geto_as_feat']),
         'write_feature_names' : tobool(param_dict['write_feature_names']),
+        'load_feature_names': tobool(param_dict['load_feature_names']),
         'collect_features' : tobool(param_dict['collect_features']),
+        'feature_importance': tobool(param_dict['feature_importance']),
         'test_param' : tobool(param_dict['test_param']),
         'unsupervised' : tobool(param_dict['unsupervised']),
         'active_learning' : tobool(param_dict['active_learning']),
@@ -63,6 +70,8 @@ def parse_params(param_dict):
         'polarity' : int(param_dict['polarity']),
         'epochs' : int(param_dict['epochs']),
         'depth' : int(param_dict['depth']),
+        'geto_loss': tobool(param_dict['geto_loss']),
+        'getognn_class_weights' : tobool(param_dict['getognn_class_weights']),
         'walk_length' : int(param_dict['walk_length']),
         'number_walks' : int(param_dict['number_walks']),
         'random_context' : tobool(param_dict['random_context']),
@@ -74,6 +83,7 @@ def parse_params(param_dict):
         'degree_l2' : int(param_dict['degree_l2']),
         'degree_l3' : int(param_dict['degree_l3']),
         'aggregator' : str(param_dict['aggregator'])[:-1],
+        'geto_influence_type': str(param_dict['geto_influence_type'])[:-1],
         'out_dim_1' : int(param_dict['out_dim_1']),
         'out_dim_2' : int(param_dict['out_dim_2']),
         'hidden_dim_1' : int(param_dict['hidden_dim_1']),
@@ -85,6 +95,8 @@ def parse_params(param_dict):
         'forest_depth' : int(param_dict['forest_depth']),
         'number_forests' : int(param_dict['number_forests']),
         'forest_class_weights' : tobool(param_dict['forest_class_weights']),
+        'class_1_weight' : float(param_dict['class_1_weight']),
+        'class_2_weight' : float(param_dict['class_2_weight']),
         'mlp_lr' : float(param_dict['mlp_lr']),
         'mlp_epochs' : int(param_dict['mlp_epochs']),
         'gpu' : int(gpus),
@@ -106,31 +118,82 @@ def parse_params(param_dict):
 def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
                    read_params_from = None, growing_windows_from = None, iteration = None,
                    experiment_folder=None):
+    def __group_xy(lst):
+        for i in range(0, len(lst), 2):
+            yield tuple(lst[i : i + 2])
+
     if x_1 is not None:#not args.read_param:
         x_1 = x_1#args.x_min
         x_2 = x_2#args.x_max
         y_1 = y_1#args.y_min
         y_2 = y_2#args.y_max
     if read_params_from is not None:
-        param_file = os.path.join(LS.project_base_path,'datasets',experiment_folder, 'parameter_list_'+str(read_params_from)+'.txt')
-        f = open(param_file, 'r')
+        param_file_personal = os.path.join(LS.project_base_path,'datasets',experiment_folder, 'parameter_list_'+str(read_params_from)+'.txt')
+        param_file_shared = os.path.abspath(os.path.join(LS.project_base_path,'datasets',experiment_folder
+                                                         , os.pardir))
+        param_file_shared = os.path.join(param_file_shared,'parameter_list_'+str(read_params_from)+'.txt')
+
+        print("    * : ", param_file_shared)
+        print("    * : ", param_file_personal)
+        f = open(param_file_shared, 'r')
         param_dict = {}
         params = f.readlines()
         for param in params:
             name_value = param.split(' ')
             print(name_value)
+            if name_value[0][0] == '_':
+                continue
             if ',' in name_value[1]:
                 if name_value[0] not in param_dict.keys():
-                    param_dict[name_value[0]] = list( map( int , name_value[1].split(',') ))
+                    param_dict[name_value[0]] = list(map(int, name_value[1].split(',')))
                 else:
-                    param_dict[name_value[0]].extend(list( map(int,name_value[1].split(',')) ))
+                    param_dict[name_value[0]].extend(list(map(int, name_value[1].split(','))))
             else:
                 param_dict[name_value[0]] = name_value[1]
+        f.close()
+
+        param_dict = parse_params(param_dict)
+
+        f = open(param_file_personal, 'r')
+        param_dict_changed = {}
+        params = f.readlines()
+        for param in params:
+            name_value = param.split(' ')
+            print(name_value)
+            if name_value[0][0] == '_':
+                continue
+            if ',' in name_value[1]:
+
+                if name_value[0] not in param_dict_changed.keys():
+                    param_dict_changed[name_value[0]] = list( map( int , name_value[1].split(',') ))
+                else:
+                    param_dict_changed[name_value[0]].extend(list( map(int,name_value[1].split(',')) ))
+                    param_dict_changed[name_value[0]] = [i for i in __group_xy([i for i in param_dict_changed[name_value[0]]])]
+                param_dict[name_value[0]] = param_dict_changed[name_value[0]]
+            else:
+                param_dict_changed[name_value[0]] = name_value[1]
+            old_val = param_dict[name_value[0]]
+            if ',' not in name_value[1]:
+                if type(old_val) == str:
+                    param_dict[name_value[0]] = type(old_val)(param_dict_changed[name_value[0]][:-1])
+                elif type(old_val) == bool:
+                    param_dict[name_value[0]] = tobool(param_dict_changed[name_value[0]])
+                elif type(old_val) == int:
+                    param_dict[name_value[0]] = int(param_dict_changed[name_value[0]])
+                elif type(old_val) == float:
+                    param_dict[name_value[0]] = float(param_dict_changed[name_value[0]])
+                else:
+                    param_dict[name_value[0]] = type(old_val)(param_dict_changed[name_value[0]])
+            print("")
+            print(type(param_dict[name_value[0]]))
+            print("")
+        f.close()
+
     if growing_windows_from is not None:
         box_line_num = int(iteration)
-        param_file = os.path.join(LS.project_base_path, 'growing_windows_' + str(growing_windows_from) + '.txt')
-        f= open(param_file,'r')
-        param_dict = {}
+        param_file_shared = os.path.join(LS.project_base_path, 'growing_windows_' + str(growing_windows_from) + '.txt')
+        f= open(param_file_shared,'r')
+        #param_dict = {}
         params = f.readlines()
         for x_y in [box_line_num, box_line_num+1]:
             param = params[x_y]
@@ -144,4 +207,4 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
 
             else:
                 param_dict[name_value[0]] = int(name_value[1])
-    return parse_params(param_dict)
+    return param_dict
