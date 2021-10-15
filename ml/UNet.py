@@ -1054,7 +1054,8 @@ class UNetwork( MLGraph, nnModule, object):
 
         test_dataset = dataset
         if infer_subsets:
-            test_dataset, val_dataset = self.collect_boxes( region_list = param_lines , training_set=False)
+            test_dataset, val_dataset = self.collect_boxes( region_list = param_lines ,
+                                                            training_set=False)
         else:
             X = image.shape[0]
             Y = image.shape[1] if len(image.shape) == 2 else image.shape[2]
@@ -1249,7 +1250,7 @@ class UNet_Trainer:
         if 'sci' in LocalSetup.project_base_path:
             self.device = torch.device('cpu')
         else:
-            self.device = torch.device(available_gpus[0] if torch.cuda.is_available() else 'cpu')
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.UNet = UNet.to(self.device)
         self.params = self.UNet.params
         #self.attributes = UNet.get_attributes()
@@ -1460,8 +1461,6 @@ class UNet_Trainer:
                     torch.cuda.empty_cache()
 
                     self.UNet.train()
-                del image
-                del segmentation
         self.UNet = self.UNet.cpu()#.detach()
 
         if max_f1 > best_f1:
