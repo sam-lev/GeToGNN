@@ -74,6 +74,9 @@ class runner:
                            'border1_636x2372.raw.labels_0.txt'][self.sample_idx]  # neuron1
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
+
+        print("    * : local project base path:  ", LocalSetup.project_base_path)
+
         self.ground_truth_label_file = os.path.join(LocalSetup.project_base_path, 'datasets',
                                                self.name, 'input', self.label_file)
         self.format = 'raw'

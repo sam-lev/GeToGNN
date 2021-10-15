@@ -54,8 +54,8 @@ def define_gpu_to_use(minimum_memory_mb = 3800, gpu_to_use=None):
     except:
         pass
     torch.cuda.empty_cache()
-    '''for i in range(16):
-        free_memory = !nvidia-smi --query-gpu=memory.free -i $i --format=csv,nounits,noheader
+    for i in range(16):
+        '''free_memory = !nvidia-smi --query-gpu=memory.free -i $i --format=csv,nounits,noheader
         if free_memory[0] == 'No devices were found':
             break
         free_memory = int(free_memory[0])
@@ -1084,7 +1084,10 @@ class UNetwork( MLGraph, nnModule, object):
         test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
         # hand_seg = dataset(self.data_array, with_hand_seg=True)
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if 'sci' in LocalSetup.project_base_path:
+            device = torch.device('cpu')
+        else:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         running_best_model.eval()
 
@@ -1206,6 +1209,7 @@ class UNetwork( MLGraph, nnModule, object):
                 self.save_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
                                 as_grey=True,
                                 dirpath=out_folder)
+                del image
 
         exp_folder = os.path.join(self.params['experiment_folder'], 'runs')
 
@@ -1235,9 +1239,15 @@ class UNet_Trainer:
     def __init__(self, UNet : UNetwork, train_dataset=None, val_dataset=None, class_weights=None):
         sys.setrecursionlimit(3000)#10000)
         #print("     * : recursion limit ", )
+        torch.cuda.empty_cache()
         #define_gpu_to_use(gpu_to_use=0)
         # instantiate your model here:
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        available_gpus = [torch.cuda.device(i) for i in range(torch.cuda.device_count())]
+        if 'sci' in LocalSetup.project_base_path:
+            self.device = torch.device('cpu')
+        else:
+            self.device = torch.device(available_gpus[0] if torch.cuda.is_available() else 'cpu')
         self.UNet = UNet.to(self.device)
         self.params = self.UNet.params
         #self.attributes = UNet.get_attributes()
@@ -1448,8 +1458,9 @@ class UNet_Trainer:
                     torch.cuda.empty_cache()
 
                     self.UNet.train()
-
-        self.UNet = self.UNet.cpu()
+                del image
+                del segmentation
+        self.UNet = self.UNet.cpu()#.detach()
 
         if max_f1 > best_f1:
             best_f1 = max_f1
@@ -1462,6 +1473,7 @@ class UNet_Trainer:
                                          as_grey=True)#False)
 
         print(train_losses, test_losses, F1_scores, best_f1, val_imgs, val_segs, sample_losses, val_img_preds)
+        torch.cuda.empty_cache()
         return train_losses, test_losses, F1_scores, best_f1, val_imgs, val_segs, sample_losses, val_img_preds, running_best_model
 
 
