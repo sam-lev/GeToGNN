@@ -800,7 +800,8 @@ class UNetwork( MLGraph, nnModule, object):
             self.val_dataset = self.train_dataset
         else:
             self.train_dataset , self.val_dataset = self.collect_boxes(region_list=region_list,
-                                                                       number_samples=training_size)
+                                                                       number_samples=training_size,
+                                                                       training_set=True)
             dprint(len(self.val_dataset), " val ")
             dprint(len(self.train_dataset), "train")
             self.val_dataset = self.train_dataset
@@ -952,7 +953,7 @@ class UNetwork( MLGraph, nnModule, object):
         for i in range(0, len(lst), 2):
             yield tuple(lst[i: i + 2])
 
-    def collect_boxes(self, region_list, number_samples=None, resize=False, run_num=-1):
+    def collect_boxes(self, region_list, number_samples=None, resize=False, run_num=-1, training_set=False):
         boxes = [
             i for i in self.__group_pairs(region_list)
         ]
@@ -1001,8 +1002,9 @@ class UNetwork( MLGraph, nnModule, object):
             Y_BOX = [
                 i for i in self.__group_pairs([i for i in current_box_dict['y_box']])
             ]
-            self.x_set = X_BOX
-            self.y_set = Y_BOX
+            if training_set:
+                self.x_set = X_BOX
+                self.y_set = Y_BOX
             training_set, test_and_val_set = self.box_select_geomsc_training(x_range=X_BOX,
                                                                                   y_range=Y_BOX)
 
@@ -1052,7 +1054,7 @@ class UNetwork( MLGraph, nnModule, object):
 
         test_dataset = dataset
         if infer_subsets:
-            test_dataset, val_dataset = self.collect_boxes( region_list = param_lines )
+            test_dataset, val_dataset = self.collect_boxes( region_list = param_lines , training_set=False)
         else:
             X = image.shape[0]
             Y = image.shape[1] if len(image.shape) == 2 else image.shape[2]
@@ -1209,7 +1211,7 @@ class UNetwork( MLGraph, nnModule, object):
                 self.save_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
                                 as_grey=True,
                                 dirpath=out_folder)
-                del image
+
 
         exp_folder = os.path.join(self.params['experiment_folder'], 'runs')
 
