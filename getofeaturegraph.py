@@ -735,7 +735,7 @@ class GeToFeatureGraph(GeToGraph):
 
         if self.params['save_filtered_images']:
             for name, image in self.images.items():
-                image = np.array(image).astype('uint8')
+                image = np.array(image).astype(np.int8)
                 Img = Image.fromarray(image)
                 if not os.path.exists(os.path.join(self.experiment_folder, 'filtered_images')):
                     os.makedirs(os.path.join(self.experiment_folder, 'filtered_images'))

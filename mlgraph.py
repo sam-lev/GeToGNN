@@ -620,8 +620,8 @@ class MLGraph(GeToFeatureGraph):
             partitions_file.write(str(gid) + ' ' + str(p) + "\n")
         partitions_file.close()
 
-    def write_selection_bounds(self,dir=None, name='',x_box=None,y_box=None):
-        if x_box is not None:
+    def write_selection_bounds(self,dir=None, name='',x_box=None,y_box=None, mode='w+'):
+        if x_box is None:
             x_box = self.x_box
             y_box = self.y_box
         if dir is not None:
@@ -632,12 +632,15 @@ class MLGraph(GeToFeatureGraph):
         window_file = os.path.join(pred_session_run_path, 'window.txt')
         print("... Writing bounds file to:", window_file)
 
-        window_file = open(window_file, "w+")
+        start = not os.path.exists(window_file)
+
+        window_file = open(window_file, mode)
 
         X = self.image.shape[0]
         Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
-        window_file.write(str(X)+"\n")
-        window_file.write(str(Y) + "\n")
+        if start:
+            window_file.write(str(X)+"\n")
+            window_file.write(str(Y) + "\n")
 
         no_new_line = len(y_box)
         for x_box, y_box in zip(x_box,y_box):

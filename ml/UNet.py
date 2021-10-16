@@ -7,6 +7,7 @@ import tarfile
 import imageio
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mplt
 from copy import deepcopy
 #%matplotlib inline
 import zipfile
@@ -438,29 +439,39 @@ class UNetwork( MLGraph, nnModule, object):
 
 
         segmentations = []
-        if True:#len(x_range) == 1:  # np.array(x_range).shape == np.array([6,9]).shape:
-            x_range = x_range[0]
-            y_range = y_range[0]
-            train_im_crop = image[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+        if len(x_range) == 1:  # np.array(x_range).shape == np.array([6,9]).shape:
+            x_1 = x_range[0]
+            y_1 = y_range[0]
+            train_im_crop = image[y_1[0]:y_1[1],x_1[0]:x_1[1]]
+            train_im_crop = train_im_crop
             # if resize:
             #     train_im_crop = resize_img(train_im_crop, X=resize[0], Y=resize[1])
             #     #segmentation = resize_img(segmentation, X=resize[0], Y=resize[1])
-            segmentation = self.generate_pixel_labeling((x_range,y_range),
-                                                        seg_image=np.zeros(train_im_crop.shape))
+            segmentation = self.generate_pixel_labeling((x_1,y_1),
+                                                        seg_image=np.zeros(train_im_crop.shape).astype(np.int8))
+
             og_segmentation = deepcopy(segmentation)
             if resize:
                train_im_crop = resize_img(train_im_crop, X=resize[0], Y=resize[1], sampling="lanczos")
                segmentation = resize_img(segmentation, X=resize[0], Y=resize[1], sampling="hamming")
             #segmentation = segmentation[y_range[0]:y_range[1],x_range[0]:x_range[1]]
 
-            dataset.append((train_im_crop,segmentation, og_segmentation))
+            dataset.append((train_im_crop,segmentation, (x_range,y_range)))
         else:
+            X=self.X
+            Y=self.Y
+            img_stack = np.zeros([0, 1, y_range[0][1], x_range[0][1]])
+            segmentations = np.zeros([0, 1, y_range[0][1], x_range[0][1]])
             range_group = zip(x_range, y_range)
             for x_rng, y_rng in range_group:
                 train_im_crop = image[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]]
-                segmentation = self.generate_pixel_labeling( x_rng, y_rng )#(x_range,y_range))
+                segmentation = self.generate_pixel_labeling( (x_rng, y_rng),seg_image=np.zeros(train_im_crop.shape).astype(np.int8))
                 #segmentation = segmentation[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]]
-                dataset.append((train_im_crop, segmentation))
+                img_stack = np.concatenate((img_stack, train_im_crop),
+                               axis=0)
+                segmentations = np.concatenate((segmentations, segmentation),
+                               axis=0)
+                dataset.append((img_stack, segmentations, (x_range, y_range)))
 
         return dataset
 
@@ -477,6 +488,7 @@ class UNetwork( MLGraph, nnModule, object):
             y = center_point[1]
             x[x + 1 >= X] = X - 2
             y[y+1>= Y] = Y - 2
+            train_im[x , y] = label
             train_im[x-1,y] = label
             train_im[x, y-1] = label
             train_im[x - 1, y-1] = label
@@ -512,25 +524,16 @@ class UNetwork( MLGraph, nnModule, object):
             mapped_y = points[:,0] - x_box[0]
             mapped_x = points[:,1] - y_box[0]
             if int(label[1]) == 1:
-                train_im[mapped_x, mapped_y] = float(1)
-                __box_grow_label(train_im, (mapped_x,mapped_y), 1)
-            else:
-                train_im[mapped_x, mapped_y] = float(0)
-                __box_grow_label(train_im, (mapped_x, mapped_y), 0)
-            # for point in points:
-            #     print("     * points", point[0] , x_box[0] ,point[1] ,y_box[0])
-            #     mapped_x = int(point[0] - x_box[0]) #dist from min x border
-            #     mapped_y = int(point[1] - y_box[0])
-            #     print("    * ", "mapped", mapped_x, mapped_y)
-            #     if int(label[1]) == 1:
-            #         train_im[mapped_y,mapped_x] = 1
-            #     else:
-            #         train_im[mapped_y,mapped_x] = 0
+                train_im[mapped_x, mapped_y] = int(1)
+                __box_grow_label(train_im, (mapped_x,mapped_y), int(1))
+            #else:
+            #    train_im[mapped_x, mapped_y] = int(0)
+            #    __box_grow_label(train_im, (mapped_x, mapped_y), int(0))
         n_samples = dim_train_region[0] * dim_train_region[1]
         n_classes = 2
         class_bins = np.bincount(train_im.astype(np.int64).flatten())
         self.class_weights = n_samples / (n_classes * class_bins)
-        return train_im
+        return train_im.astype(np.int8)
 
     def save_image(self, image=None, dirpath=None, gt_seg=None, pred_seg = None, image_seg_set = None, as_grey=False):
         if image_seg_set is not None:
@@ -545,18 +548,19 @@ class UNetwork( MLGraph, nnModule, object):
 
         if image is not None:
             Img = Image.fromarray(
-                image.astype('uint8'))  # .astype(np.float32))#mapped_img)
-            Img.save(os.path.join(dirpath, 'groundseg.png'))
+                image.astype(np.int8))#mapped_img)
+            Img.save(os.path.join(dirpath, 'image.png'))
         if gt_seg is not None:
             Img = Image.fromarray(
-                gt_seg.astype('uint8'))  # .astype(np.float32))#mapped_img)
-            Img.save(os.path.join(dirpath, 'groundseg.png'))
+                gt_seg.astype(np.int8))#mapped_img)
+            Img.save(os.path.join(dirpath, 'ground_truth.png'))
         if pred_seg is not None:
             Img = Image.fromarray(
-                pred_seg.astype('uint8'))  # .astype(np.float32))#mapped_img)
-            Img.save(os.path.join(dirpath, 'groundseg.png'))
+                pred_seg.astype(np.int8))#mapped_img)
+            Img.save(os.path.join(dirpath, 'prediction.png'))
 
-    def view_image(self, image=None, gt_seg=None, pred_seg = None, image_seg_set = None, as_grey=False):
+    def see_image(self, image=None, gt_seg=None, pred_seg = None, image_seg_set = None,
+                  dirpath=None, as_grey=False, save=True):
         if image_seg_set is not None:
             #shape_im = image.shape
             #shape_gt_seg = gt_seg.shape
@@ -571,26 +575,49 @@ class UNetwork( MLGraph, nnModule, object):
             plt.figure()
             plt.title("Input Image")
             if as_grey:
-                plt.imshow(image,cmap=plt.get_cmap('gray'))
+                if not save:
+                    plt.imshow(image,cmap=mplt.cm.Greys_r)
+                else:
+                    plt.imsave(os.path.join(dirpath,'subset_image.png'),image, cmap=mplt.cm.Greys_r)
             else:
-                plt.imshow(image)
-            plt.show()
+                if not save:
+                    plt.imshow(image)
+                else:
+                    plt.imsave(image)
+            if not save:
+                plt.show()
         if gt_seg is not None:
             plt.figure()
             plt.title("Input Segmentation")
             if as_grey:
-                plt.imshow(gt_seg, cmap=plt.get_cmap('gray'))
+                if not save:
+                    plt.imshow(gt_seg,  cmap=mplt.cm.Greys_r)
+                else:
+                    plt.imsave(os.path.join(dirpath,'gt_seg.png'),gt_seg, cmap=mplt.cm.Greys_r)
             else:
-                plt.imshow(gt_seg)
-            plt.show()
+                if not save:
+                    plt.imshow(gt_seg)
+                else:
+                    plt.imshow(gt_seg)
+            if not save:
+                plt.show()
         if pred_seg is not None:
             plt.figure()
             plt.title("Predicted Segmentation")
             if as_grey:
-                plt.imshow(pred_seg,cmap=plt.get_cmap('gray'))
+                if not save:
+                    plt.imshow(pred_seg,cmap=plt.cm.Greys_r)
+
+                else:
+                    plt.imsave(os.path.join(dirpath,'pred_seg.png'),pred_seg,  cmap=mplt.cm.Greys_r)
+
             else:
-                plt.imshow(pred_seg)
-            plt.show()
+                if not save:
+                    plt.imshow(pred_seg)
+                else:
+                    plt.imsave(pred_seg)
+            if not save:
+                plt.show()
 
     # Contraction Block
     # Structure Block: three tensors total w/ two convolutions followed by max-pooling
@@ -800,7 +827,7 @@ class UNetwork( MLGraph, nnModule, object):
             self.val_dataset = self.train_dataset
         else:
             self.train_dataset , self.val_dataset = self.collect_boxes(region_list=region_list,
-                                                                       number_samples=training_size,
+                                                                       number_samples=self.training_size,
                                                                        training_set=True)
             dprint(len(self.val_dataset), " val ")
             dprint(len(self.train_dataset), "train")
@@ -810,11 +837,14 @@ class UNetwork( MLGraph, nnModule, object):
         #
         self.image, self.msc_collection, self.mask, self.segmentation = self.train_dataloader[
             int(self.params['train_data_idx'])]
+        self.image = self.image
         # self.image = self.image if len(self.image.shape) == 2 else np.transpose(np.mean(self.image, axis=1), (1, 0))
 
         self.X = self.image.shape[0]
         self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
-
+        self.inf_image = deepcopy(self.image)
+        self.pred_seg = deepcopy(self.image)
+        self.gt_seg = deepcopy(self.image)
 
 
         #self.attributes = deepcopy(self.get_attributes())
@@ -959,8 +989,14 @@ class UNetwork( MLGraph, nnModule, object):
         ]
         test_dataset = []
         number_samples = number_samples+1 if number_samples is not None else number_samples
-
-        for current_box_idx in range(len(boxes))[0:number_samples]:
+        if training_set:
+            number_boxes = range(len(boxes))[0:number_samples]
+        else:
+            number_boxes = range(len(boxes))
+        if training_set:
+            self.x_set = []
+            self.y_set = []
+        for current_box_idx in number_boxes:
 
             run_num += 1
 
@@ -1003,8 +1039,10 @@ class UNetwork( MLGraph, nnModule, object):
                 i for i in self.__group_pairs([i for i in current_box_dict['y_box']])
             ]
             if training_set:
-                self.x_set = X_BOX
-                self.y_set = Y_BOX
+                self.x_set += X_BOX
+                self.y_set += Y_BOX
+            #     out_folder = os.path.join(self.pred_session_run_path)
+            #     self.write_selection_bounds(dir=out_folder,x_box=name_value[0], y_box=name_value[1], mode='a')
             training_set, test_and_val_set = self.box_select_geomsc_training(x_range=X_BOX,
                                                                                   y_range=Y_BOX)
 
@@ -1013,8 +1051,8 @@ class UNetwork( MLGraph, nnModule, object):
             self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
                                                        validation_samples=1, test_samples=None)
 
-            self.X = self.image.shape[0]
-            self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
+            X = self.image.shape[0]
+            Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
 
             if resize:
                 resize = (self.X_train, self.Y_train) if (self.X, self.Y) != (self.X_train, self.Y_train) else False
@@ -1048,14 +1086,15 @@ class UNetwork( MLGraph, nnModule, object):
 
 
         if test:
-            param_lines = param_lines
+            param_lines = param_lines[0:6]
 
 
 
         test_dataset = dataset
         if infer_subsets:
             test_dataset, val_dataset = self.collect_boxes( region_list = param_lines ,
-                                                            training_set=False)
+                                                            training_set=False,
+                                                            number_samples=None)
         else:
             X = image.shape[0]
             Y = image.shape[1] if len(image.shape) == 2 else image.shape[2]
@@ -1103,10 +1142,17 @@ class UNetwork( MLGraph, nnModule, object):
         F1_scores = []
         F1_score_img, labels_img, predictions_img = None, None, None
 
+        total_inf_img = np.zeros((self.Y , self.X))
+        total_gt_seg = np.zeros((self.Y , self.X))
+        total_img = np.zeros((self.Y , self.X))
+
+        print("    * : tile image shape", total_inf_img.shape)
+        print("    * : tile image shape", total_gt_seg.shape)
+        print("    * : tile image shape", total_img.shape)
         num_val = 0
         self.run_num = 0
         with torch.no_grad():
-            for image, segmentation, og_segmentation in test_loader:
+            for image, segmentation, ranges in test_loader:
                 # segmentation = hand_segmentation
 
                 num_val += 1
@@ -1129,7 +1175,7 @@ class UNetwork( MLGraph, nnModule, object):
 
                 # only consider loss for pixels
                 # within masked region
-                predicted = predicted.cpu().detach().numpy()  # [0,:,:,:]
+                predicted = predicted.cpu().detach().numpy() # [0,:,:,:]
                 segmentation = segmentation.cpu().detach().numpy()
                 # print('mask ', mask.shape, ' pred ', predicted.shape, ' image ', image.shape, ' seg ', segmentation.shape)
 
@@ -1188,7 +1234,7 @@ class UNetwork( MLGraph, nnModule, object):
                 self.write_arc_predictions(dir=out_folder)
                 self.draw_segmentation(dirpath=out_folder)
                 self.write_gnode_partitions(dir=out_folder)
-                self.write_selection_bounds(dir=out_folder,x_box=self.x_set, y_box=self.y_set)
+                self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set)#name_value[0], y_box=name_value[1], mode='a')
 
                 # current_training_loss = running_loss / print_every
                 current_validation_loss = running_val_loss / num_val
@@ -1206,13 +1252,39 @@ class UNetwork( MLGraph, nnModule, object):
 
                 if view_results:
                     with torch.no_grad():
-                        self.view_image(
+                        self.see_image(
                             image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
-                            as_grey=True)  # False)
-                self.save_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
-                                as_grey=True,
-                                dirpath=out_folder)
+                            as_grey=True, save=False)  # False)
+                ranges = ranges.cpu().numpy()
+                x_range = list(map(int , ranges[0,:,0,0]))
+                y_range = list(map(int,ranges[0,0,0,:]))
 
+                print("    * xrange yrange", x_range, y_range)
+
+                # self.pred_seg[x_range[0]:x_range[1],y_range[0]:y_range[1]]=predicted_segmentation
+                # self.inf_image[x_range[0]:x_range[1], y_range[0]:y_range[1]] =  image_subset
+                # self.gt_seg[x_range[0]:x_range[1], y_range[0]:y_range[1]] = ground_truth_seg
+                with torch.no_grad():
+                    # self.save_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),#(total_img, total_gt_seg, total_inf_img),
+                    #                 as_grey=True,
+                    #                 dirpath=out_folder)
+                    #                #save=True)
+                    self.see_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
+                                    # (total_img, total_gt_seg, total_inf_img),
+                                    as_grey=True,
+                                    dirpath=out_folder,
+                                    save=True)
+                    # self.see_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
+                    #                # (total_img, total_gt_seg, total_inf_img),
+                    #                as_grey=True,
+                    #                dirpath=out_folder,
+                    #                save=False)
+        # out_folder = os.path.join(self.pred_session_run_path, str(0))
+        # self.see_image(image_seg_set=(self.inf_image[None][None], self.gt_seg[None][None], self.pred_seg[None][None]),
+        #                             # (total_img, total_gt_seg, total_inf_img),
+        #                             as_grey=True,
+        #                             dirpath=out_folder,
+        #                             save=True)
 
         exp_folder = os.path.join(self.params['experiment_folder'], 'runs')
 

@@ -342,7 +342,7 @@ class runner:
         f.close()
 
 
-        param_lines = param_lines
+        param_lines = param_lines[0:6]
 
 
         training_size = len(param_lines) if multi_run else None
