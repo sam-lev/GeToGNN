@@ -231,7 +231,7 @@ def get_image_prediction_score(predicted, segmentation, X = None, Y =None):
     return f1_score(segmentations, logits_predicted) , segmentations, binary_logits_predicted
 
 def get_topology_prediction_score(predicted, segmentation,
-                                  gid_gnode_dict, node_gid_to_prediction,  pred_thresh=0.4,
+                                  gid_gnode_dict, node_gid_to_prediction, node_gid_to_label, pred_thresh=0.4,
                                   X = None, Y =None):
     # toggle model to eval mode
     #model.eval()
@@ -288,24 +288,25 @@ def get_topology_prediction_score(predicted, segmentation,
             for p in points:
                 x = p[0]
                 y = p[1]
-                arc_predictions += [pred[0] > pred_thresh for pred in __get_prediction_correctness(segmentation,
+                arc_predictions += [pred[0] > 0. for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
-                arc_segmentation_logits += [pred[1] > pred_thresh for pred in __get_prediction_correctness(segmentation,
+                arc_segmentation_logits += [pred[1] > 0. for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
-            spread_pred = np.bincount(arc_predictions)
+            spread_pred = np.bincount(arc_predictions,minlength=2)
 
             pred_unet_val = spread_pred[1]/np.sum(spread_pred)
-            pred_unet = spread_pred[1]/np.sum(spread_pred) > 0.5
+            pred_unet = spread_pred[1]/np.sum(spread_pred) > pred_thresh
             arc_pixel_predictions.append(pred_unet)
 
 
 
-            spread_pred = np.bincount(arc_segmentation_logits)
+            spread_pred = np.bincount(arc_segmentation_logits,minlength=2)
             gt_val = spread_pred[1] / np.sum(spread_pred)
-            gt = spread_pred[1] / np.sum(spread_pred) > 0.5
+            gt = spread_pred[1] / np.sum(spread_pred) > pred_thresh
             segmentation_logits.append(gt)
 
             node_gid_to_prediction[gid] = [1.0-pred_unet_val , pred_unet_val]
+            node_gid_to_label[gid] = gt_val
 
             # returns a list of scores, one for each of the labels
         segmentations = np.array(segmentation_logits)
@@ -315,7 +316,7 @@ def get_topology_prediction_score(predicted, segmentation,
         print(segmentations[0:10])
         print(" logits,", logits_predicted[0:10])
 
-    return f1_score(segmentations, logits_predicted) , segmentations, binary_logits_predicted, node_gid_to_prediction
+    return f1_score(segmentations, logits_predicted) , segmentations, binary_logits_predicted, node_gid_to_prediction, node_gid_to_label
 
 
 #
@@ -601,7 +602,7 @@ class UNetwork( MLGraph, nnModule, object):
                 if not save:
                     plt.imshow(gt_seg)
                 else:
-                    plt.imshow(gt_seg)
+                    plt.imsave(gt_seg)
             if not save:
                 plt.show()
         if pred_seg is not None:
@@ -1223,10 +1224,12 @@ class UNetwork( MLGraph, nnModule, object):
                 F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=predicted,
                                                                                        segmentation=segmentation,
                                                                                        X=X, Y=Y)
-                F1_score_topo, labels_topo, predictions_topo, self.node_gid_to_prediction = get_topology_prediction_score(predicted=predicted,
+                F1_score_topo, labels_topo, predictions_topo, \
+                self.node_gid_to_prediction ,self.node_gid_to_label= get_topology_prediction_score(predicted=predicted,
                                                                                              segmentation=segmentation,
                                                                                              gid_gnode_dict=self.gid_gnode_dict,
                                                                                              node_gid_to_prediction=self.node_gid_to_prediction,
+                                                                                            node_gid_to_label = self.node_gid_to_label,
                                                                                              X=X, Y=Y,
                                                                                              pred_thresh=pred_thresh)
 
@@ -1315,7 +1318,8 @@ class UNetwork( MLGraph, nnModule, object):
     #
     #
 class UNet_Trainer:
-    def __init__(self, UNet : UNetwork, train_dataset=None, val_dataset=None, class_weights=None):
+    def __init__(self, UNet : UNetwork, train_dataset=None, val_dataset=None,
+                 class_weights=None):
         sys.setrecursionlimit(3000)#10000)
         #print("     * : recursion limit ", )
         torch.cuda.empty_cache()
@@ -1344,7 +1348,7 @@ class UNet_Trainer:
 
 
 
-    def launch_training(self, view_results=False):
+    def launch_training(self, view_results=False,pred_thresh=0.5):
 
 
         # Initialize weights
@@ -1491,11 +1495,13 @@ class UNet_Trainer:
                     F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=predicted,
                                                                                            segmentation=segmentation,
                                                                                            X=self.X, Y=self.Y)
-                    F1_score_topo, labels_topo, predictions_topo, _= get_topology_prediction_score(
+                    F1_score_topo, labels_topo, predictions_topo, _, _= get_topology_prediction_score(
                         predicted=predicted,
                         segmentation=segmentation,
                         gid_gnode_dict=self.UNet.gid_gnode_dict,
                         node_gid_to_prediction=self.UNet.node_gid_to_prediction,
+                        node_gid_to_label=self.UNet.node_gid_to_label,
+                        pred_thresh=pred_thresh,
                         X=self.X, Y=self.Y)
 
                     current_training_loss = running_loss / print_every

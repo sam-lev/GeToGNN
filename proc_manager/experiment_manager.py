@@ -383,7 +383,8 @@ class runner:
                 shutil.rmtree(run_folder)
 
             trainer = UNet_Trainer(UNet)
-            results = trainer.launch_training(view_results=False)
+            pred_thresh = 0.4
+            results = trainer.launch_training(view_results=False, pred_thresh=pred_thresh)
 
             train_losses, test_losses, F1_scores, best_f1, \
             val_imgs, val_segs, sample_losses, val_img_preds, running_best_model = results
@@ -407,7 +408,7 @@ class runner:
             ### inf_resuts = unet_classifier.infer(running_best_model ,infer_subsets=True, view_results=True)
             inf_results = UNet.infer(running_best_model,training_window_file=self.window_file,
                                      infer_subsets=True, view_results=False,
-                                     pred_thresh=0.25,
+                                     pred_thresh=pred_thresh,
 
                                      test=False)
 
