@@ -638,9 +638,9 @@ class MLGraph(GeToFeatureGraph):
 
         X = self.image.shape[0]
         Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
-        if start:
-            window_file.write(str(X) + "\n")
-            window_file.write(str(Y) + "\n")
+        ##if start:
+        window_file.write(str(X) + "\n")
+        window_file.write(str(Y) + "\n")
         no_new_line = len(y_box)
         for x_box, y_box in zip(x_box,y_box):
             no_new_line -= 1

@@ -291,7 +291,6 @@ class runner:
         # Perform remainder of runs and don't need to read feats again
         #
         if not MLP.params['load_features']:
-            MLP.params['load_features'] = False
             MLP.params['write_features'] = False
             MLP.params['load_features'] = True
             MLP.params['write_feature_names'] = False
@@ -345,9 +344,9 @@ class runner:
         sets = el//10
         sets = sets-1 if sets%2==0 else sets
         select_subsets = []
-        select_subsets = [param_lines[0:2]  ,param_lines[0:2] , param_lines[sets:sets+4] ,\
+        select_subsets = [param_lines[0:2] , param_lines[sets:sets+4] ,\
                       param_lines[2*sets:(2*sets)+8] , param_lines[3*sets:(3*sets)+16]]
-
+        select_subsets.sort()
 
         training_size = len(select_subsets) if multi_run else None
 
@@ -374,8 +373,9 @@ class runner:
                             image=self.image,
                             name=self.name,
                             write_folder=self.write_path,
+                            compute_features=num_samp!=0,
                             training_size=len(samp),
-                            region_list=param_lines)
+                            region_list=samp)
 
             run_folder = os.path.join(UNet.params['experiment_folder'],'runs')
             if num_samp == 0 and os.path.exists(run_folder):
@@ -405,7 +405,9 @@ class runner:
             ### unet_classifier = UNet_Classifier(UNet, self.window_file)
             ### inf_resuts = unet_classifier.infer(running_best_model ,infer_subsets=True, view_results=True)
             inf_results = UNet.infer(running_best_model,training_window_file=self.window_file,
-                                     infer_subsets=True, view_results=False)
+                                     infer_subsets=True, view_results=False,
+
+                                     test=False)
 
             test_losses, val_imgs, val_segs, val_img_preds, running_val_loss,\
             F1_score, labels, predictions = inf_results

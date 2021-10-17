@@ -707,7 +707,7 @@ class UNetwork( MLGraph, nnModule, object):
                  ground_truth_label_file=None,run_num=0, parameter_file_number = None,
                  geomsc_fname_base = None, label_file=None,
                  model_name=None, load_feature_graph_name=False,image=None,
-                 train_dataset=None, val_dataset=None,
+                 train_dataset=None, val_dataset=None, compute_features=False,
                  training_size=None, region_list=None, **kwargs):
 
         self.type = 'unet'
@@ -765,7 +765,7 @@ class UNetwork( MLGraph, nnModule, object):
         self.negative_arcs = set()
         self.selected_negative_arcs = set()
 
-        if training_size > 0:
+        if compute_features:
             #
             # Perform remainder of runs and don't need to read feats again
             #
@@ -1088,7 +1088,7 @@ class UNetwork( MLGraph, nnModule, object):
 
 
         if test:
-            param_lines = param_lines
+            param_lines = param_lines[0:4]
 
 
 
@@ -1236,7 +1236,7 @@ class UNetwork( MLGraph, nnModule, object):
                 self.write_arc_predictions(dir=out_folder)
                 self.draw_segmentation(dirpath=out_folder)
                 self.write_gnode_partitions(dir=out_folder)
-                self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set)#name_value[0], y_box=name_value[1], mode='a')
+                self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set,mode= 'w+')#name_value[0], y_box=name_value[1], mode='a')
 
                 # current_training_loss = running_loss / print_every
                 current_validation_loss = running_val_loss / num_val
