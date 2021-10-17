@@ -300,6 +300,7 @@ class runner:
             MLP.params['load_geto_attr'] = True
             MLP.params['load_feature_names'] = True
 
+
         run_manager = Run_Manager(model=MLP,
                                   training_window_file=self.window_file,
                                   features_file=self.feature_file,
@@ -406,6 +407,7 @@ class runner:
             ### inf_resuts = unet_classifier.infer(running_best_model ,infer_subsets=True, view_results=True)
             inf_results = UNet.infer(running_best_model,training_window_file=self.window_file,
                                      infer_subsets=True, view_results=False,
+                                     pred_thresh=0.25,
 
                                      test=False)
 

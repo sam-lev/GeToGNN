@@ -231,7 +231,7 @@ def get_image_prediction_score(predicted, segmentation, X = None, Y =None):
     return f1_score(segmentations, logits_predicted) , segmentations, binary_logits_predicted
 
 def get_topology_prediction_score(predicted, segmentation,
-                                  gid_gnode_dict, node_gid_to_prediction,
+                                  gid_gnode_dict, node_gid_to_prediction,  pred_thresh=0.4,
                                   X = None, Y =None):
     # toggle model to eval mode
     #model.eval()
@@ -288,20 +288,21 @@ def get_topology_prediction_score(predicted, segmentation,
             for p in points:
                 x = p[0]
                 y = p[1]
-                arc_predictions += [pred[0] > 0 for pred in __get_prediction_correctness(segmentation,
+                arc_predictions += [pred[0] > pred_thresh for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
-                arc_segmentation_logits += [pred[1] > 0 for pred in __get_prediction_correctness(segmentation,
+                arc_segmentation_logits += [pred[1] > pred_thresh for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
             spread_pred = np.bincount(arc_predictions)
 
-            pred_unet_val = spread_pred[0]/np.sum(spread_pred)
-            pred_unet = spread_pred[0]/np.sum(spread_pred) > 0.5
+            pred_unet_val = spread_pred[1]/np.sum(spread_pred)
+            pred_unet = spread_pred[1]/np.sum(spread_pred) > 0.5
             arc_pixel_predictions.append(pred_unet)
 
 
 
             spread_pred = np.bincount(arc_segmentation_logits)
-            gt = spread_pred[0] / np.sum(spread_pred) > 0.5
+            gt_val = spread_pred[1] / np.sum(spread_pred)
+            gt = spread_pred[1] / np.sum(spread_pred) > 0.5
             segmentation_logits.append(gt)
 
             node_gid_to_prediction[gid] = [1.0-pred_unet_val , pred_unet_val]
@@ -1070,7 +1071,7 @@ class UNetwork( MLGraph, nnModule, object):
 
     def infer(self, running_best_model, dataset=None, training_window_file=None,
               load=False, view_results=False,
-              infer_subsets=False, test=True):
+              infer_subsets=False, test=True, pred_thresh=0.5):
 
         #self.UNet = UNet
 
@@ -1226,7 +1227,8 @@ class UNetwork( MLGraph, nnModule, object):
                                                                                              segmentation=segmentation,
                                                                                              gid_gnode_dict=self.gid_gnode_dict,
                                                                                              node_gid_to_prediction=self.node_gid_to_prediction,
-                                                                                             X=X, Y=Y)
+                                                                                             X=X, Y=Y,
+                                                                                             pred_thresh=pred_thresh)
 
                 out_folder = os.path.join(self.pred_session_run_path, str(self.run_num))
                 #self.pred_session_run_path = out_folder
