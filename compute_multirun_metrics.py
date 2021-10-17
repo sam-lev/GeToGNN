@@ -47,7 +47,7 @@ def group_pairs(lst):
     for i in range(0, len(lst), 2):
         yield tuple(lst[i: i + 2])
 
-def collect_run_metrics(metric = None, runs_folder = None,
+def collect_run_metrics(metric = None, runs_folder = None,batch_of_batch=False,avg_multi=False,
                         window_file='window.txt', batch_multi_run=False):
 
 
@@ -76,14 +76,20 @@ def collect_run_metrics(metric = None, runs_folder = None,
     runs_folder = list(map(int, runs_folder))
     for idx,run in enumerate(sorted(runs_folder)):
         #for metric in metrics:
-        metric_file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
-                                  str(args.exp_folder), args.runs, str(run),
-                                  str(args.model)+'_'+str(metric)+'.txt')
-        if batch_multi_run:
+
+
+        if not batch_of_batch:
             metric_file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
-                                       str(args.exp_folder), args.runs, str(run),'batch_metrics',
-                                       str(metric),
-                                       'metric_averages.txt')
+                                       str(args.exp_folder), args.runs, str(run),
+                                       str(args.model) + '_' + str(metric) + '.txt')
+        elif not avg_multi:
+            metric_file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
+                                       str(args.exp_folder), args.runs, str(run),str(metric),
+                                       str(args.model) +'.txt')
+        else:
+            metric_file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
+                                       str(args.exp_folder), args.runs, str(run), str(metric),
+                                       str(args.model) + '.txt')
         f = open(metric_file, 'r')
         result_lines = f.readlines()
         f.close()
@@ -93,27 +99,41 @@ def collect_run_metrics(metric = None, runs_folder = None,
         for result in result_lines:
             name_value = result.split(' ')
             avg_type_name = name_value[0]
-            if metric == 'recall' and avg_type_name == 'binary':
+            if '_' in avg_type_name:
+                avg_type_name = avg_type_name.split('_')[0]
+            if metric == 'recall' and 'binary' in avg_type_name:
                 continue
             else:
                 val = float(name_value[1])
-            results_dict[str(avg_type_name)].append(val)
+            if str(avg_type_name) in results_dict.keys():
+                results_dict[str(avg_type_name)].append(val)
+            else:
+                results_dict[str(avg_type_name)] =[val]
 
-            if metric == 'f1':
-                if avg_type_name == 'micro':
+            if 'f1' in metric:
+                if 'micro' in avg_type_name:
                     if run not in run_result_dict.keys():
                         run_result_dict[run] = {'micro':val}
                     else:
                         run_result_dict[run]['micro'] = val
-                if avg_type_name == 'macro':
+                if  'macro' in avg_type_name:
                     if run not in run_result_dict.keys():
                         run_result_dict[run] = {'macro': val}
                     else:
                         run_result_dict[run]['macro'] = val
+                # if  'weighted' in avg_type_name:
+                #     if run not in run_result_dict.keys():
+                #         run_result_dict[run] = {'weighted': val}
+                #     else:
+                #         run_result_dict[run]['weighted'] = val
 
         if metric == 'f1':
-            window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
-                                      str(args.exp_folder), args.runs, str(run),window_file)
+            if not batch_of_batch:
+                window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
+                                          str(args.exp_folder), args.runs, str(run),window_file)
+            else:
+                window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
+                                                str(args.exp_folder),  str(run),'0', window_file)
             f = open(window_f, 'r')
             window_lines = f.readlines()
             f.close()
@@ -180,7 +200,7 @@ def plot_histogram(x, y, n_bins, metric_name='', plt_title = '',
 
 
     # We'll color code by height, but you could use any scalar
-    fracs = N / N.max()
+    fracs = N #/ N.max()
 
     # we need to normalize the data to 0..1 for the full range of the colormap
     norm = colors.Normalize(fracs.min(), fracs.max())
@@ -243,7 +263,7 @@ def plot_region_to_f1(run_region_dict=None, results_dict=None, run_result_dict=N
                       metric=None,
                       plt_title='',
                       write_folder=None,
-                      exp_name=''
+                      exp_name='',batch_of_batch=False
                       ):
     X = run_region_dict['X']
     Y = run_region_dict['Y']
@@ -259,6 +279,10 @@ def plot_region_to_f1(run_region_dict=None, results_dict=None, run_result_dict=N
     del run_region_dict['Y']
     sorted_runs = sorted(list(map(int, list(run_region_dict.keys()))))
     for idx, run_num in enumerate(sorted_runs):#range(len(run_region_dict)-2):
+        if batch_of_batch:
+            run_result_num = run_num
+        else:
+            run_result_num = idx
 
         if run_num == 'X_BOX' or run_num == 'Y_BOX' or \
                 run_num == 'X' or run_num == 'Y':
@@ -282,10 +306,10 @@ def plot_region_to_f1(run_region_dict=None, results_dict=None, run_result_dict=N
 
         percent_region = 100.0 * (subsection_area / (float(X)*float(Y)))
 
+        print("    * run_result_dict",run_result_dict)
 
-
-        macro_f1 = run_result_dict[run_num]['macro']
-        micro_f1 = run_result_dict[run_num]['micro']
+        macro_f1 = run_result_dict[run_result_num]['macro']
+        micro_f1 = run_result_dict[run_result_num]['micro']
         run_num = int(run_num)
         x[idx] = percent_region
         y_macro[idx] = macro_f1
@@ -404,7 +428,8 @@ def main():
     plot_region_to_f1(run_region_dict=run_region_dict,
                       results_dict=results_dict,
                       run_result_dict=idx_run_dict)
-def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', avg_multi='False',
+def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', avg_multi=False,
+                      batch_of_batch=False,
                       box_dims=None, window_file='window.txt', batch_multi_run = False,metric='f1'):
 
     args.model = model
@@ -457,8 +482,12 @@ def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', a
             metric_subfolder = os.path.join(metric_plot_folder, metric)
             if not os.path.exists(metric_subfolder):
                 os.makedirs(metric_subfolder)
+            metric_file = None
+
             results_dict, attributes_dict, run_region_dict, idx_run_dict = collect_run_metrics(metric=metric,
-                                                                runs_folder=runs_folder, batch_multi_run=False)
+                                                                runs_folder=runs_folder,
+                                                                batch_multi_run=False,
+                                                               batch_of_batch=batch_of_batch)
 
 
 
@@ -471,27 +500,46 @@ def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', a
                                  metric=metric,
                                  write_folder=metric_subfolder,
                                  exp_name= str(exp_folder))
-            #metric_standard_deviation(results_dict=results_dict,
+            metric_standard_deviation(results_dict=results_dict,
+                                      metric=metric,
+                                      write_folder=metric_subfolder,
+                                      exp_name= str(exp_folder))
+    #metric_subfolder = os.path.join(metric_plot_folder, 'f1')
+    #if not os.path.exists(metric_subfolder):
+    #    os.makedirs(metric_subfolder)
+    else:
+        for metric in metrics:
+            metric_subfolder = os.path.join(metric_plot_folder,metric)
+            if not os.path.exists(metric_subfolder):
+                os.makedirs(metric_subfolder)
+            results_dict, attributes_dict, run_region_dict, idx_run_dict = collect_run_metrics(metric=metric,
+                                                                                               batch_of_batch=batch_of_batch,
+
+                                                                                               runs_folder=runs_folder)
+            print(run_region_dict)
+            print(results_dict)
+            # compute_metric_histogram(results_dict=results_dict,
+            #                          attributes_dict=attributes_dict,
             #                          metric=metric,
             #                          write_folder=metric_subfolder,
-            #                          exp_name= str(exp_folder))
-    metric_subfolder = os.path.join(metric_plot_folder, 'f1')
-    if not os.path.exists(metric_subfolder):
-        os.makedirs(metric_subfolder)
-    results_dict, attributes_dict, run_region_dict, idx_run_dict = collect_run_metrics(metric=metric,
-
-                                                                                       runs_folder=runs_folder)
+            #                          exp_name=str(exp_folder))
+            average_metric_score(results_dict=results_dict,
+                                 metric=metric,
+                                 write_folder=metric_subfolder,
+                                 exp_name=str(exp_folder))
     model_type = "Graphsage MeanPool" if str(model) == 'getognn' else str(model)
     model_type = "Random Forest" if str(model) == 'random_forest' else str(model)
 
     dataset = str(exp_folder).split('/')[-2]
     dataset = dataset.replace('_',' ')
-
+    print(run_region_dict)
     plot_region_to_f1(run_region_dict=run_region_dict,
+                      batch_of_batch=avg_multi,
                       results_dict=results_dict,
                       run_result_dict=idx_run_dict,
                       write_folder=metric_subfolder,
                       plt_title=model_type+' '+dataset)
+
 
 if __name__ == "__main__":
     main()

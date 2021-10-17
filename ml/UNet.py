@@ -293,6 +293,8 @@ def get_topology_prediction_score(predicted, segmentation,
                 arc_segmentation_logits += [pred[1] > 0 for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
             spread_pred = np.bincount(arc_predictions)
+
+            pred_unet_val = spread_pred[0]/np.sum(spread_pred)
             pred_unet = spread_pred[0]/np.sum(spread_pred) > 0.5
             arc_pixel_predictions.append(pred_unet)
 
@@ -302,7 +304,7 @@ def get_topology_prediction_score(predicted, segmentation,
             gt = spread_pred[0] / np.sum(spread_pred) > 0.5
             segmentation_logits.append(gt)
 
-            node_gid_to_prediction[gid] = [1.0-pred_unet , pred_unet]
+            node_gid_to_prediction[gid] = [1.0-pred_unet_val , pred_unet_val]
 
             # returns a list of scores, one for each of the labels
         segmentations = np.array(segmentation_logits)
@@ -1086,7 +1088,7 @@ class UNetwork( MLGraph, nnModule, object):
 
 
         if test:
-            param_lines = param_lines[0:6]
+            param_lines = param_lines
 
 
 
@@ -1289,7 +1291,7 @@ class UNetwork( MLGraph, nnModule, object):
         exp_folder = os.path.join(self.params['experiment_folder'], 'runs')
 
         batch_metric_folder = os.path.join(exp_folder,
-                                           str(self.training_size))
+                                           str(self.training_size),'f1')
         if not os.path.exists(batch_metric_folder):
             os.makedirs(batch_metric_folder)
 
@@ -1297,7 +1299,7 @@ class UNetwork( MLGraph, nnModule, object):
         #
         # UNet.write_arc_predictions(UNet.session_name)
         # UNet.draw_segmentation(dirpath=UNet.pred_session_run_path)
-
+        print("    * ","after single batch")
         multi_run_metrics(model='unet', exp_folder=exp_folder,
                           batch_multi_run=True,
                           bins=7, runs=str(self.training_size),

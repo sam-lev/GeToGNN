@@ -341,18 +341,25 @@ class runner:
         param_lines = f.readlines() if multi_run else None
         f.close()
 
+        el = len(param_lines)-1
+        sets = el//10
+        sets = sets-1 if sets%2==0 else sets
+        select_subsets = []
+        select_subsets = [param_lines[0:2]  ,param_lines[0:2] , param_lines[sets:sets+4] ,\
+                      param_lines[2*sets:(2*sets)+8] , param_lines[3*sets:(3*sets)+16]]
 
-        param_lines = param_lines[0:6]
 
-
-        training_size = len(param_lines) if multi_run else None
+        training_size = len(select_subsets) if multi_run else None
 
         num_training = 1 if training_size is None else training_size
         exp_folder = ''
         input_folder = ''
         label_file = ''
         param_file = ''
-        for num_samp in range(num_training):
+
+
+        #lines = select_subsets
+        for num_samp, samp in enumerate(select_subsets):
 
 
             UNet = UNetwork(in_channel=1, out_channel=1,
@@ -367,8 +374,12 @@ class runner:
                             image=self.image,
                             name=self.name,
                             write_folder=self.write_path,
-                            training_size=num_samp,
+                            training_size=len(samp),
                             region_list=param_lines)
+
+            run_folder = os.path.join(UNet.params['experiment_folder'],'runs')
+            if num_samp == 0 and os.path.exists(run_folder):
+                shutil.rmtree(run_folder)
 
             trainer = UNet_Trainer(UNet)
             results = trainer.launch_training(view_results=False)
@@ -444,10 +455,11 @@ class runner:
         #
         # UNet.write_arc_predictions(UNet.session_name)
         # UNet.draw_segmentation(dirpath=UNet.pred_session_run_path)
-
-        multi_run_metrics(model='metric', exp_folder=exp_folder,
-                          batch_multi_run=True, avg_multi=True,
-                          bins=7, runs='batch_metrics', metric='averages',
+        metric = 'f1'
+        print("    * ", "after training loop")
+        multi_run_metrics(model='metric_averages', exp_folder=exp_folder,
+                          batch_multi_run=True, avg_multi=True,batch_of_batch=True,
+                          bins=7, runs='batch_metrics',
                           plt_title=exp_folder.split('/')[-1])
 
 
