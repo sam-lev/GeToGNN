@@ -383,7 +383,7 @@ class runner:
                 shutil.rmtree(run_folder)
 
             trainer = UNet_Trainer(UNet)
-            pred_thresh = 0.4
+            pred_thresh = 0.5
             results = trainer.launch_training(view_results=False, pred_thresh=pred_thresh)
 
             train_losses, test_losses, F1_scores, best_f1, \

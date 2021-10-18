@@ -288,9 +288,9 @@ def get_topology_prediction_score(predicted, segmentation,
             for p in points:
                 x = p[0]
                 y = p[1]
-                arc_predictions += [pred[0] > 0. for pred in __get_prediction_correctness(segmentation,
+                arc_predictions += [pred[0] > pred_thresh for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
-                arc_segmentation_logits += [pred[1] > 0. for pred in __get_prediction_correctness(segmentation,
+                arc_segmentation_logits += [pred[1] > pred_thresh for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
             spread_pred = np.bincount(arc_predictions,minlength=2)
 
@@ -300,13 +300,13 @@ def get_topology_prediction_score(predicted, segmentation,
 
 
 
-            spread_pred = np.bincount(arc_segmentation_logits,minlength=2)
-            gt_val = spread_pred[1] / np.sum(spread_pred)
-            gt = spread_pred[1] / np.sum(spread_pred) > pred_thresh
+            spread_seg = np.bincount(arc_segmentation_logits,minlength=2)
+            gt_val = spread_seg[1] / np.sum(spread_seg)
+            gt = spread_seg[1] / np.sum(spread_seg) > pred_thresh
             segmentation_logits.append(gt)
 
             node_gid_to_prediction[gid] = [1.0-pred_unet_val , pred_unet_val]
-            node_gid_to_label[gid] = gt_val
+            node_gid_to_label[gid] = [1.0-gt_val, gt_val]
 
             # returns a list of scores, one for each of the labels
         segmentations = np.array(segmentation_logits)
