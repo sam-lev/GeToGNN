@@ -343,10 +343,13 @@ class runner:
 
         el = len(param_lines)-1
         sets = el//10
-        sets = sets-1 if sets%2==0 else sets
+        sets = sets-1 if sets%2!=0 else sets
         select_subsets = []
-        select_subsets = [param_lines[0:2] , param_lines[sets:sets+4] ,\
-                      param_lines[2*sets:(2*sets)+8] , param_lines[3*sets:(3*sets)+16]]
+        select_subsets =param_lines[0:2]
+        # [param_lines[0:2] , param_lines[sets:sets+4] ,\
+        #               param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
+        #               param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
+        #               param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]                ]
         select_subsets.sort()
 
         training_size = len(select_subsets) if multi_run else None
@@ -357,9 +360,17 @@ class runner:
         label_file = ''
         param_file = ''
 
+        experiment_folder = os.path.join(LocalSetup.project_base_path, 'datasets'
+                                              , self.write_path)
+        run_folder = os.path.join(experiment_folder, 'runs')
+        if os.path.exists(run_folder):
+            shutil.rmtree(run_folder)
 
         #lines = select_subsets
         for num_samp, samp in enumerate(select_subsets):
+
+            print("    * training regions: ")
+            print("    * ", samp)
 
 
             UNet = UNetwork(in_channel=1, out_channel=1,
@@ -378,9 +389,7 @@ class runner:
                             training_size=len(samp),
                             region_list=samp)
 
-            run_folder = os.path.join(UNet.params['experiment_folder'],'runs')
-            if num_samp == 0 and os.path.exists(run_folder):
-                shutil.rmtree(run_folder)
+
 
             trainer = UNet_Trainer(UNet)
             pred_thresh = 0.5
@@ -410,7 +419,7 @@ class runner:
                                      infer_subsets=True, view_results=False,
                                      pred_thresh=pred_thresh,
 
-                                     test=False)
+                                     test=True)
 
             test_losses, val_imgs, val_segs, val_img_preds, running_val_loss,\
             F1_score, labels, predictions = inf_results
@@ -463,7 +472,7 @@ class runner:
         metric = 'f1'
         print("    * ", "after training loop")
         multi_run_metrics(model='metric_averages', exp_folder=exp_folder,
-                          batch_multi_run=True, avg_multi=True,batch_of_batch=True,
+                          batch_multi_run=False, avg_multi=True,batch_of_batch=True,
                           bins=7, runs='batch_metrics',
                           plt_title=exp_folder.split('/')[-1])
 

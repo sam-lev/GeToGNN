@@ -736,11 +736,11 @@ class GeToFeatureGraph(GeToGraph):
         if self.params['save_filtered_images']:
             for name, image in self.images.items():
                 image = np.array(image).astype(np.int8)
-                Img = Image.fromarray(image)
+                #Img = Image.fromarray(image)
                 if not os.path.exists(os.path.join(self.experiment_folder, 'filtered_images')):
                     os.makedirs(os.path.join(self.experiment_folder, 'filtered_images'))
-                Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), quality=90)
-                #imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), image)
+                #Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), quality=90)
+                imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), image)
 
     def load_json_feature_graph(self):
         graph_path = os.path.join(self.pred_run_path, self.msc_graph_name)
