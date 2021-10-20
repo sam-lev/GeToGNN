@@ -78,7 +78,7 @@ class Run_Manager:
 
             for current_box_idx in range(len(boxes)):
 
-                self.model.run_num += 1
+                self.model.update_run_info()
                 #self.model.pred_session_run_path = os.path.join(LocalSetup.project_base_path,str(self.model.run))
                 self.counter_file = os.path.join(LocalSetup.project_base_path, 'run_count.txt')
                 f = open(self.counter_file, 'r')

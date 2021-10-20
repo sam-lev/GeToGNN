@@ -36,7 +36,7 @@ class Attributes(object):
         #
         # Write Paths
         #
-        self.run_num = 42
+        self.run_num = 0
         self.LocalSetup = LocalSetup()
         print("KWARG")
         print(kwargs)
@@ -98,7 +98,7 @@ class Attributes(object):
                 self.session_name = str(self.run_num)
                 self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
                 if not os.path.exists(self.pred_session_run_path):
-                    os.makedirs(os.path.join(self.pred_session_run_path))
+                    os.makedirs(os.path.join(self.pred_session_run_path,self.session_name))
 
             if batch_multi_run is not None:
                 self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
