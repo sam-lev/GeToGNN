@@ -154,8 +154,8 @@ class RandomForest(MLGraph):
 
 
         #self.attributes = deepcopy(self.get_attributes())
-        self.write_gnode_partitions(self.session_name)
-        self.write_selection_bounds(self.session_name)
+        self.write_gnode_partitions(self.pred_session_run_path)
+        self.write_selection_bounds(self.pred_session_run_path)
 
     def classifier(self, node_gid_to_prediction, train_features=None, train_labels=None,
                    test_features=None, test_labels=None, feature_map=False,class_1_weight=1.0,

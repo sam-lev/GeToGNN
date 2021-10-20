@@ -542,7 +542,7 @@ class runner:
                                                                     depth=tree_depth)
         out_folder = RF.attributes.pred_session_run_path
 
-        RF.write_arc_predictions(RF.session_name)
+        RF.write_arc_predictions(RF.pred_session_run_path)
         RF.draw_segmentation(dirpath=RF.pred_session_run_path)
 
         compute_prediction_metrics('random_forest', predictions, labels, out_folder)

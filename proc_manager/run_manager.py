@@ -207,8 +207,8 @@ class Run_Manager:
                 self.model.node_gid_to_partition[gid] = 'val'
 
             #if self.getognn.params['write_partitions']:
-            self.model.write_gnode_partitions(self.model.session_name)
-            self.model.write_selection_bounds(self.model.session_name)
+            self.model.write_gnode_partitions(self.model.pred_session_run_path)
+            self.model.write_selection_bounds(self.model.pred_session_run_path)
 
             if self.model.type == "getognn" and self.model.params['write_json_graph']:
                 self.model.write_json_graph_data(folder_path=self.model.pred_session_run_path,
@@ -228,7 +228,7 @@ class Run_Manager:
                 G = self.model.get_graph()
                 self.model.equate_graph(G)
 
-                self.model.write_arc_predictions(self.model.session_name)
+                self.model.write_arc_predictions(dir= self.model.pred_session_run_path)
                 self.model.draw_segmentation(dirpath=self.model.pred_session_run_path)
 
                 # get inference metrics
@@ -276,7 +276,7 @@ class Run_Manager:
                                                                             depth=tree_depth)
                 out_folder = self.model.pred_session_run_path
 
-                self.model.write_arc_predictions(self.model.session_name)
+                self.model.write_arc_predictions(self.model.pred_session_run_path)
                 self.model.draw_segmentation(dirpath=self.model.pred_session_run_path)
 
                 # need to read features by gid or idx
@@ -318,7 +318,7 @@ class Run_Manager:
 
                 compute_prediction_metrics('mlp', preds, labels, out_folder)
 
-            self.model.write_arc_predictions(self.model.session_name)
+            self.model.write_arc_predictions(self.model.pred_session_run_path)
             self.model.draw_segmentation(dirpath=os.path.join(self.model.pred_session_run_path)) # , invert=True)
 
         exp_folder = os.path.join(self.model.params['experiment_folder'] )

@@ -14,7 +14,7 @@ name = ['retinal',                     # 0
              'map_border',             # 7
         'foam_cell']             # 8
 
-batch = 0
+batch = 1
 
 def unit_run():
     for dataset_idx, window_file in zip([8], [name[8]]):
@@ -30,8 +30,8 @@ def unit_run():
 
 def batch_runs():
     # launch random Forest
-    for dataset_idx, window_file in zip([2,0], [name[2]+'_unet_sliding_windows.txt',
-                                                   name[0]+'_unet_sliding_windows.txt',
+    for dataset_idx, window_file in zip([8], [name[8]+'_half_step_sliding_windows.txt',
+                                                   #name[0]+'_half_step_sliding_windows.txt',
                                                     # name[5]+'_unet_sliding_windows.txt',
                                                     #'transform_fourth_halfStep_windows.txt',
                                                     # ,#zip([0,5,6],['quarterWindow_fullStep.txt',#'windows_fourthDimStepHalf.txt',
@@ -39,8 +39,8 @@ def batch_runs():
                                                     ]):
         # for exp, model in zip(["fourth_windows_graphsage-meanpool","Random_Forest"],
         #                ['getognn' , 'random_forest']):
-        for exp, model in zip(["Random_Forest"],
-                              ['random_forest']):
+        for exp, model in zip(["GNN","Random_Forest"],
+                              ['getognn','random_forest']):
             exp_runner = experiment_manager.runner(experiment_name=exp,
                                                    sample_idx=dataset_idx,
                                                    window_file_base=window_file,
