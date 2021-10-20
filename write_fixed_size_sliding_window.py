@@ -34,7 +34,8 @@ for i in range(int(increment_x * (1. / step))):
     if X_END > X:
         X_END = int(X-1)
         X_START = int((X-1)-step_X)
-    x_boxes.append("x_box "+str(X_START)+','+str(X_END))
+    if X_END - X_START == step_X:
+        x_boxes.append("x_box "+str(X_START)+','+str(X_END))
     
 for i in range(int(increment_y * (1. / step))):
     slide = i/step
@@ -43,7 +44,8 @@ for i in range(int(increment_y * (1. / step))):
     if Y_END > Y:
         Y_END = int(Y-1)
         Y_START = int((Y-1) - step_Y)
-    y_boxes.append("y_box "+str(Y_START)+','+str(Y_END))
+    if Y_END - Y_START == step_Y:
+        y_boxes.append("y_box "+str(Y_START)+','+str(Y_END))
 
 for x_box in x_boxes:
     for y_box in y_boxes:
