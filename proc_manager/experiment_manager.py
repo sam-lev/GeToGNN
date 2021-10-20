@@ -54,7 +54,8 @@ class runner:
                      'berghia',                            # 4
                      'faults_exmouth',                     # 5
                      'transform_tests',                    # 6
-                     'map_border'][self.sample_idx]        # 7
+                     'map_border',
+                     'foam_cell'][self.sample_idx]        # 7
 
         self.image = ['im0236_o_700_605.raw',
                  'MAX_neuron_640_640.raw',
@@ -63,7 +64,8 @@ class runner:
                  'berghia_o_891_897.raw',
                  'att_0_460_446_484.raw',
                 'diadem16_transforms_o_1000_1000.raw',
-                      'border1_636_2372.raw'][self.sample_idx]  # neuron1
+                      'border1_636_2372.raw',
+                      'foam0235_828_846.raw'][self.sample_idx]  # neuron1
         self.label_file = ['im0236_la2_700_605.raw.labels_2.txt',
                       'MAX_neuron_640_640.raw.labels_3.txt',
                       'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_4.txt',
@@ -71,7 +73,8 @@ class runner:
                       'berghia_prwpr_e4_891_896.raw.labels_3.txt',
                       'att_L3_0_460_446_484.raw.labels_0.txt',
                       'diadem16_transforms_s1_1000_1000.raw.labels_14.txt',
-                           'border1_636x2372.raw.labels_0.txt'][self.sample_idx]  # neuron1
+                           'border1_636x2372.raw.labels_0.txt',
+                           'foam0235_fa_828_846.raw.labels_8.txt'][self.sample_idx]  # neuron1
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
 
@@ -345,7 +348,7 @@ class runner:
         sets = el//10
         sets = sets-1 if sets%2!=0 else sets
         select_subsets = []
-        select_subsets =param_lines[0:2]
+        select_subsets = [param_lines[0:2]]
         # [param_lines[0:2] , param_lines[sets:sets+4] ,\
         #               param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
         #               param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],

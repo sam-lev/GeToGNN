@@ -174,6 +174,7 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
                 param_dict_changed[name_value[0]] = name_value[1]
             old_val = param_dict[name_value[0]]
             if ',' not in name_value[1]:
+                print(name_value)
                 if type(old_val) == str:
                     param_dict[name_value[0]] = type(old_val)(param_dict_changed[name_value[0]][:-1])
                 elif type(old_val) == bool:

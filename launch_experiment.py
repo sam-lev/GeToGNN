@@ -11,21 +11,22 @@ name = ['retinal',                     # 0
              'berghia',                # 4
              'faults_exmouth',         # 5
              'transform_tests',        # 6
-             'map_border']             # 7
+             'map_border',             # 7
+        'foam_cell']             # 8
 
 batch = 0
 
 def unit_run():
-    for dataset_idx, window_file in zip([0], [name[0]]):
+    for dataset_idx, window_file in zip([8], [name[8]]):
         window_file = window_file+'_half_step_sliding_windows.txt'
-        for exp in ["UNet_test"]:#"]:#,"fourth_windows_hidden-geto-edge"]:
+        for exp in ["GNN"]:#"]:#,"fourth_windows_hidden-geto-edge"]:
             # for exp in ['fourth_windows_hidden-geto_maxpool']:
             exp_runner = experiment_manager.runner(experiment_name=exp,
                                                    sample_idx=dataset_idx,
                                                    window_file_base=window_file,
                                                    parameter_file_number=1,
                                                    multi_run=True)
-            exp_runner.start('unet', learning='supervised')
+            exp_runner.start('getognn', learning='supervised')
 
 def batch_runs():
     # launch random Forest

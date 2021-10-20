@@ -150,7 +150,11 @@ class MLGraph(GeToFeatureGraph):
 
     def box_select_geomsc_training(self, x_range, y_range, image=None):
         self.selection_type = 'box'
+        xs = np.array(x_range).shape
 
+        if len(xs) == 1:
+            x_range = [x_range]
+            y_range = [y_range]
 
         self.x_box = x_range
         self.y_box = y_range
@@ -200,6 +204,7 @@ class MLGraph(GeToFeatureGraph):
                 self.node_gid_to_partition[gnode.gid] = ''
             range_group = zip(x_range, y_range)
             for x_rng , y_rng in range_group:
+
                 for gnode in self.gid_gnode_dict.values():#self.msc.arcs:
                     gid = gnode.gid
                     #self.node_gid_to_partition[gnode.gid] = ''

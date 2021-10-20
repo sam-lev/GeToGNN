@@ -1024,6 +1024,7 @@ class UNetwork( MLGraph, nnModule, object):
         if training_set:
             self.x_set = []
             self.y_set = []
+        current_box_dict = {}
         for current_box_idx in number_boxes:
 
             run_num += 1
@@ -1045,7 +1046,7 @@ class UNetwork( MLGraph, nnModule, object):
 
             #self.update_run_info()
 
-            current_box_dict = {}
+
             current_box = boxes[current_box_idx]
 
             for bounds in current_box:
@@ -1219,8 +1220,11 @@ class UNetwork( MLGraph, nnModule, object):
         print("    * : tile image shape", total_inf_img.shape)
         print("    * : tile image shape", total_gt_seg.shape)
         print("    * : tile image shape", total_img.shape)
+        pad = 8
         im, se, _ = test_dataset[0]
-        pred_tile = np.zeros([0, 1, im.shape[0], im.shape[1]])
+
+        pred_list = []
+        range_list = []
         seg_tile = np.zeros([0, 1, se.shape[0], se.shape[1]])
 
         num_val = 0
@@ -1228,7 +1232,6 @@ class UNetwork( MLGraph, nnModule, object):
         out_folder = ''
         with torch.no_grad():
             for image, segmentation, ranges in test_loader:
-                pred_tile = np.zeros([0, 1, im.shape[0], im.shape[1]])
                 seg_tile = np.zeros([0, 1, se.shape[0], se.shape[1]])
 
 
@@ -1245,10 +1248,12 @@ class UNetwork( MLGraph, nnModule, object):
 
                 predicted = running_best_model(deepcopy(image))
 
-                predicted_seg = predicted.cpu().detach().numpy()
-                pred_tile =  np.concatenate((pred_tile,
-                                            predicted_seg),
-                                            axis=0)
+                predicted_seg = predicted#.cpu().detach().numpy()
+                pred_tile =  predicted_seg.cpu().detach().numpy()#np.concatenate((pred_tile,
+                #                             predicted_seg),
+                #                             axis=0)
+                pred_list.append(pred_tile)
+
                 ground_truth_seg = segmentation.cpu().detach().numpy()
                 seg_tile = deepcopy(ground_truth_seg)
                 image_subset = image.cpu().detach().numpy()
@@ -1306,17 +1311,18 @@ class UNetwork( MLGraph, nnModule, object):
                         self.see_image(
                             image_seg_set=(image_subset, ground_truth_seg, predicted),
                             as_grey=True, save=False)  # False)
-                ranges = ranges.cpu().numpy()
+
 
                 dprint(ranges)
-
+                ranges = ranges.cpu().detach().numpy()
                 x_range = list(map(int , ranges[0][1][0]))
                 y_range = list(map(int,ranges[0][0][0]))
+                range_list.append([x_range,y_range])
 
 
                 print("    * xrange yrange", x_range, y_range)
                 with torch.no_grad():
-                    total_inf_img[x_range[0]:x_range[1],y_range[0]:y_range[1]] = pred_tile[0,0,:,:]
+                    #total_inf_img[x_range[0]:x_range[1],y_range[0]:y_range[1]] = pred_tile[0,0,:,:]
                     total_img[x_range[0]:x_range[1], y_range[0]:y_range[1]] =  deepcopy(image_subset)
                     total_gt_seg[x_range[0]:x_range[1], y_range[0]:y_range[1]] = seg_tile
 
@@ -1346,6 +1352,11 @@ class UNetwork( MLGraph, nnModule, object):
                     #                dirpath=out_folder,
                     #                save=False)
 
+        for ranges, pred_im in zip(range_list, pred_list):
+            x_range = ranges[0]
+            y_range = ranges[1]
+            total_inf_img[x_range[0]:x_range[1], y_range[0]:y_range[1]] = pred_im
+            total_inf_img = total_inf_img.cpu().detach().numpy()
         dprint(total_inf_img.shape,"inf shape")
         dprint(total_gt_seg.shape,"gt seg shape")
         F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=total_inf_img[None][None],

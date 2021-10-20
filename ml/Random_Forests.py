@@ -144,6 +144,8 @@ class RandomForest(MLGraph):
         # training info, selection, partition train/val/test
         self.read_labels_from_file(file=ground_truth_label_file)
 
+        print("    * ",self.params['x_box'])
+
         training_set , test_and_val_set = self.box_select_geomsc_training(x_range=self.params['x_box'], y_range=self.params['y_box'])
 
         self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,

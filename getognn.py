@@ -885,6 +885,8 @@ class supervised_getognn:
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)
 
+        print("    ",self.getognn.params['x_box'],self.getognn.params['y_box'])
+
         training_set , test_and_val_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'],
                                                                                   y_range=self.getognn.params['y_box'])
 
@@ -899,8 +901,8 @@ class supervised_getognn:
             self.getognn.write_json_graph_data(folder_path=self.getognn.pred_session_run_path, name=model_name + '_' + self.getognn.params['name'])
 
 
-        self.getognn.write_gnode_partitions(self.getognn.session_name)
-        self.getognn.write_selection_bounds(self.getognn.session_name)
+        self.getognn.write_gnode_partitions(dir=self.getognn.pred_session_run_path)#self.getognn.session_name)
+        self.getognn.write_selection_bounds(dir=self.getognn.pred_session_run_path)#self.getognn.session_name)
 
         # random walks
         if not self.getognn.params['load_preprocessed_walks']:
@@ -925,7 +927,7 @@ class supervised_getognn:
         G = self.getognn.get_graph()
         self.getognn.equate_graph(G)
 
-        self.getognn.write_arc_predictions(self.getognn.session_name)
+        self.getognn.write_arc_predictions(dir=self.getognn.pred_session_run_path)
         self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)
         self.getognn = self.getognn
         return self.getognn
