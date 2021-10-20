@@ -95,8 +95,6 @@ class Run_Manager:
                 f.write('0')
                 f.close()
 
-                self.model.update_run_info()
-
                 current_box_dict = {}
                 current_box_idx = None if current_box_idx==(len(boxes)-1)\
                     else current_box_idx+1
