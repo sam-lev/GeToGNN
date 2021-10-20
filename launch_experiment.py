@@ -16,8 +16,9 @@ name = ['retinal',                     # 0
 batch = 0
 
 def unit_run():
-    for dataset_idx, window_file in zip([0], [name[0]+'_unet_sliding_windows.txt']):
-        for exp in ["UNet"]:#"]:#,"fourth_windows_hidden-geto-edge"]:
+    for dataset_idx, window_file in zip([0], [name[0]]):
+        window_file = window_file+'_half_step_sliding_windows.txt'
+        for exp in ["UNet_test"]:#"]:#,"fourth_windows_hidden-geto-edge"]:
             # for exp in ['fourth_windows_hidden-geto_maxpool']:
             exp_runner = experiment_manager.runner(experiment_name=exp,
                                                    sample_idx=dataset_idx,

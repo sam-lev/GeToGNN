@@ -232,7 +232,7 @@ def get_image_prediction_score(predicted, segmentation, X = None, Y =None):
 
 def get_topology_prediction_score(predicted, segmentation,
                                   gid_gnode_dict, node_gid_to_prediction, node_gid_to_label, pred_thresh=0.4,
-                                  X = None, Y =None):
+                                  X = None, Y =None, ranges=None):
     # toggle model to eval mode
     #model.eval()
 
@@ -258,8 +258,8 @@ def get_topology_prediction_score(predicted, segmentation,
         segmentation[segmentation > 0] = 1
         if len(segmentation.shape) != 4:
             segmentation = segmentation[None]#.unsqueeze(1)#[:, :, :, :]
-        print("    * :", "pred", predicted.shape)
-        print("    * :", "seg", segmentation.shape)
+        print("    * :", "pred_topo", predicted.shape)
+        print("    * :", "seg_topo", segmentation.shape)
 
 
 
@@ -278,16 +278,30 @@ def get_topology_prediction_score(predicted, segmentation,
             yield (prediction[0, 0, x + 1, y - 1], segmentation[0, 0, x + 1, y -1])
             yield (prediction[0, 0, x - 1, y + 1], segmentation[0, 0, x - 1, y + 1])
 
+        if ranges is not None:
+            x_range = list(map(int, ranges[0][1][0]))
+            y_range = list(map(int, ranges[0][0][0]))
+
+            dprint(y_range, "y_range")
+            dprint(x_range,"x_range")
+        else:
+            x_range = [0,0]
+            y_range=[0,0]
+
+
         for gid in gid_gnode_dict.keys():
             gnode = gid_gnode_dict[gid]
             points = gnode.points
             points = get_points_from_vertices([gnode])
+            if ranges is not None:
+                points[:,0] = points[:,0] + x_range[0]
+                points[:,1] = points[:,1] + y_range[0]
 
             arc_predictions = []
             arc_segmentation_logits = []
             for p in points:
-                x = p[0]
-                y = p[1]
+                x = p[0] #+ x_range[0]
+                y = p[1] #+ y_range[0]
                 arc_predictions += [pred[0] > pred_thresh for pred in __get_prediction_correctness(segmentation,
                                                                                logits_predicted,(x,y))]
                 arc_segmentation_logits += [pred[1] > pred_thresh for pred in __get_prediction_correctness(segmentation,
@@ -361,10 +375,10 @@ norm_transform = transforms.Compose([
 class dataset(Dataset):
     def transpose_first_index(self, x, with_hand_seg=False):
         if not with_hand_seg:
-            x2 =(x[0],x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]))
+            x2 =(x[0], x[1])#(np.transpose(x[0], [1, 0]), x[1])
             #, np.transpose(x[2], [2, 0, 1]))
         else:
-            x2 = (x[0],x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]), np.transpose(x[2], [2, 0, 1]),
+            x2 =(x[0], x[1])#(np.transpose(x[0], [1, 0]), x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]), np.transpose(x[2], [2, 0, 1]),
             #      np.transpose(x[3], [2, 0, 1]))
         return x2
 
@@ -446,7 +460,7 @@ class UNetwork( MLGraph, nnModule, object):
         if len(x_range) == 1:  # np.array(x_range).shape == np.array([6,9]).shape:
             x_1 = x_range[0]
             y_1 = y_range[0]
-            train_im_crop = image[y_1[0]:y_1[1],x_1[0]:x_1[1]]
+            train_im_crop = deepcopy(image[y_1[0]:y_1[1],x_1[0]:x_1[1]])
             train_im_crop = train_im_crop
             # if resize:
             #     train_im_crop = resize_img(train_im_crop, X=resize[0], Y=resize[1])
@@ -468,7 +482,7 @@ class UNetwork( MLGraph, nnModule, object):
             segmentations = np.zeros([0, 1, y_range[0][1], x_range[0][1]])
             range_group = zip(x_range, y_range)
             for x_rng, y_rng in range_group:
-                train_im_crop = image[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]]
+                train_im_crop = deepcopy(image[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]])
                 segmentation = self.generate_pixel_labeling( (x_rng, y_rng),seg_image=np.zeros(train_im_crop.shape).astype(np.int8))
                 #segmentation = segmentation[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]]
                 img_stack = np.concatenate((img_stack, train_im_crop),
@@ -490,8 +504,8 @@ class UNetwork( MLGraph, nnModule, object):
         def __box_grow_label(train_im, center_point, label):
             x = center_point[0]
             y = center_point[1]
-            x[x + 1 >= X] = X - 2
-            y[y+1>= Y] = Y - 2
+            x[x + 1 >= X] = Y - 2
+            y[y+1>= Y] = X - 2
             train_im[x , y] = label
             train_im[x-1,y] = label
             train_im[x, y-1] = label
@@ -564,17 +578,30 @@ class UNetwork( MLGraph, nnModule, object):
             Img.save(os.path.join(dirpath, 'prediction.png'))
 
     def see_image(self, image=None, gt_seg=None, pred_seg = None, image_seg_set = None,
-                  dirpath=None, as_grey=False, save=True):
+                  dirpath=None, as_grey=False, save=True, names=None):
+
         if image_seg_set is not None:
             #shape_im = image.shape
             #shape_gt_seg = gt_seg.shape
-
-            image = image_seg_set[0][0,0,:,:]
-            gt_seg = image_seg_set[1][0,0,:,:]
-            if len(image_seg_set) > 2:
-                #shape_pred_seg = pred_seg.shape
-                pred_seg = image_seg_set[2][0,0,:,:]
-
+            if len(image_seg_set[0].shape)==4:
+                image = image_seg_set[0][0,0,:,:]
+                gt_seg = image_seg_set[1][0,0,:,:]
+                if len(image_seg_set) > 2:
+                    #shape_pred_seg = pred_seg.shape
+                    pred_seg = image_seg_set[2][0,0,:,:]
+            else:
+                image = image_seg_set[0]
+                gt_seg = image_seg_set[1]
+                if len(image_seg_set) > 2:
+                    # shape_pred_seg = pred_seg.shape
+                    pred_seg = image_seg_set[2]
+        og_im_name = 'subset_image'
+        gt_name = 'gt_seg'
+        pred_name = 'pred_seg'
+        if names is not None:
+            og_im_name = names[0]
+            gt_name = names[1]
+            pred_name = names[2]
         if image is not None:
             plt.figure()
             plt.title("Input Image")
@@ -582,7 +609,7 @@ class UNetwork( MLGraph, nnModule, object):
                 if not save:
                     plt.imshow(image,cmap=mplt.cm.Greys_r)
                 else:
-                    plt.imsave(os.path.join(dirpath,'subset_image.png'),image, cmap=mplt.cm.Greys_r)
+                    plt.imsave(os.path.join(dirpath,og_im_name + '.png'),image, cmap=mplt.cm.Greys_r)
             else:
                 if not save:
                     plt.imshow(image)
@@ -597,7 +624,7 @@ class UNetwork( MLGraph, nnModule, object):
                 if not save:
                     plt.imshow(gt_seg,  cmap=mplt.cm.Greys_r)
                 else:
-                    plt.imsave(os.path.join(dirpath,'gt_seg.png'),gt_seg, cmap=mplt.cm.Greys_r)
+                    plt.imsave(os.path.join(dirpath,gt_name + '.png'),gt_seg, cmap=mplt.cm.Greys_r)
             else:
                 if not save:
                     plt.imshow(gt_seg)
@@ -613,7 +640,7 @@ class UNetwork( MLGraph, nnModule, object):
                     plt.imshow(pred_seg,cmap=plt.cm.Greys_r)
 
                 else:
-                    plt.imsave(os.path.join(dirpath,'pred_seg.png'),pred_seg,  cmap=mplt.cm.Greys_r)
+                    plt.imsave(os.path.join(dirpath,pred_name + '.png'),pred_seg,  cmap=mplt.cm.Greys_r)
 
             else:
                 if not save:
@@ -846,9 +873,6 @@ class UNetwork( MLGraph, nnModule, object):
 
         self.X = self.image.shape[0]
         self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
-        self.inf_image = deepcopy(self.image)
-        self.pred_seg = deepcopy(self.image)
-        self.gt_seg = deepcopy(self.image)
 
 
         #self.attributes = deepcopy(self.get_attributes())
@@ -1042,18 +1066,57 @@ class UNetwork( MLGraph, nnModule, object):
             Y_BOX = [
                 i for i in self.__group_pairs([i for i in current_box_dict['y_box']])
             ]
-            if training_set:
-                self.x_set += X_BOX
-                self.y_set += Y_BOX
+
             #     out_folder = os.path.join(self.pred_session_run_path)
             #     self.write_selection_bounds(dir=out_folder,x_box=name_value[0], y_box=name_value[1], mode='a')
             training_set, test_and_val_set = self.box_select_geomsc_training(x_range=X_BOX,
                                                                                   y_range=Y_BOX)
 
-
+            #
+            # ensure selected training is reasonable
+            #
+            flag_class_empty = False
+            cardinality_training_sets = 0
+            for i, t_class in enumerate(training_set):
+                flag_class_empty = len(t_class) == 0 if not flag_class_empty else flag_class_empty
+                cardinality_training_sets += len(t_class)
+                print("LENGTH .. Training Set", i, 'length:', len(t_class))
+            print(".. length test: ", len(test_and_val_set))
+            # skip box if no training arcs present in region
+            if cardinality_training_sets < 1 or flag_class_empty:
+                removed_file = os.path.join(self.LocalSetup.project_base_path,
+                                            'datasets', self.params['write_folder'],
+                                            'removed_windows.txt')
+                if not os.path.exists(removed_file):
+                    open(removed_file, 'w').close()
+                removed_box_file = open(os.path.join(self.LocalSetup.project_base_path,
+                                                     'datasets', self.params['write_folder'],
+                                                     'removed_windows.txt'), 'a+')
+                removed_box_file.write(
+                    str(self.run_num) + ' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
+                removed_box_file.write(
+                    str(self.run_num) + ' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+                continue
 
             self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
                                                        validation_samples=1, test_samples=None)
+
+            all_validation = self.validation_set_ids["positive"].union(self.validation_set_ids["negative"])
+            all_selected = [self.selected_positive_arc_ids, self.selected_negative_arc_ids]
+            # self.model.selected_positive_arc_ids.union(self.model.selected_negative_arc_ids)
+            # if not self.check_valid_partitions(all_selected, all_validation):
+            #     removed_box_file = open(os.path.join(self.LocalSetup.project_base_path,
+            #                                          'datasets', self.params['write_folder'],
+            #                                          'removed_windows.txt'), 'a+')
+            #     removed_box_file.write(
+            #         str(self.run_num) + ' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
+            #     removed_box_file.write(
+            #         str(self.run_num) + ' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
+            #     continue
+
+            if training_set:
+                self.x_set += X_BOX
+                self.y_set += Y_BOX
 
             X = self.image.shape[0]
             Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
@@ -1065,9 +1128,12 @@ class UNetwork( MLGraph, nnModule, object):
             #self.data_array = self.train_dataloader
             test_dataset = self.get_data_crops(self.image, x_range=X_BOX,
                                                     y_range=Y_BOX, dataset=test_dataset, resize=resize)
-
-        inf_or_train_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-        val_dataset = test_dataset
+        if training_set:
+            inf_or_train_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
+            val_dataset = test_dataset
+        else:
+            inf_or_train_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
+            val_dataset = test_dataset
         return inf_or_train_dataset, val_dataset
 
     def infer(self, running_best_model, dataset=None, training_window_file=None,
@@ -1090,7 +1156,7 @@ class UNetwork( MLGraph, nnModule, object):
 
 
         if test:
-            param_lines = param_lines[0:4]
+            param_lines = param_lines[0:6]
 
 
 
@@ -1146,17 +1212,26 @@ class UNetwork( MLGraph, nnModule, object):
         F1_scores = []
         F1_score_img, labels_img, predictions_img = None, None, None
 
-        total_inf_img = np.zeros((self.Y , self.X))
-        total_gt_seg = np.zeros((self.Y , self.X))
-        total_img = np.zeros((self.Y , self.X))
+        total_inf_img = np.zeros((self.X , self.Y))
+        total_gt_seg = np.zeros((self.X , self.Y)).astype(np.int8)
+        total_img = np.zeros((self.X , self.Y))
 
         print("    * : tile image shape", total_inf_img.shape)
         print("    * : tile image shape", total_gt_seg.shape)
         print("    * : tile image shape", total_img.shape)
+        im, se, _ = test_dataset[0]
+        pred_tile = np.zeros([0, 1, im.shape[0], im.shape[1]])
+        seg_tile = np.zeros([0, 1, se.shape[0], se.shape[1]])
+
         num_val = 0
         self.run_num = 0
+        out_folder = ''
         with torch.no_grad():
             for image, segmentation, ranges in test_loader:
+                pred_tile = np.zeros([0, 1, im.shape[0], im.shape[1]])
+                seg_tile = np.zeros([0, 1, se.shape[0], se.shape[1]])
+
+
                 # segmentation = hand_segmentation
 
                 num_val += 1
@@ -1168,19 +1243,22 @@ class UNetwork( MLGraph, nnModule, object):
 
                 segmentation = segmentation.unsqueeze(1)  # .permute(1,2,0)
 
-                predicted = running_best_model(image)
+                predicted = running_best_model(deepcopy(image))
 
-                predicted_segmentation = predicted.cpu().detach().numpy()
+                predicted_seg = predicted.cpu().detach().numpy()
+                pred_tile =  np.concatenate((pred_tile,
+                                            predicted_seg),
+                                            axis=0)
                 ground_truth_seg = segmentation.cpu().detach().numpy()
+                seg_tile = deepcopy(ground_truth_seg)
                 image_subset = image.cpu().detach().numpy()
 
                 print("    * ", type(image_subset))
-                print("    * ", type(predicted_segmentation))
+                print("    * ", type(predicted_seg))
 
                 # only consider loss for pixels
                 # within masked region
-                predicted = predicted.cpu().detach().numpy() # [0,:,:,:]
-                segmentation = segmentation.cpu().detach().numpy()
+
                 # print('mask ', mask.shape, ' pred ', predicted.shape, ' image ', image.shape, ' seg ', segmentation.shape)
 
                 # Compute Loss from forward pass
@@ -1190,7 +1268,7 @@ class UNetwork( MLGraph, nnModule, object):
                 # collect sample to observe performance
                 val_imgs.append(image)
                 val_segs.append(segmentation)  # .cpu().numpy())
-                val_img_preds.append(predicted)  # .cpu().numpy())
+                val_img_preds.append(predicted_seg)  # .cpu().numpy())
 
                 test_losses.append(val_loss)  # .item())
 
@@ -1208,77 +1286,58 @@ class UNetwork( MLGraph, nnModule, object):
                                            Y=X, X=Y, sampling='lanczos')
                         segmentation = resize_img(ground_truth_seg[0, 0, :, :],
                                                   Y=X, X=Y, sampling='hamming')
-                        predicted = resize_img(predicted_segmentation[0, 0, :, :],
+                        predicted = resize_img(predicted[0, 0, :, :],
                                                Y=segmentation.shape[-1], X=segmentation.shape[-1],
                                                sampling='lanczos')
                         image = image[None][None]
                         predicted = predicted[None][None]
                         segmentation = segmentation[None][None]
 
-                        ground_truth_seg, predicted_segmentation, image_subset = segmentation,\
-                                                                                                predicted,\
+                        ground_truth_seg, predicted_seg, image_subset = segmentation,\
+                                                                                                predicted_seg,\
                                                                                                 image
                 X = X if self.resize else self.X_train
                 Y = Y if self.resize else self.Y_train
 
-                F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=predicted,
-                                                                                       segmentation=segmentation,
-                                                                                       X=X, Y=Y)
-                F1_score_topo, labels_topo, predictions_topo, \
-                self.node_gid_to_prediction ,self.node_gid_to_label= get_topology_prediction_score(predicted=predicted,
-                                                                                             segmentation=segmentation,
-                                                                                             gid_gnode_dict=self.gid_gnode_dict,
-                                                                                             node_gid_to_prediction=self.node_gid_to_prediction,
-                                                                                            node_gid_to_label = self.node_gid_to_label,
-                                                                                             X=X, Y=Y,
-                                                                                             pred_thresh=pred_thresh)
 
-                out_folder = os.path.join(self.pred_session_run_path, str(self.run_num))
-                #self.pred_session_run_path = out_folder
-                if not os.path.exists(out_folder):
-                    os.makedirs(out_folder)
-                compute_prediction_metrics('unet', predictions_topo, labels_topo, out_folder)
-                self.write_arc_predictions(dir=out_folder)
-                self.draw_segmentation(dirpath=out_folder)
-                self.write_gnode_partitions(dir=out_folder)
-                self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set,mode= 'w+')#name_value[0], y_box=name_value[1], mode='a')
-
-                # current_training_loss = running_loss / print_every
-                current_validation_loss = running_val_loss / num_val
-
-                # train_losses.append(current_training_loss)
-                test_losses.append(current_validation_loss)
-                F1_scores.append(F1_score_img)
-
-                # print("Epoch {epoch}/{epochs}.. ".format(epoch=epoch + 1, epochs=n_epochs))
-                # print("Train loss: {rl}.. ".format(rl=current_training_loss))  # loss over 20 iterations
-
-                # print("Inference loss: {test_loss}.. ".format(test_loss=current_validation_loss))
-                print("Inference F1 over image: {acc}".format(acc=F1_score_img))
-                print("Inference F1 over topology: {acc}".format(acc=F1_score_topo))
 
                 if view_results:
                     with torch.no_grad():
                         self.see_image(
-                            image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
+                            image_seg_set=(image_subset, ground_truth_seg, predicted),
                             as_grey=True, save=False)  # False)
                 ranges = ranges.cpu().numpy()
-                x_range = list(map(int , ranges[0,:,0,0]))
-                y_range = list(map(int,ranges[0,0,0,:]))
+
+                dprint(ranges)
+
+                x_range = list(map(int , ranges[0][1][0]))
+                y_range = list(map(int,ranges[0][0][0]))
+
 
                 print("    * xrange yrange", x_range, y_range)
-
-                # self.pred_seg[x_range[0]:x_range[1],y_range[0]:y_range[1]]=predicted_segmentation
-                # self.inf_image[x_range[0]:x_range[1], y_range[0]:y_range[1]] =  image_subset
-                # self.gt_seg[x_range[0]:x_range[1], y_range[0]:y_range[1]] = ground_truth_seg
                 with torch.no_grad():
+                    total_inf_img[x_range[0]:x_range[1],y_range[0]:y_range[1]] = pred_tile[0,0,:,:]
+                    total_img[x_range[0]:x_range[1], y_range[0]:y_range[1]] =  deepcopy(image_subset)
+                    total_gt_seg[x_range[0]:x_range[1], y_range[0]:y_range[1]] = seg_tile
+
                     # self.save_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),#(total_img, total_gt_seg, total_inf_img),
                     #                 as_grey=True,
                     #                 dirpath=out_folder)
                     #                #save=True)
-                    self.see_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
-                                    # (total_img, total_gt_seg, total_inf_img),
-                                    as_grey=True,
+                    out_folder = os.path.join(self.pred_session_run_path,
+                                              str(self.training_size))
+                    if not os.path.exists(out_folder):
+                        os.makedirs(out_folder)
+
+                    self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set,
+                                                mode='w')
+
+
+                    self.see_image(image_seg_set=(image_subset, ground_truth_seg, predicted_seg),
+                                   names=("og_tile"+str(self.run_num), "groundseg_tile"+str(self.run_num),
+                                          "pred_tile"+str(self.run_num)),
+
+                                   as_grey=True,
                                     dirpath=out_folder,
                                     save=True)
                     # self.see_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
@@ -1286,19 +1345,52 @@ class UNetwork( MLGraph, nnModule, object):
                     #                as_grey=True,
                     #                dirpath=out_folder,
                     #                save=False)
-        # out_folder = os.path.join(self.pred_session_run_path, str(0))
-        # self.see_image(image_seg_set=(self.inf_image[None][None], self.gt_seg[None][None], self.pred_seg[None][None]),
-        #                             # (total_img, total_gt_seg, total_inf_img),
-        #                             as_grey=True,
-        #                             dirpath=out_folder,
-        #                             save=True)
+
+        dprint(total_inf_img.shape,"inf shape")
+        dprint(total_gt_seg.shape,"gt seg shape")
+        F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=total_inf_img[None][None],
+                                                                               segmentation=total_gt_seg[None][None],
+                                                                               X=self.X, Y=self.Y)
+        F1_score_topo, labels_topo, predictions_topo, \
+        self.node_gid_to_prediction, self.node_gid_to_label = get_topology_prediction_score(predicted=total_inf_img[None][None],
+                                                                                            segmentation=total_gt_seg[None][None],
+                                                                                            gid_gnode_dict=self.gid_gnode_dict,
+                                                                                            node_gid_to_prediction=self.node_gid_to_prediction,
+                                                                                            node_gid_to_label=self.node_gid_to_label,
+                                                                                            X=self.X, Y=self.Y,
+                                                                                            pred_thresh=pred_thresh)
+        #out_folder = os.path.join(self.pred_session_run_path, str(self.run_num))
+        # self.pred_session_run_path = out_folder
+        #
+        out_folder = os.path.join(self.pred_session_run_path,
+                                  str(self.training_size))
+
+        if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
+        compute_prediction_metrics('unet', predictions_topo, labels_topo, out_folder)
+        self.write_arc_predictions(dir=out_folder)
+        self.draw_segmentation(dirpath=out_folder)
+        self.write_gnode_partitions(dir=out_folder)
+        # self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set,
+        #                             mode='w+')  # name_value[0], y_box=name_value[1], mode='a')
+
+
+
+
+
+
+        self.see_image(image_seg_set=(total_img, total_gt_seg, total_inf_img),
+                                    names=("total_og_tiled", "total_groundseg", "total_prediction"),
+                                    as_grey=True,
+                                    dirpath=out_folder,
+                                    save=True)
 
         exp_folder = os.path.join(self.params['experiment_folder'], 'runs')
 
-        batch_metric_folder = os.path.join(exp_folder,
-                                           str(self.training_size),'f1')
-        if not os.path.exists(batch_metric_folder):
-            os.makedirs(batch_metric_folder)
+        # batch_metric_folder = os.path.join(exp_folder,
+        #                                    str(self.training_size),'f1')
+        # if not os.path.exists(batch_metric_folder):
+        #     os.makedirs(batch_metric_folder)
 
         # compute_prediction_metrics('unet', predictions, labels, out_folder)
         #
@@ -1354,7 +1446,7 @@ class UNet_Trainer:
         # Initialize weights
         self.UNet.apply(weights_init)
 
-        optimizer = torch.optim.SGD(self.UNet.parameters(), lr=0.01, momentum=0.9, nesterov=True)
+        optimizer = torch.optim.SGD(self.UNet.parameters(), lr=self.UNet.params['learning_rate'], momentum=0.9, nesterov=True)
         n_epochs = self.params['epochs']
 
         import torch.utils.data as dutil
@@ -1362,7 +1454,7 @@ class UNet_Trainer:
         # train_dataloaders = dutil.DataLoader(train_dataset, batch_size=batch_size,
         #                                   shuffle=True, num_workers=4)
         val_dataloaders = torch.utils.data.DataLoader(self.val_dataset, batch_size=int(batch_size),
-                                           shuffle=True, num_workers=0)
+                                           shuffle=False, num_workers=0)
 
         train_loader = torch.utils.data.DataLoader(self.train_dataset, batch_size=int(batch_size),
                                                    shuffle=False, num_workers=0)
@@ -1401,7 +1493,7 @@ class UNet_Trainer:
             iter_count = 0
 
             # for batch_idx, (image, segmentation, mask) in enumerate( RetinaDataset(train_dataset)):
-            for image, segmentation, _ in train_loader:
+            for image, segmentation, ranges in train_loader:
                 steps += 1
                 iter_count += 1
                 #self.image = image
@@ -1502,7 +1594,8 @@ class UNet_Trainer:
                         node_gid_to_prediction=self.UNet.node_gid_to_prediction,
                         node_gid_to_label=self.UNet.node_gid_to_label,
                         pred_thresh=pred_thresh,
-                        X=self.X, Y=self.Y)
+                        X=self.X, Y=self.Y,
+                    ranges=ranges)
 
                     current_training_loss = running_loss / print_every
                     current_validation_loss = running_val_loss / num_val

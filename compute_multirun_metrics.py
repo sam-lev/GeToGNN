@@ -74,22 +74,23 @@ def collect_run_metrics(metric = None, runs_folder = None,batch_of_batch=False,a
     #run_region_dict['Y_BOX'] = []
 
     runs_folder = list(map(int, runs_folder))
+    runs_folder.sort()
     for idx,run in enumerate(sorted(runs_folder)):
         #for metric in metrics:
 
 
-        if not batch_of_batch:
+        if batch_multi_run:
             metric_file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
                                        str(args.exp_folder), args.runs, str(run),
                                        str(args.model) + '_' + str(metric) + '.txt')
-        elif not avg_multi:
+        elif avg_multi:
             metric_file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
-                                       str(args.exp_folder), args.runs, str(run),str(metric),
-                                       str(args.model) +'.txt')
+                                       str(args.exp_folder), args.runs,  str(run),str(metric),
+                                       str(args.model) + '.txt')
         else:
             metric_file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
-                                       str(args.exp_folder), args.runs, str(run), str(metric),
-                                       str(args.model) + '.txt')
+                                       str(args.exp_folder), args.runs, str(run),
+                                       str(args.model) + '_' + str(metric) + '.txt')
         f = open(metric_file, 'r')
         result_lines = f.readlines()
         f.close()
@@ -128,12 +129,12 @@ def collect_run_metrics(metric = None, runs_folder = None,batch_of_batch=False,a
                 #         run_result_dict[run]['weighted'] = val
 
         if metric == 'f1':
-            if not batch_of_batch:
+            if batch_multi_run:
                 window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
                                           str(args.exp_folder), args.runs, str(run),window_file)
             else:
                 window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
-                                                str(args.exp_folder),  str(run),'0', window_file)
+                                                str(args.exp_folder),  str(run),str(run), window_file)
             f = open(window_f, 'r')
             window_lines = f.readlines()
             f.close()
@@ -279,10 +280,10 @@ def plot_region_to_f1(run_region_dict=None, results_dict=None, run_result_dict=N
     del run_region_dict['Y']
     sorted_runs = sorted(list(map(int, list(run_region_dict.keys()))))
     for idx, run_num in enumerate(sorted_runs):#range(len(run_region_dict)-2):
-        if batch_of_batch:
-            run_result_num = run_num
-        else:
-            run_result_num = idx
+        #if batch_of_batch:
+        run_result_num = run_num
+        #else:
+        #    run_result_num = idx
 
         if run_num == 'X_BOX' or run_num == 'Y_BOX' or \
                 run_num == 'X' or run_num == 'Y':
@@ -486,7 +487,7 @@ def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', a
 
             results_dict, attributes_dict, run_region_dict, idx_run_dict = collect_run_metrics(metric=metric,
                                                                 runs_folder=runs_folder,
-                                                                batch_multi_run=False,
+                                                                batch_multi_run=batch_multi_run,
                                                                batch_of_batch=batch_of_batch)
 
 
@@ -512,10 +513,11 @@ def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', a
             metric_subfolder = os.path.join(metric_plot_folder,metric)
             if not os.path.exists(metric_subfolder):
                 os.makedirs(metric_subfolder)
-            results_dict, attributes_dict, run_region_dict, idx_run_dict = collect_run_metrics(metric=metric,
-                                                                                               batch_of_batch=batch_of_batch,
-
-                                                                                               runs_folder=runs_folder)
+            results_dict, attributes_dict,\
+            run_region_dict, idx_run_dict = collect_run_metrics(metric=metric,
+                                                                batch_multi_run=batch_multi_run,
+                                                                runs_folder=runs_folder,
+                                                                avg_multi=avg_multi)
             print(run_region_dict)
             print(results_dict)
             # compute_metric_histogram(results_dict=results_dict,
