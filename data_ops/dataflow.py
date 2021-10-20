@@ -77,7 +77,7 @@ class dataflow:
 
                 path = dest_folder + item
 
-                image = np.fromfile(dest_folder + item, dtype='float32')
+                image = np.fromfile(dest_folder + item, dtype=np.int64)
                 print("shape im: ", image.shape)
                 X = int(path.split("_")[-2])
                 Y = int(path.split("_")[-1].split('.')[0])

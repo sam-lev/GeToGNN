@@ -76,7 +76,7 @@ class GeToFeatureGraph(GeToGraph):
         #
         # Write Paths
         #
-        self.run_num = run_num
+        self.run_num = self.run_num+1
 
 
         #if parameter_file_number is not None:

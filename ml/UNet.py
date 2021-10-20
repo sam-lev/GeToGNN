@@ -279,8 +279,10 @@ def get_topology_prediction_score(predicted, segmentation,
             yield (prediction[0, 0, x - 1, y + 1], segmentation[0, 0, x - 1, y + 1])
 
         if ranges is not None:
-            x_range = list(map(int, ranges[0][1][0]))
-            y_range = list(map(int, ranges[0][0][0]))
+            ranges = ranges.cpu().detach().numpy()
+            dprint(ranges)
+            x_range = ranges[0][0]# list(map(int, ranges[0][1][0]))
+            y_range = ranges[0][1]#list(map(int, ranges[0][0][0]))
 
             dprint(y_range, "y_range")
             dprint(x_range,"x_range")
@@ -375,10 +377,10 @@ norm_transform = transforms.Compose([
 class dataset(Dataset):
     def transpose_first_index(self, x, with_hand_seg=False):
         if not with_hand_seg:
-            x2 =(x[0], x[1])#(np.transpose(x[0], [1, 0]), x[1])
+            x2 =(x[0], x[1], x[2])#(np.transpose(x[0], [1, 0]), x[1])
             #, np.transpose(x[2], [2, 0, 1]))
         else:
-            x2 =(x[0], x[1])#(np.transpose(x[0], [1, 0]), x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]), np.transpose(x[2], [2, 0, 1]),
+            x2 =(x[0], x[1], x[2])#(np.transpose(x[0], [1, 0]), x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]), np.transpose(x[2], [2, 0, 1]),
             #      np.transpose(x[3], [2, 0, 1]))
         return x2
 
@@ -457,7 +459,7 @@ class UNetwork( MLGraph, nnModule, object):
 
 
         segmentations = []
-        if len(x_range) == 1:  # np.array(x_range).shape == np.array([6,9]).shape:
+        if False:  # np.array(x_range).shape == np.array([6,9]).shape:
             x_1 = x_range[0]
             y_1 = y_range[0]
             train_im_crop = deepcopy(image[y_1[0]:y_1[1],x_1[0]:x_1[1]])
@@ -485,11 +487,8 @@ class UNetwork( MLGraph, nnModule, object):
                 train_im_crop = deepcopy(image[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]])
                 segmentation = self.generate_pixel_labeling( (x_rng, y_rng),seg_image=np.zeros(train_im_crop.shape).astype(np.int8))
                 #segmentation = segmentation[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]]
-                img_stack = np.concatenate((img_stack, train_im_crop),
-                               axis=0)
-                segmentations = np.concatenate((segmentations, segmentation),
-                               axis=0)
-                dataset.append((img_stack, segmentations, (x_range, y_range)))
+
+                dataset.append((train_im_crop, segmentation, (x_rng, y_rng)))
 
         return dataset
 
@@ -1216,10 +1215,6 @@ class UNetwork( MLGraph, nnModule, object):
         total_inf_img = np.zeros((self.X , self.Y))
         total_gt_seg = np.zeros((self.X , self.Y)).astype(np.int8)
         total_img = np.zeros((self.X , self.Y))
-
-        print("    * : tile image shape", total_inf_img.shape)
-        print("    * : tile image shape", total_gt_seg.shape)
-        print("    * : tile image shape", total_img.shape)
         pad = 8
         im, se, _ = test_dataset[0]
 
@@ -1253,6 +1248,7 @@ class UNetwork( MLGraph, nnModule, object):
                 #                             predicted_seg),
                 #                             axis=0)
                 pred_list.append(pred_tile)
+                ranges = ranges
 
                 ground_truth_seg = segmentation.cpu().detach().numpy()
                 seg_tile = deepcopy(ground_truth_seg)
