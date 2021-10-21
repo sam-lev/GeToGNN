@@ -66,7 +66,7 @@ class GeToFeatureGraph(GeToGraph):
         #for param in kwargs['params']:
         #    self.params[param] = kwargs['params'][param]
 
-
+        self.run_num=run_num
         super(GeToFeatureGraph, self).__init__(parameter_file_number=parameter_file_number,
                                                geomsc_fname_base=geomsc_fname_base,
                                                write_folder= write_folder,
@@ -76,7 +76,7 @@ class GeToFeatureGraph(GeToGraph):
         #
         # Write Paths
         #
-        self.run_num = self.run_num+1
+
 
 
         #if parameter_file_number is not None:

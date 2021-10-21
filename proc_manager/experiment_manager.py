@@ -55,7 +55,9 @@ class runner:
                      'faults_exmouth',                     # 5
                      'transform_tests',                    # 6
                      'map_border',
-                     'foam_cell'][self.sample_idx]        # 7
+                     'foam_cell',
+                     'diadem_sub1',
+                     'berghia_membrane'][self.sample_idx]        # 7
 
         self.image = ['im0236_o_700_605.raw',
                  'MAX_neuron_640_640.raw',
@@ -65,7 +67,9 @@ class runner:
                  'att_0_460_446_484.raw',
                 'diadem16_transforms_o_1000_1000.raw',
                       'border1_636_2372.raw',
-                      'foam0235_828_846.raw'][self.sample_idx]  # neuron1
+                      'foam0235_828_846.raw',
+                      'maxdiadem_o_1170_1438.raw',
+                      'berghia_o_891_896.raw'][self.sample_idx]  # neuron1
         self.label_file = ['im0236_la2_700_605.raw.labels_2.txt',
                       'MAX_neuron_640_640.raw.labels_3.txt',
                       'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_4.txt',
@@ -74,7 +78,9 @@ class runner:
                       'att_L3_0_460_446_484.raw.labels_0.txt',
                       'diadem16_transforms_s1_1000_1000.raw.labels_14.txt',
                            'border1_636x2372.raw.labels_0.txt',
-                           'foam0235_fa_828_846.raw.labels_8.txt'][self.sample_idx]  # neuron1
+                           'foam0235_fa_828_846.raw.labels_8.txt',
+                           'maxdiadem_m1g1_1170_1438.raw.labels_4.txt',
+                           'berghia_s5ipr_891_896.raw.labels_4.txt'][self.sample_idx]  # neuron1
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
 
@@ -127,6 +133,7 @@ class runner:
                                    write_path=self.write_path, feature_file=self.feature_file,
                                    window_file=None,model_name="GeToGNN")
 
+
         self.attributes = sup_getognn.attributes
 
 
@@ -174,13 +181,28 @@ class runner:
                                   model_name=self.model_name,
                                   format=format)
         if multi_run:
-            run_manager.perform_runs()
+            f = open(self.window_file, 'r')
+            self.box_dict = {}
+            param_lines = f.readlines()
+            f.close()
+
+            el = len(param_lines) - 1
+            sets = el // 10
+            sets = sets - 1 if sets % 2 != 0 else sets
+            self.param_lines = [param_lines[0:2], param_lines[sets :sets + 4],  # ,\
+                    param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
+                    param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
+                    param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]]
+            #self.param_lines = [self.param_lines[0]]
+            for set in self.param_lines:
+                run_manager.perform_runs(param_lines=[set], run_name='_'+str(len(set)))
 
     def run_unsupervised_getognn(self, multi_run):
         #
         # Train single run of getognn and obtrain trained model
         #
         unsup_getognn = unsupervised_getognn(model_name=self.model_name)
+        unsup_getognn.run_num = 0
         unsup_getognn.build_getognn( sample_idx=self.sample_idx, experiment_num=self.experiment_num,
                                    experiment_name=self.experiment_name,window_file_base=self.window_file_base,
                                    parameter_file_number=self.parameter_file_number,
@@ -507,6 +529,8 @@ class runner:
 
         RF.build_random_forest(ground_truth_label_file=self.ground_truth_label_file)
 
+        RF.run_num = 0
+
         print("   *:   feat names length", len(RF.feature_names))
 
         partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
@@ -578,10 +602,23 @@ class runner:
                                   format=format,
                                   parameter_file_number=self.parameter_file_number)
         if multi_run:
-            run_manager.perform_runs()
+            f = open(self.window_file, 'r')
+            self.box_dict = {}
+            param_lines = f.readlines()
+            f.close()
 
-    def update_run_info(self, experiment_folder_name=None):
-        self.attributes.update_run_info(write_folder=experiment_folder_name)
+            el = len(param_lines) - 1
+            sets = el // 10
+            sets = sets - 1 if sets % 2 != 0 else sets
+            self.param_lines = [param_lines[0:2], param_lines[sets:sets + 4]  ,\
+                        param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
+                        param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
+                        param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]]
+            for set in self.param_lines:
+                run_manager.perform_runs(param_lines=[set], run_name='_' + str(len(set)))
+
+    # def update_run_info(self, experiment_folder_name=None):
+    #     self.attributes.update_run_info(batch_multi_run=experiment_folder_name)
 
 class experiment_logger:
     def __init__(self, experiment_folder, input_folder):

@@ -16,7 +16,8 @@ __all__ = ['Run_Manager']
 class Run_Manager:
     def __init__(self, model, training_window_file, features_file,
                  sample_idx, model_name, format, learning_type='supervised',
-                 parameter_file_number=1, expanding_boxes=True,
+                 run_name=None,
+                 parameter_file_number=1, expanding_boxes=True,param_lines=None,
                  collect_validation=False):
 
         self.collect_validation = collect_validation
@@ -31,10 +32,12 @@ class Run_Manager:
         el = len(param_lines) - 1
         sets = el // 10
         sets = sets - 1 if sets % 2 != 0 else sets
-        self.param_lines = [param_lines[0:2] , param_lines[sets:sets+4] ,\
-                      param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
-                      param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
-                      param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]]
+        self.param_lines = [param_lines[0:2] , param_lines[sets+2:sets+4] ]#,\
+                      # param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
+                      # param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
+                      # param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]]
+
+
         self.model = model
         self.model.logger.record_filename(window_list_file=os.path.join(LocalSetup.project_base_path,
                                                                         training_window_file))
@@ -57,7 +60,7 @@ class Run_Manager:
         for i in range(0, len(lst), 2):
             yield tuple(lst[i : i + 2])
 
-    def perform_runs(self):
+    def perform_runs(self, param_lines=None, run_name=None):
         # reads from file where x bounds line followed by y bounds line e.g
         # x_box 1,2
         # y_box 3,4
@@ -68,27 +71,32 @@ class Run_Manager:
         # x_box 5,6
         # y_box 7,8
         # produces { 'x_box' : [[1,2],[5,6]] , 'y_box' : [[3,4],[7,8]] }
+        if param_lines is not None:
+            self.param_lines=param_lines
+            self.model.run_name = run_name
 
         for box_set in self.param_lines:
             boxes = [
                 i for i in self.__group_pairs(box_set)
             ]
-            self.model.update_run_info(batch_multi_run=str(len(box_set)))
-            self.model.run_num=0
+            #self.model.update_run_info(batch_multi_run=str(len(box_set)))
+            #self.model.run_num=0
 
             for current_box_idx in range(len(boxes)):
-
+                self.model.run_num += 1
                 self.model.update_run_info()
                 #self.model.pred_session_run_path = os.path.join(LocalSetup.project_base_path,str(self.model.run))
                 self.counter_file = os.path.join(LocalSetup.project_base_path, 'run_count.txt')
-                f = open(self.counter_file, 'r')
-                c = f.readlines()
-                self.run_num = int(c[0]) + 1
-                f.close()
-                f = open(self.counter_file, 'w')
-                f.write(str(self.run_num))
-                f.close()
-                print("&&&& run num ", self.run_num)
+                # f = open(self.counter_file, 'r')
+                # c = f.readlines()
+                # self.run_num = int(c[0]) + 1
+                # f.close()
+                # f = open(self.counter_file, 'w')
+                # f.write(str(self.run_num))
+                # f.close()
+                # print("&&&& run num ", self.run_num)
+
+
 
                 self.active_file = os.path.join(LocalSetup.project_base_path, 'continue_active.txt')
                 f = open(self.active_file, 'w')
@@ -151,6 +159,8 @@ class Run_Manager:
                 # train/test/val collection
                 training_class_sets , test_set = self.model.box_select_geomsc_training(x_range=X_BOX,
                                                                                 y_range=Y_BOX)
+
+
 
                 #
                 # ensure selected training is reasonable
@@ -339,6 +349,6 @@ class Run_Manager:
             os.makedirs(batch_metric_folder)
 
         multi_run_metrics(model=self.model.type, exp_folder=exp_folder,bins=7,
-                          runs='runs', plt_title=exp_folder.split('/')[-1])
+                          runs='runs'+self.model.run_name, plt_title=exp_folder.split('/')[-1],batch_multi_run=True)
         self.model.logger.write_experiment_info()
 

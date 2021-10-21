@@ -98,7 +98,7 @@ class GeToGraph(Attributes):
         self.gid_geto_attr_dict = {'spatial_points':None, 'dim':None}
         self.gid_geto_elm_dict = {}
         self.key_arc_dict    = {}
-        self.run_num=kwargs['run_num']
+        #self.run_num=kwargs['run_num']
 
         super(GeToGraph, self).__init__(parameter_file_number=parameter_file_number,
                                         write_folder = kwargs['write_folder'])
@@ -365,12 +365,18 @@ class GeToGraph(Attributes):
             else:
                 map_im = mapped_image
                 lab_map_im = label_map_image
-            Img = Image.fromarray(map_im.astype('uint8'))  # .astype(np.float32))#mapped_img)
-            Img.save(os.path.join(dirpath, 'inference.png'))
+            plt.figure()
+            plt.title("Input Image")
+            import matplotlib as mplt
+            plt.imsave(os.path.join(dirpath, 'inference.png'),mapped_image.astype('uint8'),cmap=mplt.cm.Greys_r)
 
-            Img = Image.fromarray(
-                lab_map_im.astype('uint8'))  # .astype(np.float32))#mapped_img)
-            Img.save(os.path.join(dirpath , 'groundseg.png'))
+            plt.imsave(os.path.join(dirpath , 'groundseg.png'),label_map_image.astype('uint8'),cmap=mplt.cm.Greys_r)
+            # Img = Image.fromarray(map_im.astype('uint8'))  # .astype(np.float32))#mapped_img)
+            # Img.save(os.path.join(dirpath, 'inference.png'))
+            #
+            # Img = Image.fromarray(
+            #     lab_map_im.astype('uint8'))  # .astype(np.float32))#mapped_img)
+            # Img.save(os.path.join(dirpath , 'groundseg.png'))
 
         plt.close()
 

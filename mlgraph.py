@@ -27,11 +27,11 @@ class MLGraph(GeToFeatureGraph):
                 '''
 
         super(MLGraph, self).__init__(parameter_file_number=kwargs['parameter_file_number'],
-                                      run_num=kwargs['run_num'],
                                       name=kwargs['name'], geomsc_fname_base=kwargs['geomsc_fname_base'],
                                       label_file=kwargs['label_file'], image=kwargs['image'],
                                       write_folder=kwargs['write_folder'],
                                       model_name=kwargs['model_name'],
+                                      run_num=kwargs['run_num'],
                                       load_feature_graph_name=kwargs['load_feature_graph_name'])
         # super(MLGraph, self).__init__(parameter_file_number=parameter_file_number, run_num=run_num,
         #                               name=kwargs['name'],geomsc_fname_base=geomsc_fname_base,

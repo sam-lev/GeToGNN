@@ -82,6 +82,7 @@ class dataflow:
                 image = np.fromfile(dest_folder+item, dtype="float32")[:(X * Y)].reshape((Y, X))
                 print("shape im: ", image.shape)
 
+
                 if dim_invert:
                     xtemp = X
                     X = Y
@@ -94,6 +95,11 @@ class dataflow:
                 if max_p < 1:
                     image = 255 * image
                 all_images.append(image)
+        # import matplotlib.pyplot as plt
+        # plt.figure()
+        # plt.title("Input Image")
+        # plt.imshow(all_images[0])
+        # plt.show()
         return all_images
 
     def transpose_first_index(self, x, with_hand_seg=False):

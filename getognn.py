@@ -17,8 +17,8 @@ from ui.arcselector import ArcSelector
 from proc_manager import experiment_manager
 
 class GeToGNN(MLGraph):
-    def __init__(self,training_selection_type='box',run_num=0, parameter_file_number = None,
-                 geomsc_fname_base = None, label_file=None,
+    def __init__(self,training_selection_type='box', parameter_file_number = None,
+                 geomsc_fname_base = None, label_file=None,run_num=0,
                  model_name=None, load_feature_graph_name=False,image=None, **kwargs):
 
         self.type = "getognn"
@@ -34,7 +34,8 @@ class GeToGNN(MLGraph):
         self.G = None
         self.G_dict = {}
 
-        super(GeToGNN, self).__init__(parameter_file_number=parameter_file_number, run_num=run_num,
+        super(GeToGNN, self).__init__(parameter_file_number=parameter_file_number,
+                                      run_num=run_num,
                                       name=self.params['name'],geomsc_fname_base=geomsc_fname_base,
                                       label_file=label_file,image=image,write_folder=self.params['write_folder'],
                                       model_name=model_name,load_feature_graph_name=load_feature_graph_name)
@@ -49,8 +50,8 @@ class GeToGNN(MLGraph):
             param_add_ons = kwargs['params']
             for k, v in param_add_ons.items():
                 self.params[k] = v
+        self.run_num=run_num
 
-        self.run_num = run_num
         self.logger = experiment_manager.experiment_logger(experiment_folder=self.experiment_folder,
                                         input_folder=self.input_folder)
         self.param_file = os.path.join(self.LocalSetup.project_base_path,
@@ -823,6 +824,7 @@ class supervised_getognn:
     def __init__(self, model_name):
         self.model_name = model_name
         self.attributes = Attributes()
+        self.run_num=0
 
     def build_getognn(self, sample_idx, experiment_num, experiment_name, window_file_base,
                  parameter_file_number, format = 'raw', run_num=0, experiment_folder=None,
@@ -833,7 +835,7 @@ class supervised_getognn:
 
 
         self.getognn = GeToGNN(training_selection_type='box',
-                          run_num=run_num,
+                          run_num=self.run_num,
                           parameter_file_number = parameter_file_number,
                           name=name,
                           image=image,
@@ -938,7 +940,7 @@ class unsupervised_getognn:
         self.attributes = Attributes()
 
     def build_getognn(self, sample_idx, experiment_num, experiment_name, window_file_base,
-                 parameter_file_number, format = 'raw', run_num=0, experiment_folder=None,
+                 parameter_file_number, format = 'raw',  experiment_folder=None,
                  name=None, image=None, label_file=None, msc_file=None,
                  ground_truth_label_file=None, write_path=None, feature_file=None,
                  window_file=None, model_name="GeToGNN"):
@@ -946,7 +948,6 @@ class unsupervised_getognn:
 
 
         self.getognn = GeToGNN(training_selection_type='box',
-                          run_num=run_num,
                           parameter_file_number = parameter_file_number,
                           name=name,
                           image=image,
