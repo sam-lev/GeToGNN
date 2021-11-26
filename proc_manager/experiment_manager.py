@@ -1,21 +1,23 @@
 import os
 import shutil
 import numpy as np
+import matplotlib.pyplot as plt
 
 
-from getognn import supervised_getognn
-from getognn import unsupervised_getognn
 from getograph import Attributes
 from ml.Random_Forests import RandomForest
 from ml.MLP import mlp
-from ml.UNet import UNetwork, UNet_Trainer, UNet_Classifier
+from ml.UNet import UNetwork
 from ml.utils import get_train_test_val_partitions
 from ml.utils import get_partition_feature_label_pairs
 from proc_manager.run_manager import *
 from metrics.model_metrics import compute_getognn_metrics
 from metrics.model_metrics import compute_prediction_metrics
 from data_ops.set_params import set_parameters
-from compute_multirun_metrics import multi_run_metrics
+from compute_multirun_metrics import multi_run_metrics, multi_model_metrics
+from ml.features import get_points_from_vertices
+from data_ops.utils import grow_box
+from data_ops.utils import tile_region
 
 from localsetup import LocalSetup
 LocalSetup = LocalSetup()
@@ -23,7 +25,7 @@ LocalSetup = LocalSetup()
 #__all__ = ['run_experiment', 'experiment_logger']
 
 class runner:
-    def __init__(self, experiment_name, window_file_base = None
+    def __init__(self, experiment_name, window_file_base = None, clear_runs=False
                  , sample_idx=2, multi_run = True, parameter_file_number = 1):
 
         # base attributes shared between models
@@ -41,7 +43,7 @@ class runner:
         self.experiment_num = 1
         self.experiment_name = experiment_name
         self.window_file_base = window_file_base
-        self.run_num = 0
+        self.run_num = 1
         self.model_name = 'GeToGNN'  # 'experiment'#'input_select_from_1st_inference'
 
         #
@@ -81,6 +83,8 @@ class runner:
                            'foam0235_fa_828_846.raw.labels_8.txt',
                            'maxdiadem_m1g1_1170_1438.raw.labels_4.txt',
                            'berghia_s5ipr_891_896.raw.labels_4.txt'][self.sample_idx]  # neuron1
+
+
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
 
@@ -96,108 +100,425 @@ class runner:
 
         self.write_path = os.path.join(self.name,self.experiment_name)  # 'experiment_'+str(experiment_num)+'_'+experiment_name
 
+        # clear past runs
+        experiment_folder = os.path.join(LocalSetup.project_base_path, 'datasets'
+                                         , self.write_path)
+
+        if clear_runs:
+            run_folder = os.path.join(experiment_folder, 'runs')
+            if os.path.exists(run_folder):
+                shutil.rmtree(run_folder)
+            
         self.feature_file = os.path.join( self.write_path, 'features', self.model_name)
         self.window_file = os.path.join(LocalSetup.project_base_path, "datasets",
                                    self.write_path,
                                    self.window_file_base)
         self.parameter_file_number = parameter_file_number
 
+        self.thresh_list = [0.3,0.4,0.5,0.6]
 
-    def start(self, model='getognn', learning='supervised'):
+        self.growth_radius = 2 if self.name is not 'berghia_membrane' else 4
+
+        self.train_growth = 4
+        self.second_train_growth = 4
+        self.increase_train_growth = 7
+        self.percent_stop = 9
+        self.percent_growth = 0.1
+
+
+
+
+    def start(self, model='getognn', boxes=None,dims=None, learning='supervised'):
+
+
         if model == 'getognn':
             if learning == 'supervised':
-                self.run_supervised_getognn(self.multi_run)
-            else:
+                self.run_supervised_getognn( boxes=boxes, dims=dims )
+            elif learning == 'unsupervised':
                 self.run_unsupervised_getognn(self.multi_run)
         if model == 'mlp':
             self.run_mlp(self.multi_run)
         if model == 'random_forest':
-            self.run_random_forest(self.multi_run)
+            self.run_random_forest(self.multi_run, boxes=boxes, dims=dims, learning=learning)
         if model == 'unet':
-            self.run_unet(self.multi_run)
+            self.run_unet(self.multi_run, boxes=boxes, dims=dims)
+
+    def multi_model_metrics(self, models, exp_dirs, write_dir):
+        experiment_folders = []
+        for exp in exp_dirs:
+            experiment_folder = os.path.join(LocalSetup.project_base_path, 'datasets',
+                                                  self.name,exp)
+
+            experiment_folders.append(experiment_folder)
+        write_dir =  os.path.join(LocalSetup.project_base_path)
+        multi_model_metrics(models=models, exp_dirs=experiment_folders, #batchmulti_run=True#
+                            data_name=self.name, write_dir=write_dir)
+
+    def __group_pairs(self, lst):
+        for i in range(0, len(lst), 2):
+            yield tuple(lst[i : i + 2])
 
 
+    def grow_box(self, dims, boxes):
+        IMG_WIDTH = dims[0]
+        IMG_HEIGHT = dims[1]
+        growth_regions = []
+        add_y = 0
+        add_x = 0
+        percent_training = np.log2((IMG_HEIGHT*IMG_WIDTH)*0.66)
+        for grow in range(int(percent_training)):
+            #if (2**(grow-1))*16 >  IMG_HEIGHT / 1.6 and (2**(grow-1))*16 >  IMG_WIDTH / 1.6:
+            #    continue
+            g_box = []
+            for box in boxes:
 
-    def run_supervised_getognn(self, multi_run):
-        #
-        # Train single run of getognn and obtrain trained model
-        #
-        sup_getognn = supervised_getognn(model_name=self.model_name)
-        sup_getognn.build_getognn( sample_idx=self.sample_idx, experiment_num=self.experiment_num,
-                                   experiment_name=self.experiment_name,window_file_base=self.window_file_base,
-                                   parameter_file_number=self.parameter_file_number,
-                                   format = format, run_num=self.run_num,name=self.name, image=self.image,
-                                   label_file=self.label_file, msc_file=self.msc_file,
-                                   ground_truth_label_file=self.ground_truth_label_file,
-                                   experiment_folder = self.experiment_folder,
-                                   write_path=self.write_path, feature_file=self.feature_file,
-                                   window_file=None,model_name="GeToGNN")
+                add_y = (2 ** grow)  #
+                add_x = (2 ** grow)   #
+                growth_box = [max(0, box[0] - add_y), min(IMG_WIDTH, box[1] + add_y),
+                              max(box[2] - add_x, 0), min(IMG_HEIGHT, box[3] + add_x)]
+                g_box.append(growth_box)
 
 
-        self.attributes = sup_getognn.attributes
+            growth_regions.append(g_box)
 
+        return growth_regions
 
+    def get_box_regions(self, boxes, INVERT=False):
+        X_BOX = []
+        Y_BOX = []
 
-        getognn = sup_getognn.train()
+        box_sets = []
+        for box in boxes:
+            box_set = tile_region(step_X=64, step_Y=64, step=0.5,
+                                  Y_START=box[0], Y_END=box[1],
+                                  X_START=box[2], X_END=box[3],
+                                  INVERT=INVERT)
+            box_sets.append(box_set)
 
-        #
-        # Get inference metrics
-        #
-        compute_getognn_metrics(getognn=getognn)
+        boxes = []
+        for box_pair in box_sets:
+            boxes += box_pair
+            # for box in box_pair:
+            #     X_BOX.append(box[0])
+            #     Y_BOX.append(box[1])
+        return boxes#X_BOX,Y_BOX
 
-        #
-        # Feature Importance
-        #
-        partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
-            getognn.node_gid_to_partition,
-            getognn.node_gid_to_feature,
-            getognn.node_gid_to_label,
-            test_all=True)
-        gid_features_dict = partition_feat_dict['all']
-        gid_label_dict = partition_label_dict['all']
-        getognn.load_feature_names()
-        if getognn.params['feature_importance']:
-            getognn.feature_importance(feature_names=getognn.feature_names,
-                                  features=gid_features_dict,
-                                  labels=gid_label_dict,
-                                       plot=False)
-            getognn.write_feature_importance()
+    def get_boxes(self, param_lines):
+        boxes = []
+        for box_set in param_lines:
+            boxes = [
+                i for i in self.__group_pairs(box_set)
+            ]
 
-        #
-        # Perform remainder of runs and don't need to read feats again
-        #
-        #if not getognn.params['load_features']:
-        getognn.params['write_features'] = False
-        getognn.params['load_features'] = True
-        getognn.params['write_feature_names'] = False
-        getognn.params['save_filtered_images'] = False
-        getognn.params['collect_features'] = False
-        getognn.params['load_geto_attr'] = True
+        current_box_dict = {}
 
-        run_manager = Run_Manager(model=getognn,
-                                  training_window_file=self.window_file,
-                                  features_file=self.feature_file,
-                                  sample_idx=self.sample_idx,
-                                  model_name=self.model_name,
-                                  format=format)
-        if multi_run:
-            f = open(self.window_file, 'r')
-            self.box_dict = {}
-            param_lines = f.readlines()
+        # self.model.update_run_info(batch_multi_run=str(len(box_set)))
+        # self.model.run_num = str(len(box_set))
+        for current_box_idx in range(len(boxes)):
+
+            self.active_file = os.path.join(LocalSetup.project_base_path, 'continue_active.txt')
+            f = open(self.active_file, 'w')
+            f.write('0')
             f.close()
+            #     else current_box_idx+1
+            current_box = [boxes[current_box_idx]]  # , boxes[current_box_idx+1]]
+            # if self.expanding_boxes is \
+            #                                        False else boxes[0:current_box_idx]
+            # if self.expanding_boxes:
+            current_box = [y for x in current_box for y in x]
 
-            el = len(param_lines) - 1
-            sets = el // 10
-            sets = sets - 1 if sets % 2 != 0 else sets
-            self.param_lines = [param_lines[0:2], param_lines[sets :sets + 4],  # ,\
-                    param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
-                    param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
-                    param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]]
-            #self.param_lines = [self.param_lines[0]]
-            for set in self.param_lines:
-                run_manager.perform_runs(param_lines=[set], run_name='_'+str(len(set)))
+
+            for bounds in current_box:
+
+                name_value = bounds.split(' ')
+
+
+                # window selection(s)
+                # for single training box window
+                if name_value[0] not in current_box_dict.keys():
+                    current_box_dict[name_value[0]] = list(map(int, name_value[1].split(',')))
+                # for multiple boxes
+                else:
+                    current_box_dict[name_value[0]].extend(list(map(int, name_value[1].split(','))))
+            self.counter_file = os.path.join(LocalSetup.project_base_path, 'run_count.txt')
+        X_BOX = [
+            i for i in self.__group_pairs([i for i in current_box_dict['x_box']])
+        ]
+        Y_BOX = [
+            i for i in self.__group_pairs([i for i in current_box_dict['y_box']])
+        ]
+        #X_BOX =list(set(X_BOX))
+        #Y_BOX = list(set(Y_BOX))
+        return X_BOX,Y_BOX
+
+    def run_supervised_getognn(self, boxes=None,  dims=None):
+
+
+        from getognn import supervised_getognn
+
+        IMG_WIDTH = dims[0]
+        IMG_HEIGHT = dims[1]
+
+        growth_regions = self.grow_box(dims=dims, boxes=boxes)
+
+        for gr in range(len(growth_regions)):
+
+
+            BEGIN_LOADING_FEATURES = gr > 0
+
+            regions = growth_regions[gr]
+
+            BOXES = self.get_box_regions(regions)
+            X_BOX = [b[0] for b in BOXES]
+            Y_BOX = [b[1] for b in BOXES]
+
+            num_percent = 0
+            for box in regions:
+                num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
+            percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
+            percent = int(round(percent, 2) * 100)
+
+
+            sup_getognn = supervised_getognn(model_name=self.model_name)
+            sup_getognn.build_getognn(
+                BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                                       sample_idx=self.sample_idx,
+                                       experiment_num=self.experiment_num,
+                                       experiment_name=self.experiment_name,
+                                       window_file_base=self.window_file_base,
+                                       parameter_file_number=self.parameter_file_number,
+                                       format = format,
+                                       run_num=percent,
+                                       name=self.name, image=self.image,
+                                       label_file=self.label_file,
+                                       msc_file=self.msc_file,
+                                       ground_truth_label_file=self.ground_truth_label_file,
+                                       experiment_folder = self.experiment_folder,
+                                       write_path=self.write_path,
+                                       feature_file=self.feature_file,
+                                       window_file=None,model_name="GeToGNN",
+                                       X_BOX=X_BOX,
+                                       Y_BOX=Y_BOX,
+                                       boxes=boxes)
+
+
+
+            self.attributes = sup_getognn.attributes
+
+
+
+            getognn = sup_getognn.train()
+
+            getognn.update_run_info(batch_multi_run=str(percent))
+            getognn.run_num = percent
+
+            #
+
+            #
+            # Feature Importance
+            #
+            partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
+                getognn.node_gid_to_partition,
+                getognn.node_gid_to_feature,
+                getognn.node_gid_to_label,
+                test_all=True)
+            gid_features_dict = partition_feat_dict['all']
+            gid_label_dict = partition_label_dict['all']
+            getognn.load_feature_names()
+            if getognn.params['feature_importance']:
+                getognn.feature_importance(feature_names=getognn.feature_names,
+                                      features=gid_features_dict,
+                                      labels=gid_label_dict,
+                                           plot=False)
+                getognn.write_feature_importance()
+
+            training_reg_bg = np.zeros(getognn.image.shape[:2], dtype=np.uint8)
+            for x_b, y_b in zip(getognn.X_BOX, getognn.Y_BOX):
+                x_box = x_b
+                y_box = y_b
+                training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+            getognn.write_training_percentages(dir=getognn.pred_session_run_path, train_regions=training_reg_bg)
+
+            #
+            # Perform remainder of runs and don't need to read feats again
+            #
+            #if not getognn.params['load_features']:
+            getognn.params['write_features'] = False
+            getognn.params['load_features'] = True
+            getognn.params['write_feature_names'] = False
+            getognn.params['save_filtered_images'] = False
+            getognn.params['collect_features'] = False
+            getognn.params['load_geto_attr'] = True
+            getognn.params['load_preprocessed_walks'] = True
+
+            getognn.supervised_train()
+            getognn.record_time(round(getognn.train_time, 4),
+                                   dir=getognn.pred_session_run_path,
+                                   type='train')
+            getognn.record_time(round(getognn.pred_time, 4),
+                                   dir=getognn.pred_session_run_path,
+                                   type='pred')
+            G = getognn.get_graph()
+            getognn.equate_graph(G)
+
+
+
+            # get inference metrics
+            predictions = []
+            labels = []
+            for gid in getognn.node_gid_to_prediction.keys():
+                if isinstance(getognn.node_gid_to_prediction[gid], list):
+                    # continue
+                    print("Empty pred, gid:", gid, 'pred', getognn.node_gid_to_prediction[gid])
+                    predictions.append(-1)  # gid_to_prediction[gid][1])
+                else:
+
+                    predictions.append(getognn.node_gid_to_prediction[gid])
+                labels.append(getognn.node_gid_to_label[gid][1])
+            predictions = np.array(predictions)
+            labels = np.array(labels)
+
+            # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
+            #                out_folder=self.model.pred_session_run_path)
+
+            opt_thresh = compute_getognn_metrics(getognn=getognn)
+
+
+            getognn.write_arc_predictions(dir=getognn.pred_session_run_path)
+            getognn.draw_segmentation(dirpath=getognn.pred_session_run_path)
+
+            # update newly partitioned/infered graoh
+            G = getognn.get_graph()
+            getognn.equate_graph(G)
+
+            pred_labels_conf_matrix = np.zeros(getognn.image.shape[:2], dtype=np.float32)  # dtype=np.uint8)
+            pred_labels_msc = np.ones(getognn.image.shape[:2], dtype=np.float32) * 0.25
+            gt_labels_msc = np.ones(getognn.image.shape[:2], dtype=np.float32) * 0.25
+            pred_prob_im = np.zeros(getognn.image.shape[:2], dtype=np.float32)
+            training_reg_bg = np.zeros(getognn.image.shape[:2], dtype=np.uint8)
+            for x_b, y_b in zip(Y_BOX, X_BOX):  # RF.x_box, RF.y_box):
+                x_box = x_b
+                y_box = y_b
+                training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+            predictions_topo_bool = []
+            labels_topo_bool = []
+            check = 30
+            for gid in getognn.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
+
+                gnode = getognn.gid_gnode_dict[gid]
+                label = getognn.node_gid_to_label[gid]
+                label = label if type(label) != list else label[1]
+                line = get_points_from_vertices([gnode])
+                # else is fg
+                cutoff = opt_thresh
+
+                vals = []
+
+                for point in line:
+                    ly = int(point[0])
+                    lx = int(point[1])
+                    pred = getognn.node_gid_to_prediction[gid]
+                    vals.append(pred)
+
+
+                inferred = np.array(vals, dtype="float32")
+                infval = np.average(inferred)
+                pred_mode = infval
+
+                getognn.node_gid_to_prediction[gid] = [1. - infval, infval]
+
+
+
+                getognn.node_gid_to_prediction[gid] = [1. - infval, infval]
+                if check >= 0:
+
+                    check -= 1
+
+                t = 0
+                if infval >= opt_thresh:
+                    if label == 1:
+                        t = 0.25  # 1
+                    else:
+                        t = .75  # 3
+                else:
+                    if label == 1:
+                        t = .5  # 2
+                    else:
+                        t = 1  # 4
+
+                for point in line:
+                    ly = int(point[0])
+                    lx = int(point[1])
+                    pred_labels_conf_matrix[lx, ly] = t
+                    pred_labels_msc[lx, ly] = 1 if infval >= opt_thresh else 0
+                    gt_labels_msc[lx,ly] = label
+                    pred_prob_im[lx, ly] = infval
+                    if training_reg_bg[lx, ly] != 1:
+                        getognn.node_gid_to_partition[gid] = 'test'
+                        #predictions_topo_bool.append(infval >= cutoff)
+                        #gt_label = seg_whole[lx, ly]
+                        labels_topo_bool.append(label >= cutoff)
+
+
+            out_folder = getognn.pred_session_run_path
+
+            num_fig = 5
+            fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+            ax[0].imshow(getognn.image)
+            ax[0].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            ax[0].set_title('Image')
+            ax[1].imshow(gt_labels_msc)
+            ax[1].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            ax[1].set_title('Polyline Ground Truth Labeling')
+            ax[2].imshow(pred_labels_conf_matrix)
+            ax[2].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            ax[2].set_title('MSC TF TP TN FN')
+            ax[3].imshow(pred_prob_im)
+            ax[3].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            ax[3].set_title('MSC Pixel Inference Confidence')
+            ax[4].imshow(pred_labels_msc)
+            ax[4].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            ax[4].set_title('MSC Binary Prediction')
+            # fig.tight_layout()
+
+
+            # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+            # if not os.path.exists(batch_folder):
+            #    os.makedirs(batch_folder)
+            plt.savefig(os.path.join(out_folder, "gnn_pix_imgs.pdf"))
+
+            num_fig = 5
+            fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+            ax[0].imshow(getognn.image)
+            # ax[0].contour(region_contour[400:464,400:464], [0.0, 0.15], linewidths=0.5)
+            ax[0].set_title('Image')
+            ax[1].imshow(gt_labels_msc[300:464, 300:464])
+            ax[1].set_title('MSC Ground Segmentation')
+
+            ax[2].imshow(pred_labels_conf_matrix[300:464, 300:464])
+            # ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+            ax[2].set_title('MSC TF TP TN FN')
+
+            ax[3].imshow(pred_prob_im[300:464, 300:464])
+            #x[4.contour(region_contour, [0.0, 0.15], linewidths=0.5)
+            ax[3].set_title('MSC Pixel Inference Confidence')
+            ax[4].imshow(pred_labels_msc[300:464, 300:464])
+            # ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+            ax[4].set_title('MSC Binary Prediction')
+
+
+            # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+            # if not os.path.exists(batch_folder):
+            #    os.makedirs(batch_folder)
+            plt.savefig(os.path.join(out_folder, "gnn_pix_zoom_imgs.pdf"))
+
+            getognn = None
+            sup_getognn = None
+
+
 
     def run_unsupervised_getognn(self, multi_run):
+        from getognn import unsupervised_getognn
         #
         # Train single run of getognn and obtrain trained model
         #
@@ -360,48 +681,62 @@ class runner:
     #
     #
     #
-    def run_unet(self,multi_run):
+    def run_unet(self,multi_run=False, dims=None, boxes=None):
 
-        f = open(self.window_file, 'r')
-        param_lines = f.readlines() if multi_run else None
-        f.close()
 
-        el = len(param_lines)-1
-        sets = el//10
-        sets = sets-1 if sets%2!=0 else sets
-        select_subsets = []
-        select_subsets = [param_lines[0:2]]
-        # [param_lines[0:2] , param_lines[sets:sets+4] ,\
-        #               param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
-        #               param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
-        #               param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]                ]
-        select_subsets.sort()
 
-        training_size = len(select_subsets) if multi_run else None
 
-        num_training = 1 if training_size is None else training_size
+        IMG_WIDTH = dims[0]
+        IMG_HEIGHT = dims[1]
+
+        growth_regions = self.grow_box(dims=dims, boxes=boxes)
+
+
+
         exp_folder = ''
-        input_folder = ''
-        label_file = ''
-        param_file = ''
-
-        experiment_folder = os.path.join(LocalSetup.project_base_path, 'datasets'
-                                              , self.write_path)
-        run_folder = os.path.join(experiment_folder, 'runs')
-        if os.path.exists(run_folder):
-            shutil.rmtree(run_folder)
-
-        #lines = select_subsets
-        for num_samp, samp in enumerate(select_subsets):
-
-            print("    * training regions: ")
-            print("    * ", samp)
 
 
-            UNet = UNetwork(in_channel=1, out_channel=1,
+        for gr in range(len(growth_regions)):
+
+
+            BEGIN_LOADING_FEATURES = gr > 0
+
+            regions = growth_regions[gr]
+
+            BOXES = self.get_box_regions(regions,INVERT=True)
+            X_BOX = [b[0] for b in BOXES]
+            Y_BOX = [b[1] for b in BOXES]
+
+            all_boxes = self.get_box_regions([[0, IMG_WIDTH, 0, IMG_HEIGHT]])
+            X_BOX_all = [b[0] for b in all_boxes]
+            Y_BOX_all = [b[1] for b in all_boxes]
+
+
+            num_percent = 0
+            for box in regions:
+                num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
+            percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
+            percent = int(round(percent, 2)*100)
+
+
+
+            UNet = UNetwork(
+                            write_folder = self.write_path,
+                            ground_truth_label_file=self.ground_truth_label_file,
+                            run_num=percent,
+                            parameter_file_number = self.parameter_file_number,
+                            geomsc_fname_base = self.msc_file,
+                            label_file=self.ground_truth_label_file,
+                            load_feature_graph_name=False,
+                            image=self.image,
+                            name=self.name
+                            )
+            UNet.set_attributes(
+                BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                            in_channel=1, out_channel=1,
                             ground_truth_label_file=self.ground_truth_label_file,
                             skip_connect=True,
-                            run_num=self.run_num,
+                            run_num=percent,
                             parameter_file_number = self.parameter_file_number,
                             geomsc_fname_base = self.msc_file,
                             label_file=self.ground_truth_label_file,
@@ -409,97 +744,48 @@ class runner:
                             load_feature_graph_name=False,
                             image=self.image,
                             name=self.name,
-                            write_folder=self.write_path,
-                            compute_features=num_samp!=0,
-                            training_size=len(samp),
-                            region_list=samp)
+                            growth_radius=self.growth_radius,
+                            # compute_features=num_samp!=0,
+                            training_size=percent,
+                            # region_list=samp,
+                            X_BOX=X_BOX,
+                            Y_BOX=Y_BOX,
+                            X_BOX_all=X_BOX_all,
+                            Y_BOX_all=Y_BOX_all,
+                            boxes=regions,
+                            all_boxes=all_boxes,
+                            )
+            # UNet.update_run_info(batch_multi_run=len(X_BOX))
+            # UNet.run_num = percent
+
+            debug = False
+            INTERACTIVE = False
 
 
+            UNet.train(test = debug)
 
-            trainer = UNet_Trainer(UNet)
+
             pred_thresh = 0.5
-            results = trainer.launch_training(view_results=False, pred_thresh=pred_thresh)
+            preds = UNet.infer(training_window_file=self.window_file, load_pretrained=False,
+                        pred_thresh=pred_thresh, test=debug, INTERACTIVE=INTERACTIVE)
 
-            train_losses, test_losses, F1_scores, best_f1, \
-            val_imgs, val_segs, sample_losses, val_img_preds, running_best_model = results
-            UNet.running_best_model = trainer.running_best_model
 
-            #
-            # Perform remainder of runs and don't need to read feats again
-            #
-            #if not UNet.params['load_features']:
-            UNet.params['load_features'] = True
-            UNet.params['write_features'] = False
-            UNet.params['load_features'] = True
-            UNet.params['write_feature_names'] = False
-            UNet.params['save_filtered_images'] = False
-            UNet.params['collect_features'] = False
-            UNet.params['load_preprocessed'] = True
-            UNet.params['load_geto_attr'] = True
-            UNet.params['load_feature_names'] = True
-
-            ### unet_classifier = UNet_Classifier(UNet, self.window_file)
-            ### inf_resuts = unet_classifier.infer(running_best_model ,infer_subsets=True, view_results=True)
-            inf_results = UNet.infer(running_best_model,training_window_file=self.window_file,
-                                     infer_subsets=True, view_results=False,
-                                     pred_thresh=pred_thresh,
-
-                                     test=True)
-
-            test_losses, val_imgs, val_segs, val_img_preds, running_val_loss,\
-            F1_score, labels, predictions = inf_results
-
-            exp_folder = os.path.join(UNet.params['experiment_folder'])
-            input_folder=UNet.input_folder
-            # batch_metric_folder = os.path.join(exp_folder, 'batch_metrics') if not multi_run \
-            #     else os.path.join(exp_folder,'runs',str(num_samp), 'batch_metrics')
-            # if not os.path.exists(batch_metric_folder):
-            #     os.makedirs(batch_metric_folder)
-            #
-            # out_folder = UNet.pred_session_run_path
-            #
-            # # compute_prediction_metrics('unet', predictions, labels, out_folder)
-            # #
-            # #UNet.write_arc_predictions(UNet.session_name)
-            # # UNet.draw_segmentation(dirpath=UNet.pred_session_run_path)
-            #
-            # multi_run_metrics(model=UNet.type, exp_folder=exp_folder, batch_multi_run=str(num_samp),
-            #                   bins=7, runs=os.path.join('runs',str(num_samp)),
-            #                   plt_title=exp_folder.split('/')[-1])
+            UNet.compute_metrics( pred_images=preds, # scores=scores, pred_labels=pred_labels, pred_thresh = pred_thresh,
+                                 # predictions_topo=predictions_topo, labels_topo=labels_topo,
+                                 INTERACTIVE= INTERACTIVE)
 
 
 
-            # if num_samp == num_training:
-            #     exp_folder = os.path.join(UNet.params['experiment_folder'])
-            #     batch_metric_folder = os.path.join(exp_folder, 'batch_metrics')
-            #     if not os.path.exists(batch_metric_folder):
-            #         os.makedirs(batch_metric_folder)
-            #     multi_run_metrics(model=UNet.type, exp_folder=exp_folder, batch_multi_run=True,
-            #                       bins=7, runs='runs', plt_title=exp_folder.split('/')[-1])
-            #     self.logger = experiment_logger(experiment_folder=self.experiment_folder,
-            #                                                        input_folder=UNet.input_folder)
-            #     topo_image_name = self.ground_truth_label_file.split('.labels')[0]
-            #     self.logger.record_filename(label_file=UNet.label_file,
-            #                                 parameter_list_file=UNet.param_file,
-            #                                 image_name=self.image,
-            #                                 topo_image_name=topo_image_name)
-        base_exp_folder = exp_folder
-        exp_folder = os.path.join(exp_folder, 'runs')
 
-        batch_metric_folder = base_exp_folder
-        if not os.path.exists(batch_metric_folder):
-            os.makedirs(batch_metric_folder)
+            UNet = None
 
-        # compute_prediction_metrics('unet', predictions, labels, out_folder)
-        #
-        # UNet.write_arc_predictions(UNet.session_name)
-        # UNet.draw_segmentation(dirpath=UNet.pred_session_run_path)
-        metric = 'f1'
-        print("    * ", "after training loop")
-        multi_run_metrics(model='metric_averages', exp_folder=exp_folder,
-                          batch_multi_run=False, avg_multi=True,batch_of_batch=True,
-                          bins=7, runs='batch_metrics',
-                          plt_title=exp_folder.split('/')[-1])
+
+
+        multi_run_metrics(model='unet', exp_folder=exp_folder, bins=7,
+
+                          # data_folder = self.model.params['write_folder'].split('/')[0],
+                          runs='runs', plt_title=exp_folder.split('/')[-1],
+                          batch_multi_run=True)
 
 
 
@@ -508,118 +794,154 @@ class runner:
     #                     *  RANDOM FOREST *
     #
     #
-    def run_random_forest(self, multi_run ):
-
-        #run_params = set_parameters(read_params_from=self.parameter_file_number,
-        #                            experiment_folder=self.write_path)
-        RF = RandomForest(training_selection_type='box',
-                          run_num=self.run_num,
-                          parameter_file_number = self.parameter_file_number,
-                          name=self.name,
-                          image=self.image,
-                          feature_file=self.feature_file,
-                          geomsc_fname_base = self.msc_file,
-                          label_file=self.ground_truth_label_file,
-                          write_folder=self.write_path,
-                         model_name=self.model_name,
-                          load_feature_graph_name=None,
-                          write_json_graph = False)
-
-        print("    * :", RF.params)
-
-        RF.build_random_forest(ground_truth_label_file=self.ground_truth_label_file)
-
-        RF.run_num = 0
-
-        print("   *:   feat names length", len(RF.feature_names))
-
-        partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
-            RF.node_gid_to_partition,
-            RF.node_gid_to_feature,
-            RF.node_gid_to_label,
-            test_all=True)
-
-
-        gid_features_dict = partition_feat_dict['all']
-        gid_label_dict = partition_label_dict['all']
-        train_gid_label_dict = partition_label_dict['train']
-        train_gid_feat_dict = partition_feat_dict['train']
-
-        n_trees = RF.params['number_forests']
-        tree_depth = RF.params['forest_depth']
-
-        if RF.params['forest_class_weights']:
-            class_1_weight = RF.params['class_1_weight']
-            class_2_weight = RF.params['class_2_weight']
-        else:
-            class_1_weight = 1.0
-            class_2_weight = 1.0
-        predictions, labels, node_gid_to_prediction = RF.classifier(self.attributes.node_gid_to_prediction,
-                                                                    train_labels=train_gid_label_dict,
-                                                                    train_features=train_gid_feat_dict,
-                                                                    test_labels=gid_label_dict,
-                                                                    test_features=gid_features_dict,
-                                                                    n_trees=n_trees,
-                                                                    class_1_weight=class_1_weight,
-                                                                    class_2_weight=class_2_weight,
-                                                                    weighted_distribution=RF.params['forest_class_weights'],
-                                                                    depth=tree_depth)
-        out_folder = RF.attributes.pred_session_run_path
-
-        RF.write_arc_predictions(RF.pred_session_run_path)
-        RF.draw_segmentation(dirpath=RF.pred_session_run_path)
-
-        compute_prediction_metrics('random_forest', predictions, labels, out_folder)
-
-        #if RF.params['load_feature_names']:
-        #    RF.load_feature_names()
-        if RF.params['feature_importance']:
-            RF.feature_importance(feature_names=RF.feature_names,
-                                  features=gid_features_dict,
-                                  labels=gid_label_dict,
-                                  plot=False)
-            RF.write_feature_importance()
-
-
-        #
-        # Perform remainder of runs and don't need to read feats again
-        #
-        if not RF.params['load_features']:
-            RF.params['write_features'] = False
-            RF.params['load_features'] = True
-            RF.params['write_feature_names'] = False
-            RF.params['save_filtered_images'] = False
-            RF.params['collect_features'] = False
-            RF.params['load_preprocessed'] = True
-            RF.params['load_geto_attr'] = True
-            RF.params['load_feature_names'] = True
-
-        run_manager = Run_Manager(model=RF,
-                                  training_window_file=self.window_file,
-                                  features_file=self.feature_file,
-                                  sample_idx=self.sample_idx,
-                                  model_name=self.model_name,
-                                  format=format,
-                                  parameter_file_number=self.parameter_file_number)
+    def run_random_forest(self, multi_run , boxes=None, dims= None, learning='pixel'):
         if multi_run:
-            f = open(self.window_file, 'r')
-            self.box_dict = {}
-            param_lines = f.readlines()
-            f.close()
 
-            el = len(param_lines) - 1
-            sets = el // 10
-            sets = sets - 1 if sets % 2 != 0 else sets
-            self.param_lines = [param_lines[0:2], param_lines[sets:sets + 4]  ,\
-                        param_lines[2*sets:(2*sets)+6] , param_lines[3*sets:(3*sets)+8],
-                        param_lines[4 * sets:(4 * sets) + 16], param_lines[6 * sets:(6 * sets) + 32],
-                        param_lines[5 * sets:-1]   ,param_lines[3 * sets:-1]]
-            for set in self.param_lines:
-                run_manager.perform_runs(param_lines=[set], run_name='_' + str(len(set)))
+            IMG_WIDTH = dims[0]
+            IMG_HEIGHT = dims[1]
 
-    # def update_run_info(self, experiment_folder_name=None):
-    #     self.attributes.update_run_info(batch_multi_run=experiment_folder_name)
+            growth_regions = self.grow_box(dims=dims, boxes=boxes)
 
+
+
+
+
+
+
+            for gr in  range(len(growth_regions)):
+
+
+                BEGIN_LOADING_FEATURES = gr > 0
+
+                regions = growth_regions[gr]
+
+
+                BOXES = self.get_box_regions(regions)
+                X_BOX = [b[0] for b in BOXES]
+                Y_BOX = [b[1] for b in BOXES]
+
+                num_percent = 0
+                for box in regions:
+                    num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
+                percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
+                percent = int(round(percent, 2) * 100)
+
+
+
+
+
+                RF = RandomForest(training_selection_type='box',
+                                  classifier = learning,
+                                  run_num=percent,
+                                  parameter_file_number = self.parameter_file_number,
+                                  name=self.name,
+                                  image=self.image,
+                                  feature_file=self.feature_file,
+                                  geomsc_fname_base = self.msc_file,
+                                  label_file=self.ground_truth_label_file,
+                                  write_folder=self.write_path,
+                                 model_name=self.model_name,
+                                  load_feature_graph_name=None,
+                                  write_json_graph = False,
+                                  X_BOX=X_BOX,
+                                  Y_BOX=Y_BOX,
+                                  boxes=regions)
+
+
+
+
+
+                RF.build_random_forest(
+                    BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                                       ground_truth_label_file=self.ground_truth_label_file,
+                                       X_BOX=X_BOX,Y_BOX=Y_BOX, boxes=regions)
+
+                #RF.run_num = 0
+
+
+
+                partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
+                    RF.node_gid_to_partition,
+                    RF.node_gid_to_feature,
+                    RF.node_gid_to_label,
+                    test_all=True)
+
+
+                gid_features_dict = partition_feat_dict['all']
+                gid_label_dict = partition_label_dict['all']
+                train_gid_label_dict = partition_label_dict['train']
+                train_gid_feat_dict = partition_feat_dict['train']
+
+                n_trees = RF.params['number_forests']
+                tree_depth = RF.params['forest_depth']
+
+                if RF.params['forest_class_weights']:
+                    class_1_weight = RF.params['class_1_weight']
+                    class_2_weight = RF.params['class_2_weight']
+                else:
+                    class_1_weight = 1.0
+                    class_2_weight = 1.0
+
+                if learning=='pixel':
+                    predictions, labels, node_gid_to_prediction = RF.pixel_classifier(self.attributes.node_gid_to_prediction,
+                                                                                train_labels=train_gid_label_dict,
+                                                                                train_features=train_gid_feat_dict,
+                                                                                test_labels=gid_label_dict,
+                                                                                test_features=gid_features_dict,
+                                                                                n_trees=n_trees,
+                                                                                class_1_weight=class_1_weight,
+                                                                                      growth_radius=self.growth_radius,
+                                                                                class_2_weight=class_2_weight,
+                                                                                weighted_distribution=RF.params[
+                                                                                    'forest_class_weights'],
+                                                                                depth=tree_depth)
+                else:
+                    predictions, labels, node_gid_to_prediction = RF.classifier(self.attributes.node_gid_to_prediction,
+                                                                            train_labels=train_gid_label_dict,
+                                                                            train_features=train_gid_feat_dict,
+                                                                            test_labels=gid_label_dict,
+                                                                            test_features=gid_features_dict,
+                                                                            n_trees=n_trees,
+                                                                            class_1_weight=class_1_weight,
+                                                                            class_2_weight=class_2_weight,
+                                                                            weighted_distribution=RF.params['forest_class_weights'],
+                                                                            depth=tree_depth)
+                out_folder = RF.attributes.pred_session_run_path
+
+                RF.write_arc_predictions(RF.pred_session_run_path)
+                RF.draw_segmentation(dirpath=RF.pred_session_run_path)
+
+                compute_prediction_metrics('random_forest', predictions, labels, out_folder)
+
+                training_reg_bg = np.zeros(RF.image.shape[:2], dtype=np.uint8)
+                for x_b, y_b in zip(RF.X_BOX,RF.Y_BOX):
+                    x_box = x_b
+                    y_box = y_b
+                    training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+                RF.write_training_percentages(dir=RF.pred_session_run_path,
+                                              train_regions=training_reg_bg)
+
+                #if RF.params['load_feature_names']:
+                #    RF.load_feature_names()
+                if RF.params['feature_importance']:
+                    RF.feature_importance(feature_names=RF.feature_names,
+                                          features=gid_features_dict,
+                                          labels=gid_label_dict,
+                                          plot=False)
+                    RF.write_feature_importance()
+
+
+
+
+                RF = None
+
+
+
+
+
+#
+#             LOGGING
+#
 class experiment_logger:
     def __init__(self, experiment_folder, input_folder):
         self.experiment_folder = experiment_folder

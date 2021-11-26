@@ -369,6 +369,7 @@ class gnn:
         labels = []
         iter_num = 0
         finished = False
+
         while not finished:
             if infer_feed_dict is None:
                 feed_dict_val, batch_labels, finished, _ = minibatch_iter.incremental_node_val_feed_dict(size,
@@ -1016,6 +1017,7 @@ class gnn:
 
             if total_steps > FLAGS.max_total_steps:
                 break
+        end_train_time = time.time()
 
         print("Optimization Finished!")
         sess.run(val_adj_info.op)
@@ -1029,16 +1031,16 @@ class gnn:
             fp.write("loss={:.5f} f1_micro={:.5f} f1_macro={:.5f} time={:.5f}".
                      format(val_cost, val_f1_mic, val_f1_mac, duration))
 
-        end_train_time = time.time()
 
-        print('..Time taken to train model: ', end_train_time-start_time)
 
-        end_train_time = time.time()
+        self.train_time = end_train_time-start_time
+
+        s = time.time()
 
         val_cost, val_f1_mic, val_f1_mac, duration = self.incremental_evaluate(sess, model, minibatch, FLAGS.batch_size,
                                                                           test=True)
-        end_val_time = time.time()
-        print('..Time taken to perform inference: ', end_val_time - end_train_time)
+        t = time.time()
+        self.pred_time = t-s
 
         print("Writing test set stats to file (don't peak!)")
         with open(self.log_dir() + "test_stats.txt", "w") as fp:

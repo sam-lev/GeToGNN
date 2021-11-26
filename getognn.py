@@ -16,6 +16,8 @@ from getograph import  Attributes
 from ui.arcselector import ArcSelector
 from proc_manager import experiment_manager
 
+from localsetup import LocalSetup
+
 class GeToGNN(MLGraph):
     def __init__(self,training_selection_type='box', parameter_file_number = None,
                  geomsc_fname_base = None, label_file=None,run_num=0,
@@ -33,6 +35,10 @@ class GeToGNN(MLGraph):
 
         self.G = None
         self.G_dict = {}
+
+
+        self.LocalSetup = LocalSetup()
+
 
         super(GeToGNN, self).__init__(parameter_file_number=parameter_file_number,
                                       run_num=run_num,
@@ -72,6 +78,9 @@ class GeToGNN(MLGraph):
         self.selected_positive_arcs = set()
         self.negative_arcs = set()
         self.selected_negative_arcs = set()
+
+        self.train_time = 0
+        self.pred_time = 0
 
 
 
@@ -211,6 +220,8 @@ class GeToGNN(MLGraph):
                            ,degree_l1=self.params['degree_l1']
                            , degree_l2=self.params['degree_l2']
                            , degree_l3=self.params['degree_l3'])
+            self.train_time = self.gnn.train_time
+            self.ped_time = self.gnn.pred_time
         else:
             # format networkx idx to features and labels
             nx_idx_to_feat_idx = {self.node_gid_to_graph_idx[gid]: feat for gid, feat
@@ -267,6 +278,8 @@ class GeToGNN(MLGraph):
                            concat=self.params['concat'],
                            jumping_knowledge=self.params['jumping_knowledge'],
                            jump_type=self.params['jump_type'])
+            self.train_time = self.gnn.train_time
+            self.ped_time = self.gnn.pred_time
 
     def embedding_regression_classifier(self, MSCGNN_infer=None, test_prefix=None, trained_prefix=None
                                         , embedding_prefix=None, embedding_path_and_name=None, aggregator=None
@@ -824,18 +837,19 @@ class supervised_getognn:
     def __init__(self, model_name):
         self.model_name = model_name
         self.attributes = Attributes()
-        self.run_num=0
+
 
     def build_getognn(self, sample_idx, experiment_num, experiment_name, window_file_base,
                  parameter_file_number, format = 'raw', run_num=0, experiment_folder=None,
-                 name=None, image=None, label_file=None, msc_file=None,
-                 ground_truth_label_file=None, write_path=None, feature_file=None,
-                 window_file=None, model_name="GeToGNN"):
+                 name=None, image=None, label_file=None, msc_file=None, X_BOX=None,Y_BOX=None,
+                 ground_truth_label_file=None, write_path=None, feature_file=None, boxes = None,
+                 window_file=None, model_name="GeToGNN", BEGIN_LOADING_FEATURES=False):
+
 
 
 
         self.getognn = GeToGNN(training_selection_type='box',
-                          run_num=self.run_num,
+                          run_num=run_num,
                           parameter_file_number = parameter_file_number,
                           name=name,
                           image=image,
@@ -847,6 +861,17 @@ class supervised_getognn:
                          model_name=model_name,
                           load_feature_graph_name=None,
                           write_json_graph = False)
+        if BEGIN_LOADING_FEATURES:
+            self.getognn.params['load_features'] = True
+            self.getognn.params['write_features'] = False
+            self.getognn.params['load_features'] = True
+            self.getognn.params['write_feature_names'] = False
+            self.getognn.params['save_filtered_images'] = False
+            self.getognn.params['collect_features'] = False
+            self.getognn.params['load_preprocessed'] = True
+            self.getognn.params['load_geto_attr'] = True
+            self.getognn.params['load_feature_names'] = True
+
 
         if self.getognn.params['load_geto_attr']:
             if 'geto' in self.getognn.params['aggregator']:
@@ -887,10 +912,11 @@ class supervised_getognn:
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)
 
-        print("    ",self.getognn.params['x_box'],self.getognn.params['y_box'])
 
-        training_set , test_and_val_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'],
-                                                                                  y_range=self.getognn.params['y_box'])
+
+        training_set , test_and_val_set, empty_set = self.getognn.box_select_geomsc_training(x_range=X_BOX,
+                                                                                  y_range=Y_BOX,
+                                                                                  boxes=boxes)
 
         self.getognn.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,
                                                  validation_samples = 1)
@@ -910,13 +936,13 @@ class supervised_getognn:
         if not self.getognn.params['load_preprocessed_walks']:
             walk_embedding_file = os.path.join(self.getognn.LocalSetup.project_base_path, 'datasets',
                                                self.getognn.params['write_folder'],'walk_embeddings',
-                                               'run-'+str(self.getognn.run_num)+'_walks')
+                                               'gnn')
             self.getognn.params['load_walks'] = walk_embedding_file
             self.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
         else:
             walk_embedding_file = os.path.join(self.getognn.LocalSetup.project_base_path, 'datasets',
                                                self.getognn.params['write_folder'], 'walk_embeddings',
-                                               'run-' + str(self.getognn.run_num) + '_walks')
+                                               'gnn')
             self.getognn.params['load_walks'] = walk_embedding_file
 
 
@@ -925,7 +951,12 @@ class supervised_getognn:
         if getognn is not None:
             self.getognn = getognn
         #training
+
         self.getognn.supervised_train()
+
+        self.pred_time = self.getognn.pred_time
+        self.train_time = self.getognn.train_time
+
         G = self.getognn.get_graph()
         self.getognn.equate_graph(G)
 
@@ -975,7 +1006,7 @@ class unsupervised_getognn:
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)
 
-        training_set , test_and_val_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'], y_range=self.getognn.params['y_box'])
+        training_set , test_and_val_set, empty_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'], y_range=self.getognn.params['y_box'])
 
         self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
                                                  validation_samples = 1)

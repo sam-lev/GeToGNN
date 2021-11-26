@@ -8,9 +8,12 @@ import samply
 import scipy.stats
 import numpy.linalg as linalg
 import imageio
+import matplotlib.pyplot as plt
 from PIL import Image
 from sklearn.preprocessing import PowerTransformer, RobustScaler, QuantileTransformer
+from functools import partial
 
+from ml.features import multiscale_basic_features
 from getograph import GeToGraph
 from data_ops.collect_data import collect_training_data, compute_geomsc, collect_datasets
 from data_ops.utils import dbgprint
@@ -47,14 +50,14 @@ from ml.utils import load_data
 
 class GeToFeatureGraph(GeToGraph):
     def __init__(self, image=None, geomsc_fname_base = None, label_file=None,
-                 parameter_file_number = None, run_num=0,
+                 parameter_file_number = None, run_num=1,
                  dataset_group='neuron',write_folder="results",
                  model_name='ndlas',
                  name='neuron2', format='raw', load_feature_graph_name = None,
                  msc_file=None, dim_invert=False, map_labels=False,
                  reset_run = False, **kwargs):
 
-        #self.LocalSetup = LocalSetup(env='slurm')
+        self.LocalSetup = LocalSetup()
 
 
         #if parameter_file_number is not None:
@@ -109,16 +112,28 @@ class GeToFeatureGraph(GeToGraph):
                                           self.params['write_folder'], 'runs')
         if not os.path.exists(self.pred_run_path):
             os.makedirs(os.path.join(self.pred_run_path))
-        self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
-        self.msc_write_path = self.LocalSetup.neuron_training_base_path
+        #self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
+        #self.msc_write_path = self.LocalSetup.neuron_training_base_path
 
         self.model_name = model_name
-        self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
-        self.msc_write_path = self.LocalSetup.neuron_training_base_path
+        #self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
+        #self.msc_write_path = self.LocalSetup.neuron_training_base_path
+
+
         self.session_name = str(self.run_num)
-        self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
-        if not os.path.exists(self.pred_session_run_path):
-            os.makedirs(os.path.join(self.pred_session_run_path))
+
+        model_type = os.path.join(self.LocalSetup.project_base_path, 'model_type.txt')
+        logged_model = open(model_type, 'r')
+        m = logged_model.readlines()
+        logged_model.close()
+
+        self.inference_target = m[0]
+
+        print("    * read model", m)
+        if m[0] != 'unet':
+            self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
+            if not os.path.exists(self.pred_session_run_path):
+                os.makedirs(os.path.join(self.pred_session_run_path))
 
 
         #
@@ -142,6 +157,10 @@ class GeToFeatureGraph(GeToGraph):
 
         self.image, self.msc_collection, self.mask, self.segmentation = self.train_dataloader[
             int(self.params['train_data_idx'])]
+        self.image = self.image.astype(np.float32)
+        max_val = np.max(self.image)
+        min_val = np.min(self.image)
+        self.image = (self.image - min_val) / (max_val - min_val)
         #self.image = self.image if len(self.image.shape) == 2 else np.transpose(np.mean(self.image, axis=1), (1, 0))
 
         self.X = self.image.shape[0]
@@ -702,6 +721,18 @@ class GeToFeatureGraph(GeToGraph):
 
 
         self.images["identity"] = image
+
+        sigma_min = 1
+        sigma_max = 64
+        features_func = partial(multiscale_basic_features,
+                                intensity=True, edges=False, texture=True,
+                                sigma_min=sigma_min, sigma_max=sigma_max,
+                                multichannel=False)
+        image_c = copy.deepcopy(image_og)
+        features = features_func(image_c)
+        for i in range(features.shape[2]):
+            self.images['feat-func_'+str(i)] = features[:,:,i]
+
         image_c = copy.deepcopy(image_og)
         self.images["sobel"] = sobel_filter(image_c)
         image_c = copy.deepcopy(image_og)
@@ -735,12 +766,27 @@ class GeToFeatureGraph(GeToGraph):
 
         if self.params['save_filtered_images']:
             for name, image in self.images.items():
-                image = np.array(image).astype(np.int8)
-                #Img = Image.fromarray(image)
+
                 if not os.path.exists(os.path.join(self.experiment_folder, 'filtered_images')):
                     os.makedirs(os.path.join(self.experiment_folder, 'filtered_images'))
                 #Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), quality=90)
-                imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), image)
+                im_name = os.path.join(self.experiment_folder, 'filtered_images', name+'.png')
+
+                plt.figure()
+                plt.title("name")
+                import matplotlib as mplt
+                plt.imsave(im_name, image,cmap=mplt.cm.Greys_r)#astype('uint8'),
+                #           cmap=mplt.cm.Greys_r)
+
+
+
+                # image = np.array(image).astype(np.uint8)
+                #
+                # #Img = Image.fromarray(image)
+                # if not os.path.exists(os.path.join(self.experiment_folder, 'filtered_images')):
+                #     os.makedirs(os.path.join(self.experiment_folder, 'filtered_images'))
+                # #Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), quality=90)
+                # imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), image)
 
     def load_json_feature_graph(self):
         graph_path = os.path.join(self.pred_run_path, self.msc_graph_name)

@@ -1,31 +1,29 @@
-#importing the libraries used in the rest of hte code
 import os
 import sys
-import gzip
-import shutil
-import tarfile
-import imageio
+import random
+import warnings
+
+from tensorflow.keras.models import Model, load_model
+from tensorflow.keras.metrics import MeanIoU
+from tensorflow.keras.layers import Input
+from tensorflow.keras.layers import Dropout, Lambda
+from tensorflow.keras.layers import Conv2D, Conv2DTranspose
+from tensorflow.keras.layers import MaxPooling2D
+from tensorflow.keras.layers import concatenate
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras import backend as K
+import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy import ndimage, misc
+import pandas as pd
+import os
+from tensorflow.keras.preprocessing import image
+import timeit
+from sklearn.metrics import f1_score
 import matplotlib as mplt
 from copy import deepcopy
-#%matplotlib inline
-import zipfile
-import collections
-from skimage import morphology
-from skimage.measure import block_reduce
-import scipy
-from torch.utils.data import Dataset
-import PIL
-from PIL import Image
-from sklearn.metrics import f1_score
-import copy
-import random
-import math
-import torch
-from torch import nn
-import torch.nn.functional as F
-from torchvision import transforms
 
 from attributes import Attributes
 from mlgraph import MLGraph
@@ -35,131 +33,12 @@ from data_ops.collect_data import collect_training_data, compute_geomsc, collect
 from ml.utils import get_partition_feature_label_pairs
 from data_ops.utils import dbgprint as dprint
 from compute_multirun_metrics import multi_run_metrics
+from data_ops.utils import tile_region
 
 from localsetup import LocalSetup
 LocalSetup = LocalSetup()
 
-# with this function you set the value of the environment variable CUDA_VISIBLE_DEVICES
-# to set which GPU to use
-# it also reserves this amount of memory for your exclusive use. This might be important for
-# not having other people using the resources you need in shared systems
-# the homework was tested in a GPU with 4GB of memory, and running this function will require at least
-# as much
-# if you want to test in a GPU with less memory, you can call this function
-# with the argument minimum_memory_mb specifying how much memory from the GPU you want to reserve
-def define_gpu_to_use(minimum_memory_mb = 3800, gpu_to_use=None):
-    try:
-        os.environ['CUDA_VISIBLE_DEVICES']
-        print('GPU already assigned before: ' + str(os.environ['CUDA_VISIBLE_DEVICES']))
-        return
-    except:
-        pass
-    torch.cuda.empty_cache()
-    for i in range(16):
-        '''free_memory = !nvidia-smi --query-gpu=memory.free -i $i --format=csv,nounits,noheader
-        if free_memory[0] == 'No devices were found':
-            break
-        free_memory = int(free_memory[0])
-        if free_memory>minimum_memory_mb-500:
-            gpu_to_use = i
-            break'''
-    if False:#gpu_to_use is None:
-        print('Could not find any GPU available with the required free memory of ' +str(minimum_memory_mb) + 'MB. Please use a different system for this assignment.')
-    else:
-        os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_to_use)
-        print('Chosen GPU: ' + str(gpu_to_use))
-        #x = torch.rand((256,1024,minimum_memory_mb-500)).cuda()
-        #x = torch.rand((1,1)).cuda()
-        #del x
 
-#delete small regions (<size) of binary images
-def remove_small_regions(img, size):
-    img = morphology.remove_small_objects(img, size)
-    img = morphology.remove_small_holes(img, size)
-    return img
-
-#resize the images of the dataset to match that used in training
-# also, resize to scale image back to normal when infering on larger image
-def resize_img(img, X=None, Y=None, sampling="lanczos", downsample=False):
-    if not downsample:
-        if sampling == "lanczos":
-            print("    Image shape: ", img.shape)
-            img = Image.fromarray(img) # .convert('RGB')
-            img = img.resize((X,Y), PIL.Image.LANCZOS) # PIL.Image.BOX)
-            #  PIL.Image.LANCZOS, PIL.Image.BICUBIC, PIL.Image.HAMMING
-            img = np.array(img).astype('float32')  # .convert('L'))
-        elif sampling == "hamming":
-            img = Image.fromarray(img) # bilinear #hamming
-            img = img.resize((X,Y), PIL.Image.HAMMING)#PIL.Image.BOX)
-            #  PIL.Image.LANCZOS, PIL.Image.BICUBIC, PIL.Image.HAMMING
-            img = np.array(img).astype('float32')#.astype('float32')#.convert('L'))
-        elif sampling == "bicubic":
-            img = Image.fromarray(img) # bilinear #hamming
-            img = img.resize((X,Y), PIL.Image.BICUBIC)#PIL.Image.BOX)
-            #  PIL.Image.LANCZOS, PIL.Image.BICUBIC, PIL.Image.HAMMING
-            img = np.array(img).astype('float32')#.astype('float32')#.convert('L'))
-    #if downsample and len(img.shape)!=3:
-    #    img = block_reduce(img, block_size=(2, 2), func=np.max)
-    return img
-
-
-#for segmentations tasks, the exact transformations that are applied to
-# the input image should be applied, down to the random number used, should
-# also be applied to the ground truth and to the masks. We redefine a few of
-# PyTorch classes
-
-#apply transoforms to all tensors in list x
-def _iterate_transforms(transform, x):
-    for i, xi in enumerate(x):
-        x[i] = transform(x[i])
-    return x
-
-#redefining composed transform so that it uses the _iterate_transforms function
-class Compose(object):
-    def __init__(self, transforms):
-        self.transforms = transforms
-
-    def __call__(self, x):
-        for transform in self.transforms:
-            x = _iterate_transforms(transform, x)
-        return x
-
-class Normalize(object):
-   def __call__(self, img):
-      return transforms.Normalize((0.5,), (0.5,))
-#class to rerandomize the vertical flip transformation
-class RandomVerticalFlipGenerator(object):
-    def __call__(self, img):
-        self.random_n = random.uniform(0, 1)
-        return img
-
-#class to perform vertical flip using randomization provided by gen
-class RandomVerticalFlip(object):
-    def __init__(self, gen):
-        self.gen = gen
-
-    def __call__(self, img):
-        if self.gen.random_n < 0.5:
-            return torch.flip(img, [1])
-        return img
-
-#class to rerandomize the horizontal flip transformation
-class RandomHorizontalFlipGenerator(object):
-    def __call__(self, img):
-        self.random_n = random.uniform(0, 1)
-        return img
-
-#class to perform horizontal flip using randomization provided by gen
-class RandomHorizontalFlip(object):
-    def __init__(self, gen):
-        self.gen = gen
-
-    def __call__(self, img):
-        if self.gen.random_n < 0.5:
-            return torch.flip(img, [1])
-        return img
-
-    # use this function to score your models
 
 
 def get_score_model(model, data_loader, X = None, Y =None):
@@ -168,31 +47,31 @@ def get_score_model(model, data_loader, X = None, Y =None):
 
     # turn off gradients since they will not be used here
     # this is to make the inference faster
-    with torch.no_grad():
-        logits_predicted = np.zeros([0, 1, X, Y])
-        segmentations = np.zeros([0, 1, X, Y])
-        # run through several batches, does inference for each and store inference results
-        # and store both target labels and inferenced scores
-        for image, segmentation, _ in data_loader:
-            image = image.cuda()
-            image = image.unsqueeze(1)
-            logit_predicted = model(image)
-            if len(logit_predicted.shape) != 4:
-                logit_predicted = logit_predicted[None]
-            logits_predicted = np.concatenate((logits_predicted, logit_predicted.cpu().detach().numpy() ),
-                                              axis=0)
-            # print('shape ', segmentation.shape)
-            # print('shape mask ', mask.shape)
 
-            segmentation[segmentation > 0] = 1
-            segmentation = segmentation.unsqueeze(1)#[:, :, :, :]
-            # mask = mask.permute(1,2,0)
-            # print(segmentation)
-            segmentations = np.concatenate((segmentations, segmentation.cpu().detach().numpy() ), axis=0)
-            # returns a list of scores, one for each of the labels
-            segmentations = segmentations.reshape([-1])
-            logits_predicted = logits_predicted.reshape([-1]) > 0
-            binary_logits_predicted = logits_predicted#.astype(int)
+    logits_predicted = np.zeros([0, 1, X, Y])
+    segmentations = np.zeros([0, 1, X, Y])
+    # run through several batches, does inference for each and store inference results
+    # and store both target labels and inferenced scores
+    for image, segmentation, _ in data_loader:
+        image = image.cuda()
+        image = image.unsqueeze(1)
+        logit_predicted = model(image)
+        if len(logit_predicted.shape) != 4:
+            logit_predicted = logit_predicted[None]
+        logits_predicted = np.concatenate((logits_predicted, logit_predicted.cpu().detach().numpy() ),
+                                          axis=0)
+        # print('shape ', segmentation.shape)
+        # print('shape mask ', mask.shape)
+
+        segmentation[segmentation > 0] = 1
+        segmentation = segmentation.unsqueeze(1)#[:, :, :, :]
+        # mask = mask.permute(1,2,0)
+        # print(segmentation)
+        segmentations = np.concatenate((segmentations, segmentation.cpu().detach().numpy() ), axis=0)
+        # returns a list of scores, one for each of the labels
+        segmentations = segmentations.reshape([-1])
+        logits_predicted = logits_predicted.reshape([-1]) > 0
+        binary_logits_predicted = logits_predicted#.astype(int)
     return f1_score(segmentations, logits_predicted) , segmentations, binary_logits_predicted
 
 def get_image_prediction_score(predicted, segmentation, X = None, Y =None):
@@ -201,216 +80,226 @@ def get_image_prediction_score(predicted, segmentation, X = None, Y =None):
 
     # turn off gradients since they will not be used here
     # this is to make the inference faster
-    with torch.no_grad():
-        logits_predicted = np.zeros([0, 1, X, Y])
-        segmentations = np.zeros([0, 1, X, Y])
-        # run through several batches, does inference for each and store inference results
-        # and store both target labels and inferenced scores
-        #for image, segmentation in data_loader:
-        #image = image.cuda()()
-        #image = image.unsqueeze(1)
-        #logit_predicted = model(image)
-        logits_predicted = np.concatenate((logits_predicted, predicted ),
-                                          axis=0)
-        # print('shape ', segmentation.shape)
-        # print('shape mask ', mask.shape)
 
-        segmentation[segmentation > 0] = 1
-        if len(segmentation.shape) != 4:
-            segmentation = segmentation[None]#.unsqueeze(1)#[:, :, :, :]
-        print("    * :", "pred", predicted.shape)
-        print("    * :", "seg", segmentation.shape)
+    logits_predicted = np.zeros([0, 1, X, Y])
+    segmentations = np.zeros([0, 1, X, Y])
+    # run through several batches, does inference for each and store inference results
+    # and store both target labels and inferenced scores
+    #for image, segmentation in data_loader:
+    #image = image.cuda()()
+    #image = image.unsqueeze(1)
+    #logit_predicted = model(image)
+    logits_predicted = np.concatenate((logits_predicted, predicted ),
+                                      axis=0)
+    # print('shape ', segmentation.shape)
+    # print('shape mask ', mask.shape)
 
-        # print(segmentation)
-        segmentations = np.concatenate((segmentations, segmentation ),
-                                       axis=0)
-        # returns a list of scores, one for each of the labels
-        segmentations = segmentations.reshape([-1]) > 0
-        logits_predicted = logits_predicted.reshape([-1]) > 0
-        binary_logits_predicted = logits_predicted#.astype(int)
+    segmentation[segmentation > 0] = 1
+    if len(segmentation.shape) != 4:
+        segmentation = segmentation[None]#.unsqueeze(1)#[:, :, :, :]
+
+
+    # print(segmentation)
+    segmentations = np.concatenate((segmentations, segmentation ),
+                                   axis=0)
+    # returns a list of scores, one for each of the labels
+    segmentations = segmentations.reshape([-1]) > 0
+    logits_predicted = logits_predicted.reshape([-1]) > 0
+    binary_logits_predicted = logits_predicted#.astype(int)
     return f1_score(segmentations, logits_predicted) , segmentations, binary_logits_predicted
 
 def get_topology_prediction_score(predicted, segmentation,
-                                  gid_gnode_dict, node_gid_to_prediction, node_gid_to_label, pred_thresh=0.4,
+                                  gid_gnode_dict, node_gid_to_prediction, node_gid_to_label,
+                                  msc_logit_map = None, pred_thresh=0.4,
                                   X = None, Y =None, ranges=None):
     # toggle model to eval mode
     #model.eval()
 
     # turn off gradients since they will not be used here
     # this is to make the inference faster
+
+    arc_pixel_predictions_proba = []
+    arc_segmentation_proba = []
     arc_pixel_predictions = []
     segmentation_logits = []
-    with torch.no_grad():
-        logits_predicted = np.zeros([0, 1, X, Y])
-        segmentations = np.zeros([0, 1, X, Y])
-        # run through several batches, does inference for each and store inference results
-        # and store both target labels and inferenced scores
-        #for image, segmentation in data_loader:
-        #image = image.cuda()
-        #image = image.unsqueeze(1)
-        #logit_predicted = model(image)
-        logits_predicted = np.concatenate((logits_predicted, predicted),
-                                          axis=0)
-        segmentation = segmentation
-        # print('shape ', segmentation.shape)
-        # print('shape mask ', mask.shape)
 
-        segmentation[segmentation > 0] = 1
-        if len(segmentation.shape) != 4:
-            segmentation = segmentation[None]#.unsqueeze(1)#[:, :, :, :]
-        print("    * :", "pred_topo", predicted.shape)
-        print("    * :", "seg_topo", segmentation.shape)
+    # run through several batches, does inference for each and store inference results
+    # and store both target labels and inferenced scores
+
+    # plt.figure()
+    # plt.title("Predicted Segmentation")
+    # plt.imshow(predicted, cmap=plt.cm.Greys_r)
+    # plt.figure()
+    # plt.title("Segmentation")
+    # plt.imshow(segmentation, cmap=plt.cm.Greys_r)
+    # plt.show()
+
+    logits_predicted = predicted#np.concatenate((logits_predicted, predicted),
+    #                                  axis=0)
+    segmentation = segmentation
+    # print('shape ', segmentation.shape)
+    # print('shape mask ', mask.shape)
+
+    # segmentation[segmentation > 0] = 1
+    #if len(segmentation.shape) != 4:
+    #    segmentation = segmentation[None]#.unsqueeze(1)#[:, :, :, :]
 
 
 
-        def __get_prediction_correctness(segmentation, prediction, center_point):
-            x = center_point[0]
-            y = center_point[1]
-            x = X-2 if x + 1 >= X else x
-            y = Y-2 if y + 1 >= Y else y
-            yield (prediction[0,0,x,y] , segmentation[0,0,x,y])
-            yield (prediction[0,0,x-1,y] , segmentation[0,0,x-1,y])
-            yield (prediction[0,0,x,y-1] , segmentation[0,0,x, y-1])
-            yield (prediction[0,0,x-1,y-1] , segmentation[0,0,x - 1, y-1])
-            yield (prediction[0,0,x+1,y] , segmentation[0,0,x+1,y])
-            yield (prediction[0,0,x,y+1] , segmentation[0,0,x, y+1])
-            yield (prediction[0,0,x+1,y+1] , segmentation[0,0,x + 1, y+1])
-            yield (prediction[0, 0, x + 1, y - 1], segmentation[0, 0, x + 1, y -1])
-            yield (prediction[0, 0, x - 1, y + 1], segmentation[0, 0, x - 1, y + 1])
 
+    def __get_prediction_correctness(segmentation, prediction, center_point):
+        x = center_point[0]
+        y = center_point[1]
+        x = X - 2 if x + 1 >= X else x
+        y = Y - 2 if y + 1 >= Y else y
+        yield (prediction[x, y], segmentation[x, y])
+        yield (prediction[x - 1, y], segmentation[x - 1, y])
+        yield (prediction[x, y - 1], segmentation[x, y - 1])
+        yield (prediction[x - 1, y - 1], segmentation[x - 1, y - 1])
+        yield (prediction[x + 1, y], segmentation[x + 1, y])
+        yield (prediction[x, y + 1], segmentation[x, y + 1])
+        yield (prediction[x + 1, y + 1], segmentation[x + 1, y + 1])
+        yield (prediction[x + 1, y - 1], segmentation[x + 1, y - 1])
+        yield (prediction[x - 1, y + 1], segmentation[x - 1, y + 1])
+
+    if ranges is not None:
+        #ranges = ranges.cpu().detach().numpy()
+        x_range = [ranges[0], ranges[1]]# list(map(int, ranges[0][1][0]))
+        y_range = [ranges[2], ranges[3]]#list(map(int, ranges[0][0][0]))
+
+    else:
+        x_range = [0,0]
+        y_range=[0,0]
+
+    pixel_predictions =[]
+    gt_pixel_labels = []
+
+    for gid in gid_gnode_dict.keys():
+        gnode = gid_gnode_dict[gid]
+        label = node_gid_to_label[gid]
+        label = label if type(label) != list else label[1]
+        points = gnode.points
+        points = get_points_from_vertices([gnode])
         if ranges is not None:
-            ranges = ranges.cpu().detach().numpy()
-            dprint(ranges)
-            x_range = ranges[0][0]# list(map(int, ranges[0][1][0]))
-            y_range = ranges[0][1]#list(map(int, ranges[0][0][0]))
+            points[:,0] = points[:,0] #- x_range[0]
+            points[:,1] = points[:,1] #- y_range[0]
 
-            dprint(y_range, "y_range")
-            dprint(x_range,"x_range")
-        else:
-            x_range = [0,0]
-            y_range=[0,0]
+        arc_predictions = []
+        arc_segmentation_logits = []
+        arc_predictions_proba = []
+        arc_segmentation_logits_proba = []
+        for p in points:
+            x = p[1] #+ x_range[0]
+            y = p[0] #+ y_range[0]
+            arc_predictions_proba += [pred[0] for pred in __get_prediction_correctness(segmentation,
+                                                                           logits_predicted,(x,y))]
+            arc_segmentation_logits_proba += [label for i in range(9)]#
+            #[pred[1] for pred in __get_prediction_correctness(segmentation,
+            #                                                               logits_predicted,(x,y))]
 
+            arc_segmentation_logits += [ logit > pred_thresh for logit in arc_segmentation_logits_proba]
+            arc_predictions +=  [logit > pred_thresh for logit in arc_predictions_proba]
 
-        for gid in gid_gnode_dict.keys():
-            gnode = gid_gnode_dict[gid]
-            points = gnode.points
-            points = get_points_from_vertices([gnode])
-            if ranges is not None:
-                points[:,0] = points[:,0] + x_range[0]
-                points[:,1] = points[:,1] + y_range[0]
-
-            arc_predictions = []
-            arc_segmentation_logits = []
-            for p in points:
-                x = p[0] #+ x_range[0]
-                y = p[1] #+ y_range[0]
-                arc_predictions += [pred[0] > pred_thresh for pred in __get_prediction_correctness(segmentation,
-                                                                               logits_predicted,(x,y))]
-                arc_segmentation_logits += [pred[1] > pred_thresh for pred in __get_prediction_correctness(segmentation,
-                                                                               logits_predicted,(x,y))]
-            spread_pred = np.bincount(arc_predictions,minlength=2)
-
-            pred_unet_val = spread_pred[1]/np.sum(spread_pred)
-            pred_unet = spread_pred[1]/np.sum(spread_pred) > pred_thresh
-            arc_pixel_predictions.append(pred_unet)
+            if msc_logit_map is not None:
+                x = X - 2 if x + 1 >= X else x
+                y = Y - 2 if y + 1 >= Y else y
+                msc_logit_map[x,y] = arc_predictions_proba[-1]
 
 
+        arc_pixel_predictions_proba += np.average(arc_predictions_proba)
+        arc_segmentation_proba += np.average(arc_segmentation_logits_proba)
 
-            spread_seg = np.bincount(arc_segmentation_logits,minlength=2)
-            gt_val = spread_seg[1] / np.sum(spread_seg)
-            gt = spread_seg[1] / np.sum(spread_seg) > pred_thresh
-            segmentation_logits.append(gt)
+        pixel_predictions += arc_predictions
+        gt_pixel_labels += arc_segmentation_logits
 
-            node_gid_to_prediction[gid] = [1.0-pred_unet_val , pred_unet_val]
-            node_gid_to_label[gid] = [1.0-gt_val, gt_val]
+        spread_pred = np.bincount(arc_predictions,minlength=2)
 
-            # returns a list of scores, one for each of the labels
-        segmentations = np.array(segmentation_logits)
-        logits_predicted = np.array(arc_pixel_predictions)
-        binary_logits_predicted = logits_predicted#.astype(int)
-
-        print(segmentations[0:10])
-        print(" logits,", logits_predicted[0:10])
-
-    return f1_score(segmentations, logits_predicted) , segmentations, binary_logits_predicted, node_gid_to_prediction, node_gid_to_label
+        pred_unet_val = spread_pred[1]/np.sum(spread_pred)
+        pred_unet = spread_pred[1]/np.sum(spread_pred) > pred_thresh
+        arc_pixel_predictions.append(pred_unet)
 
 
-#
-#
-#
-#
-###
-# im_positive = []
-# im_negative = []
-# for batch_idx, (img, segmentation, mask) in enumerate(RetinaDataset(retina_array)):
-#     segmentation[segmentation > 0] = 1
-#     num_pos = np.sum(segmentation.cpu().numpy() == 1)
-#     num_neg = np.sum(segmentation.cpu().numpy() == 0)
-#     bg_space = np.sum(mask.cpu().numpy() == 0)
-#     num_neg = num_neg - bg_space
-#     im_positive.append(num_pos)
-#     im_negative.append(num_neg)
 
-# total_pos = np.sum(np.array(im_positive))
-# total_neg = np.sum(np.array(im_negative))
-# print("total positive samples: ", total_pos)
-# print("total negative samples: ", total_neg)
-# print("average positive samples: ", np.average(np.array(im_positive)))
-# print("average negative samples: ", np.average(np.array(im_negative)))
-# print("...")
-# pos_weights = total_neg / total_pos
-# print("PROPORTION NEGATIVE / POSITIVE: ", pos_weights)
-# print("...")
-# print("Positive weight Factor divided by number persistence MSC ground Truth")
-# print("used for training: ", pos_weights/float(number_persistence_vals))
-#pos_weights = pos_weights / 2  # float(number_persistence_vals/2)
+        spread_seg = np.bincount(arc_segmentation_logits,minlength=2)
+        gt_val = spread_seg[1] / np.sum(spread_seg)
+        gt = spread_seg[1] / np.sum(spread_seg) > pred_thresh
+        segmentation_logits.append(gt)
 
-norm_transform = transforms.Compose([
-                                      transforms.ToTensor(),
-                                      transforms.Normalize((0.5),(0.5)) ])
+        node_gid_to_prediction[gid] = [1.0-pred_unet_val , pred_unet_val]
+        #node_gid_to_label[gid] = [1.0-gt_val, gt_val]
+        gnode.prediction = [1.0-pred_unet_val , pred_unet_val]
+        #gnode.label = label #gt_val
+
+
+        # returns a list of scores, one for each of the labels
+    segmentations = np.array(segmentation_logits)
+    logits_predicted = np.array(arc_pixel_predictions)
+    binary_logits_predicted = logits_predicted#.astype(int)
+
+
+
+    if msc_logit_map is None:
+        return f1_score(gt_pixel_labels, pixel_predictions) , \
+               arc_segmentation_proba, arc_pixel_predictions_proba,\
+               segmentation_logits, arc_pixel_predictions, node_gid_to_prediction, node_gid_to_label
+    else:
+        return f1_score(gt_pixel_labels, pixel_predictions), \
+               arc_segmentation_proba, arc_pixel_predictions_proba,\
+               segmentation_logits, arc_pixel_predictions,msc_logit_map,\
+               node_gid_to_prediction, node_gid_to_label
 
 # Dataset class for the retina dataset
 # each item of the dataset is a tuple with three items:
 # - the first element is the input image to be segmented
 # - the second element is the segmentation ground truth image
 # - the third element is a mask to know what parts of the input image should be used (for training and for scoring)
-class dataset(Dataset):
-    def transpose_first_index(self, x, with_hand_seg=False):
-        if not with_hand_seg:
+class dataset():
+    def transpose_first_index(self, x, with_hand_seg=False, with_range=True):
+        if with_range:
             x2 =(x[0], x[1], x[2])#(np.transpose(x[0], [1, 0]), x[1])
             #, np.transpose(x[2], [2, 0, 1]))
         else:
-            x2 =(x[0], x[1], x[2])#(np.transpose(x[0], [1, 0]), x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]), np.transpose(x[2], [2, 0, 1]),
+            x2 =(x[0], x[1])#(np.transpose(x[0], [1, 0]), x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]), np.transpose(x[2], [2, 0, 1]),
             #      np.transpose(x[3], [2, 0, 1]))
         return x2
 
-    def __init__(self, data_array, split='train', do_transform=False, with_hand_seg=False):
+    def __init__(self, data_array, split='train', do_transform=False,
+                 with_hand_seg=False, with_range=True):
+
         self.with_hand_seg = with_hand_seg
+        self.with_range = with_range
+
         indexes_this_split = np.arange(len(data_array))#get_split(np.arange(len(retina_array), dtype=np.int), split)
-        self.data_array = [self.transpose_first_index(data_array[i], self.with_hand_seg) for i in
+        self.data_array = [self.transpose_first_index(data_array[i],
+                                                      self.with_hand_seg,
+                                                      with_range=self.with_range) for i in
                              indexes_this_split]
-        self.data_array = data_array
+
+
+
         self.split = split
         self.do_transform = do_transform
 
     def __getitem__(self, index):
-        sample = [torch.as_tensor(x,dtype=torch.float) for x in self.data_array[index]]
-        if self.do_transform:
-            v_gen = RandomVerticalFlipGenerator()
-            h_gen = RandomHorizontalFlipGenerator()
+        if self.with_range:
+            sample = [self.data_array[index][0],
+                      self.data_array[index][1],
+                      self.data_array[index][2]]
+        else:
+            sample = [self.data_array[index][0],
+                      self.data_array[index][1]]
 
-            t = Compose([
-                #transforms.Normalize((0.5,), (0.5,)),
-                v_gen,
-                RandomVerticalFlip(gen=v_gen),
-                h_gen,
-                RandomHorizontalFlip(gen=h_gen),
-            ])
-            sample = t(sample)
+
         return sample
 
     def __len__(self):
         return len(self.data_array)
+
+    def get_images(self):
+        return np.array([np.array(samp[0],dtype=np.float32) for samp in self.data_array ], dtype=np.float32)
+
+    def get_segmentations(self):
+        return np.array([np.array(samp[1],dtype=np.uint8) for samp in self.data_array], dtype=np.uint8)
 
 
 
@@ -424,87 +313,64 @@ class dataset(Dataset):
 #   U-Net
 #
 #
-def weights_init(m):
-    if isinstance(m, torch.nn.Conv2d):
-        nn.init.xavier_uniform_(m.weight)
-        # nn.init.uniform_(m.weight, -1, 1)
-        if m.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(m.weight)
-            bound = 1. / math.sqrt(fan_in)
-            nn.init.uniform_(m.bias, -bound, bound)
-        # if m.bias is not None:
-        #    m.bias.data.uniform_(-stdv, stdv)
-    if isinstance(m, torch.nn.ConvTranspose2d):
-        nn.init.xavier_uniform_(m.weight)
-        # nn.init.uniform_(m.weight, -1, 1)
-        if m.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(m.weight)
-            bound = 1. / math.sqrt(fan_in)
-            nn.init.uniform_(m.bias, -bound, bound)
 
-class nnModule(nn.Module):
-    def __init__(self, **kwargs):
-        super(nnModule,self).__init__()
 
-class UNetwork( MLGraph, nnModule, object):
+class UNetwork( MLGraph):
 
-    '''def __getattr__(self, name):
-        module = object.__getattribute__(self, "_modules")["module"]
-        if name == "module":
-            return module
-        return getattr(module, name)'''
 
-    def get_data_crops(self, image=None, x_range=None,y_range=None, dataset=[], resize=False):
+
+
+
+
+    def get_data_crops(self, image=None, x_range=None,y_range=None, with_range=True,train_set=True,
+                       dataset=[], resize=False, full_img=False,growth_radius = 1):
 
 
 
         segmentations = []
-        if False:  # np.array(x_range).shape == np.array([6,9]).shape:
-            x_1 = x_range[0]
-            y_1 = y_range[0]
-            train_im_crop = deepcopy(image[y_1[0]:y_1[1],x_1[0]:x_1[1]])
-            train_im_crop = train_im_crop
-            # if resize:
-            #     train_im_crop = resize_img(train_im_crop, X=resize[0], Y=resize[1])
-            #     #segmentation = resize_img(segmentation, X=resize[0], Y=resize[1])
-            segmentation = self.generate_pixel_labeling((x_1,y_1),
-                                                        seg_image=np.zeros(train_im_crop.shape).astype(np.int8))
 
-            og_segmentation = deepcopy(segmentation)
-            if resize:
-               train_im_crop = resize_img(train_im_crop, X=resize[0], Y=resize[1], sampling="lanczos")
-               segmentation = resize_img(segmentation, X=resize[0], Y=resize[1], sampling="hamming")
-            #segmentation = segmentation[y_range[0]:y_range[1],x_range[0]:x_range[1]]
 
-            dataset.append((train_im_crop,segmentation, (x_range,y_range)))
-        else:
-            X=self.X
-            Y=self.Y
-            img_stack = np.zeros([0, 1, y_range[0][1], x_range[0][1]])
-            segmentations = np.zeros([0, 1, y_range[0][1], x_range[0][1]])
-            range_group = zip(x_range, y_range)
-            for x_rng, y_rng in range_group:
-                train_im_crop = deepcopy(image[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]])
-                segmentation = self.generate_pixel_labeling( (x_rng, y_rng),seg_image=np.zeros(train_im_crop.shape).astype(np.int8))
-                #segmentation = segmentation[y_rng[0]:y_rng[1], x_rng[0]:x_rng[1]]
+        seg = np.zeros(self.image.shape[:2]).astype(np.uint8)
 
-                dataset.append((train_im_crop, segmentation, (x_rng, y_rng)))
+        x_full = [0, self.image.shape[0]]
+        y_full = [0, self.image.shape[1]]
+        full_bounds = (x_full, y_full)
+        seg = self.generate_pixel_labeling(full_bounds,
+                                           seg_image=seg, growth_radius=growth_radius,
+                                           train_set=train_set)
+
+        range_group = zip(x_range, y_range)
+
+        for x_rng, y_rng in range_group:
+            bounds = (x_rng,y_rng)
+            #train_im_crop = deepcopy(image[bounds[0][0]:bounds[0][1], bounds[1][0]:bounds[1][1]])
+            #seg = np.zeros(train_im_crop.shape).astype(np.uint8)
+            #if full_img:
+
+            train_im_crop = deepcopy(self.image[bounds[0][0]:bounds[0][1], bounds[1][0]:bounds[1][1]])
+            seg_crop = deepcopy(seg[bounds[0][0]:bounds[0][1], bounds[1][0]:bounds[1][1]])
+            if full_img:
+                return seg
+            if with_range:
+                dataset.append((train_im_crop, seg_crop, (x_rng, y_rng)))
+            else:
+                dataset.append((train_im_crop, seg_crop))
 
         return dataset
 
-    def generate_pixel_labeling(self, train_region, seg_image=None ):
+    def generate_pixel_labeling(self, train_region, seg_image=None ,growth_radius = 1, train_set=True):
         x_box = train_region[0]
         y_box = train_region[1]
-        dim_train_region = (   int(y_box[1] - y_box[0]),int(x_box[1]-x_box[0]) )
+        dim_train_region = (   int(x_box[1] - x_box[0]),int(y_box[1]-y_box[0]) )
         train_im = seg_image#np.zeros(dim_train_region)
         X = train_im.shape[0]
         Y = train_im.shape[1]
 
-        def __box_grow_label(train_im, center_point, label):
+        def __box_grow_label(train_im, center_point, label, train_set):
             x = center_point[0]
             y = center_point[1]
-            x[x + 1 >= X] = Y - 2
-            y[y+1>= Y] = X - 2
+            x[x + 1 >= X] = X - 2
+            y[y+1>= Y] = Y - 2
             train_im[x , y] = label
             train_im[x-1,y] = label
             train_im[x, y-1] = label
@@ -518,6 +384,9 @@ class UNetwork( MLGraph, nnModule, object):
         for gid in self.gid_gnode_dict.keys():
             gnode = self.gid_gnode_dict[gid]
             label = self.node_gid_to_label[gid]
+            if train_set:
+                self.node_gid_to_partition[gid] = 'test'
+            label = label
             points = gnode.points
             p1 = points[0]
             p2 = points[-1]
@@ -527,54 +396,71 @@ class UNetwork( MLGraph, nnModule, object):
             points = get_points_from_vertices([gnode])
             interior_points = []
             for p in points:
-                if x_box[0] < p[0] < x_box[1] and y_box[0] < p[1] < y_box[1]:
+                if x_box[0] < p[1] < x_box[1] and y_box[0] < p[0] < y_box[1]:
                     in_box = True
                     interior_points.append(p)
 
                 else:
                     not_all = True
             if not_all and in_box:
+                if train_set:
+                    self.node_gid_to_partition[gid] = 'train'
                 points = np.array(interior_points)
             elif not_all:
                 continue
 
-            mapped_y = points[:,0] - x_box[0]
-            mapped_x = points[:,1] - y_box[0]
+            mapped_y = points[:,0] - y_box[0]
+            mapped_x = points[:,1] - x_box[0]
             if int(label[1]) == 1:
                 train_im[mapped_x, mapped_y] = int(1)
-                __box_grow_label(train_im, (mapped_x,mapped_y), int(1))
+                #__box_grow_label(train_im, (mapped_x,mapped_y), int(1))
             #else:
             #    train_im[mapped_x, mapped_y] = int(0)
             #    __box_grow_label(train_im, (mapped_x, mapped_y), int(0))
+        train_im = ndimage.maximum_filter(train_im, size=growth_radius)
         n_samples = dim_train_region[0] * dim_train_region[1]
         n_classes = 2
         class_bins = np.bincount(train_im.astype(np.int64).flatten())
-        self.class_weights = n_samples / (n_classes * class_bins)
+        self.class_weights = 1.0#n_samples / (n_classes * class_bins)
         return train_im.astype(np.int8)
 
-    def save_image(self, image=None, dirpath=None, gt_seg=None, pred_seg = None, image_seg_set = None, as_grey=False):
+    def save_image(self, image=None, dirpath=None, gt_seg=None, pred_seg = None,
+                   image_seg_set = None, as_grey=False, INTERACTIVE=False):
         if image_seg_set is not None:
             #shape_im = image.shape
             #shape_gt_seg = gt_seg.shape
 
-            image = image_seg_set[0][0,0,:,:]
-            gt_seg = image_seg_set[1][0,0,:,:]
-            if len(image_seg_set) > 2:
-                #shape_pred_seg = pred_seg.shape
-                pred_seg = image_seg_set[2][0,0,:,:]
+            if len(image_seg_set[0].shape) == 4:
+                image = image_seg_set[0][0, 0, :, :]
+                gt_seg = image_seg_set[1][0, 0, :, :]
+                if len(image_seg_set) > 2:
+                    # shape_pred_seg = pred_seg.shape
+                    pred_seg = image_seg_set[2][0, 0, :, :]
+            else:
+                image = image_seg_set[0]
+                gt_seg = image_seg_set[1]
+                if len(image_seg_set) > 2:
+                    # shape_pred_seg = pred_seg.shape
+                    pred_seg = image_seg_set[2]
 
-        if image is not None:
-            Img = Image.fromarray(
-                image.astype(np.int8))#mapped_img)
-            Img.save(os.path.join(dirpath, 'image.png'))
-        if gt_seg is not None:
-            Img = Image.fromarray(
-                gt_seg.astype(np.int8))#mapped_img)
-            Img.save(os.path.join(dirpath, 'ground_truth.png'))
-        if pred_seg is not None:
-            Img = Image.fromarray(
-                pred_seg.astype(np.int8))#mapped_img)
-            Img.save(os.path.join(dirpath, 'prediction.png'))
+        fig, ax = plt.subplots(1, 3, sharex=True, sharey=True, figsize=(12, 4))
+        ax[0].imshow(image)
+        #ax[0].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[0].set_title('Image')
+        ax[1].imshow(gt_seg)
+        #ax[1].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[1].set_title('ground truth')
+        ax[2].imshow(pred_seg)
+        #ax[2].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[2].set_title('prediction')
+        #ax[3].imshow(pred_labels)
+        #ax[3].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        #ax[3].set_title('unet2lines-prediction')
+        fig.tight_layout()
+        if INTERACTIVE:
+            plt.show()
+        else:
+            plt.savefig( "unet_imgs.pdf")
 
     def see_image(self, image=None, gt_seg=None, pred_seg = None, image_seg_set = None,
                   dirpath=None, as_grey=False, save=True, names=None):
@@ -613,9 +499,10 @@ class UNetwork( MLGraph, nnModule, object):
                 if not save:
                     plt.imshow(image)
                 else:
-                    plt.imsave(image)
+                    plt.imsave(os.path.join(dirpath,og_im_name + '.png'),image)
             if not save:
                 plt.show()
+            plt.close()
         if gt_seg is not None:
             plt.figure()
             plt.title("Input Segmentation")
@@ -628,7 +515,7 @@ class UNetwork( MLGraph, nnModule, object):
                 if not save:
                     plt.imshow(gt_seg)
                 else:
-                    plt.imsave(gt_seg)
+                    plt.imsave(os.path.join(dirpath,gt_name + '.png'),gt_seg)
             if not save:
                 plt.show()
         if pred_seg is not None:
@@ -645,98 +532,37 @@ class UNetwork( MLGraph, nnModule, object):
                 if not save:
                     plt.imshow(pred_seg)
                 else:
-                    plt.imsave(pred_seg)
+                    plt.imsave(os.path.join(dirpath,pred_name + '.png'),pred_seg)
             if not save:
                 plt.show()
 
-    # Contraction Block
-    # Structure Block: three tensors total w/ two convolutions followed by max-pooling
-    #            in tensor -> ReLu(conv 3x3) -> Relu(3x3) -> MaxPool 2x2
-    # Contraction dim: 64 -> 128 -> 256 -> 512 ->1024
-    # Total 3 blocks
-    def contraction_block(self, in_channels, out_channels, kernel_size=3, padding=1):
-        #if padding:
-        #    out_channels = in_channels
-        block = torch.nn.Sequential(
-            torch.nn.Conv2d(kernel_size=kernel_size, in_channels=in_channels,
-                            out_channels=out_channels, padding=int(padding)),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(out_channels),
 
-            # torch.nn.Conv2d(kernel_size=kernel_size, in_channels=out_channels,
-            #                 out_channels=out_channels, padding=int(padding)),
-            # torch.nn.ReLU(),
-            # torch.nn.BatchNorm2d(out_channels),
 
-            torch.nn.Conv2d(kernel_size=kernel_size, in_channels=out_channels,
-                            out_channels=out_channels, padding=int(padding)),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(out_channels),
-        )
-        return block
-
-    # Expansion of endoded img
-    # Structure Block: three tensors w/ two convolutions followed by up-pooling
-    #                 in tensor -> ReLu(conv 3x3) -> ReLu(conv 3x3) -> up-pool 2x2
-    # Expansion dim: (1024 -> 512 -> 512) -> (512 -> 256 -> 256) -> (256-> 128 -> 128) -> final_block
-    # Total blocks 3 plus final_block
-    def expansion_block(self, in_channels, mid_channel, out_channels, kernel_size=3, padding=1):#True):
-        #if padding:
-        #    mid_channel = in_channels
-        #    out_channel = mid_channel
-        block = torch.nn.Sequential(
-            torch.nn.Conv2d(kernel_size=kernel_size, in_channels=in_channels,
-                            out_channels=mid_channel, padding=int(padding)),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(mid_channel),
-
-            # torch.nn.Conv2d(kernel_size=kernel_size, in_channels=mid_channel,
-            #                 out_channels=mid_channel, padding=int(padding)),
-            # torch.nn.ReLU(),
-            # torch.nn.BatchNorm2d(mid_channel),
-
-            torch.nn.Conv2d(kernel_size=kernel_size, in_channels=mid_channel,
-                            out_channels=mid_channel, padding=int(padding)),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(mid_channel),
-            #
-            # Unpool with transpose convolution!
-            #
-            torch.nn.ConvTranspose2d(in_channels=mid_channel, out_channels=out_channels,
-                                     kernel_size=kernel_size-1, stride=2,
-                                     padding=self.expansion_padding , output_padding=self.expansion_out_padding )
-        )
-        return block
-
-    # Final block giving UNet output
-    # Structure Block: four tensors with two 3x3 conv, one 1x1 conv
-    #                 in tensor -> ReLu(conv 3x3) -> ReLu(conv 3x3) -> conv 1x1
-    # Final block dims: 128 -> 64 -> 64 -> 2
-    def final_block(self, in_channels, mid_channel, out_channels, kernel_size=3, padding=1):#True):#
-        block = torch.nn.Sequential(
-            torch.nn.Conv2d(kernel_size=kernel_size, in_channels=in_channels,
-                            out_channels=mid_channel, padding=int(padding)),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(mid_channel),
-            torch.nn.Conv2d(kernel_size=kernel_size, in_channels=mid_channel,
-                            out_channels=mid_channel, padding=int(padding)),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(mid_channel),
-            torch.nn.Conv2d(kernel_size=kernel_size-2, in_channels=mid_channel,
-                            out_channels=out_channels, padding=padding-1),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(out_channels),
-        )
-        return block
+    def mean_iou(self, y_true, y_pred):
+        I = tf.reduce_sum(y_pred * y_true, axis=(1, 2))
+        U = tf.reduce_sum(y_pred + y_true, axis=(1, 2)) - I
+        return tf.reduce_mean(I / U)
 
 
 
-    def __init__(self,in_channel, out_channel, skip_connect=True, kernnel_size=2,
-                 ground_truth_label_file=None,run_num=0, parameter_file_number = None,
+    def mean_iou_old(self, y_true, y_pred):
+        prec = []
+        for t in np.arange(0.5, 1.0, 0.05):
+            y_pred_ = tf.cast(y_pred > t, tf.int32)
+
+            m = tf.keras.metrics.MeanIoU(num_classes=2)
+            m.update_state(y_true, y_pred_)
+            score, up_opt = m.result()
+            K.get_session().run(tf.local_variables_initializer())
+            with tf.control_dependencies([up_opt]):
+                score = tf.identity(score)
+            prec.append(score)
+        return K.mean(K.stack(prec), axis=0)
+
+
+    def __init__(self,run_num=0, parameter_file_number = None,
                  geomsc_fname_base = None, label_file=None,
-                 model_name=None, load_feature_graph_name=False,image=None,
-                 train_dataset=None, val_dataset=None, compute_features=False,
-                 training_size=None, region_list=None, **kwargs):
+                 model_name=None, load_feature_graph_name=False,image=None, **kwargs):
 
         self.type = 'unet'
 
@@ -747,37 +573,45 @@ class UNetwork( MLGraph, nnModule, object):
         for name, attr in zip(st_k, k):
             kwargs[name] = attr
 
-
-
-        nnModule.__init__(self)
         MLGraph.__init__(self, **kwargs)
 
+        #, **kwargs)
+
+    def set_attributes(self,in_channel, out_channel, skip_connect=True, kernnel_size=2,
+                 ground_truth_label_file=None,run_num=0, parameter_file_number = None,
+                 geomsc_fname_base = None, label_file=None, growth_radius=2,
+                 model_name=None, load_feature_graph_name=False,image=None,
+                 X_BOX =None,Y_BOX=None,boxes=None,all_boxes=None,
+                 X_BOX_all =None,Y_BOX_all=None,
+                 training_size=None, region_list=None,
+                       BEGIN_LOADING_FEATURES=False,
+                       **kwargs):
+
+
+
+
+
+
+
+
+
+        self.trained_model = None
+
+
+        max_val = np.max(self.image)
+        min_val = np.min(self.image)
+        self.image = (self.image - min_val) / (max_val - min_val)
+
         self.training_size = training_size
-        if region_list is not None:
-            # self.pred_run_path = os.path.join(self.pred_run_path, str(training_size))
-            #
-            # if not os.path.exists(self.pred_run_path):
-            #     os.makedirs(os.path.join(self.pred_run_path))
 
-            self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
-                                              self.params['write_folder'],
-                                              'runs')
-
-            if not os.path.exists(self.pred_run_path):
-               os.makedirs(os.path.join(self.pred_run_path))
-
-            self.pred_session_run_path = os.path.join(self.pred_run_path,
-                                                      str(training_size))
-            if not os.path.exists(self.pred_session_run_path):
-                os.makedirs(os.path.join(self.pred_session_run_path))
-
+        self.growth_radius = growth_radius
 
 
         self.running_best_model = None
 
         self.kernnel_size = kernnel_size
         self.expansion_out_padding = 0
-        self.expansion_padding = 0
+        self.expansion_padding = 0# 1#'same'#0
 
         #
         # Training / val /test sets
@@ -793,11 +627,7 @@ class UNetwork( MLGraph, nnModule, object):
         self.negative_arcs = set()
         self.selected_negative_arcs = set()
 
-        if compute_features:
-            #
-            # Perform remainder of runs and don't need to read feats again
-            #
-            # if not UNet.params['load_features']:
+        if BEGIN_LOADING_FEATURES:
             self.params['load_features'] = True
             self.params['write_features'] = False
             self.params['load_features'] = True
@@ -845,1149 +675,684 @@ class UNetwork( MLGraph, nnModule, object):
             if self.params['geto_as_feat']:
                 self.write_geto_features(self.session_name)
         # training info, selection, partition train/val/test
+        self.label_file = ground_truth_label_file
         self.read_labels_from_file(file=ground_truth_label_file)
 
         self.data_array = self.train_dataloader
-        if train_dataset is None and training_size is None:
-            training_set , test_and_val_set = self.box_select_geomsc_training(x_range=self.params['x_box'], y_range=self.params['y_box'])
-            self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
-                                                      validation_samples=1, test_samples=None)
-            self.train_dataset = self.get_data_crops(self.image,x_range=self.params['x_box'], y_range=self.params['y_box'])
-            self.train_dataset = dataset(self.train_dataset, do_transform=False, with_hand_seg=False)
-            self.val_dataset = self.train_dataset
-        else:
-            self.train_dataset , self.val_dataset = self.collect_boxes(region_list=region_list,
-                                                                       number_samples=self.training_size,
-                                                                       training_set=True)
-            dprint(len(self.val_dataset), " val ")
-            dprint(len(self.train_dataset), "train")
-            self.val_dataset = self.train_dataset
-        #
-        # Get data computed in getofeaturegraph
-        #
-        self.image, self.msc_collection, self.mask, self.segmentation = self.train_dataloader[
-            int(self.params['train_data_idx'])]
-        self.image = self.image
-        # self.image = self.image if len(self.image.shape) == 2 else np.transpose(np.mean(self.image, axis=1), (1, 0))
 
-        self.X = self.image.shape[0]
-        self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
+        # self.region_list = region_list
 
 
-        #self.attributes = deepcopy(self.get_attributes())
-
-
-        # contracted down pooling
-        # dimensions and multiplier. Took a lot of tpying around with bc
-        # my gpu does not have enough memory
-        self.multiplier = 2
-        self.bilinear_factor = self.multiplier
-        # to turn of skip connections from contraction to expansion layers
-        self.skip_connect = skip_connect
-        if not self.skip_connect:
-            self.skip_scale = 2
-        else:
-            self.skip_scale = 1
-
-        self.init_expansion = 28
-
-        self.contract1 = self.contraction_block(in_channels=in_channel,
-                                                out_channels=self.init_expansion)
-        self.maxpool1 = torch.nn.MaxPool2d(kernel_size=2)
-        self.contract2 = self.contraction_block(self.init_expansion,
-                                                self.init_expansion * self.multiplier)  # 64  # 24,192
-        self.maxpool2 = torch.nn.MaxPool2d(kernel_size=2)
-        self.contract3 = self.contraction_block(self.init_expansion * self.multiplier,
-                                                self.init_expansion * (self.multiplier ** 2))  # 128 # 192, 1536
-        self.maxpool3 = torch.nn.MaxPool2d(kernel_size=2)
-
-        self.contract4 = self.contraction_block(self.init_expansion * (self.multiplier ** 2),
-                                                self.init_expansion * (self.multiplier ** 3))  # 256  # 1536, 1536
-        self.maxpool4 = torch.nn.MaxPool2d(kernel_size=2)
-
-        # 'copy and crop', base encoding of 'U'
-        # switch directions
-
-        self.base_channel_dim = self.init_expansion * (self.multiplier**3)
-
-        #print("    * : base",self.base_channel_dim)
-        self.reverse_direction = torch.nn.Sequential(
-            # base encoding lowest block
-            torch.nn.Conv2d(kernel_size=3, in_channels=self.init_expansion * (self.multiplier**2),
-                            out_channels=self.base_channel_dim, padding=1),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(self.base_channel_dim),
-
-            # torch.nn.Conv2d(kernel_size=1, in_channels=self.base_channel_dim,
-            #                 out_channels=self.base_channel_dim),#, padding=1),
-            # torch.nn.ReLU(),
-            # torch.nn.BatchNorm2d(self.base_channel_dim),
-            #
-            # torch.nn.Conv2d(kernel_size=1, in_channels=self.base_channel_dim,
-            #                 out_channels=self.base_channel_dim),  # , padding=1),
-            # torch.nn.ReLU(),
-            # torch.nn.BatchNorm2d(self.base_channel_dim),
-
-            torch.nn.Conv2d(kernel_size=3, in_channels=self.base_channel_dim,
-                            out_channels=self.base_channel_dim, padding=1),
-            torch.nn.ReLU(),
-            torch.nn.BatchNorm2d(self.base_channel_dim),
-
-
-            # begin going up, up-pooling
-
-            # begin unpooling, upward part of U
-            # upward expansion along with skip connections from dowpooling
-
-            torch.nn.ConvTranspose2d(in_channels=self.base_channel_dim,
-                                     out_channels=self.init_expansion * (self.multiplier**2) ,#(self.base_channel_dim//(self.multiplier)) * self.skip_scale,
-                                     kernel_size=2, stride=2,
-                                     padding=self.expansion_padding , output_padding=self.expansion_out_padding )
-        )  # 1024
-        #self.multiplier *= 2
-        self.expansion4 = self.expansion_block(self.base_channel_dim ,#self.init_expansion * (self.multiplier**3) *2,#(self.base_channel_dim//(self.multiplier )) * self.skip_scale,
-                                               self.init_expansion * (self.multiplier**2),# * self.skip_scale,#(self.base_channel_dim//(self.multiplier )) * self.skip_scale,  #* ,
-                                                self.init_expansion * (self.multiplier ** 1) )# * self.skip_scale)#* 2)
-
-        self.expansion3 = self.expansion_block( (self.init_expansion * (self.multiplier**2) ),#(self.init_expansion * (self.multiplier ** 2)) * 2 * self.skip_scale,  #* 4,
-                                               self.init_expansion * (self.multiplier ** 1),# * self.skip_scale,#(self.init_expansion * (self.multiplier ** 2)) * self.skip_scale,  #* 2,
-                                               self.init_expansion * (self.multiplier ** 0) )#(self.init_expansion * (self.multiplier)) * self.skip_scale)  # 512   1536, 1536, 192
-
-        self.expansion2 = self.expansion_block( (self.init_expansion * (self.multiplier**2) ),#(self.init_expansion * (self.multiplier ** 2)) * 2 * self.skip_scale,  #* 4,
-                                               self.init_expansion * (self.multiplier ** 1),# * self.skip_scale,#(self.init_expansion * (self.multiplier ** 2)) * self.skip_scale,  #* 2,
-                                               self.init_expansion * (self.multiplier ** 0) )
-        self.final_layer = self.final_block(self.init_expansion * self.multiplier,#(self.init_expansion * self.multiplier) * self.skip_scale,  #* 2,
-                                            self.init_expansion,
-                                            out_channel) #128   192, 24, 1
+        self.box_regions = boxes
+        self.all_boxes = all_boxes
+        self.X_BOX = X_BOX
+        self.Y_BOX = Y_BOX
+        self.X_BOX_all = X_BOX_all
+        self.Y_BOX_all = Y_BOX_all
 
 
 
-    def crop_and_concat(self, upsampled, bypass, crop=True):#True):
-        # print(upsampled.size())
-        # print(bypass.size())
-        if crop:
-            diffx = -(bypass.size()[2] - upsampled.size()[2])
-            diffy = -(bypass.size()[3] - upsampled.size()[3])
-            #print("    * : ,",diffx, " y", diffy)
-            c = (bypass.size()[2] - upsampled.size()[2]) // 2
-            d = (bypass.size()[3] - upsampled.size()[3]) // 2
-            #print("    * : c ", c)
-            bypass = F.pad(bypass,[-c, -c, -c, -c])# [diffy//2, diffy//2, diffx, diffy//2] )#[-c, -c, -c, -c])
-        # print(upsampled.shape)
-        # print(bypass.shape)
-        return torch.cat((upsampled, bypass), 1)
 
-    def forward(self, x):
-        # Encode
-        down_block1 = self.contract1(x)
-        down_pool1 = self.maxpool1(down_block1)
-        down_block2 = self.contract2(down_pool1)
-        down_pool2 = self.maxpool2(down_block2)
-        down_block3 = self.contract3(down_pool2)
-        down_pool3 = self.maxpool3(down_block3)
-        down_block4 = self.contract4(down_pool3)
-        down_pool4 = self.maxpool4(down_block4)
-        # Base of 'U'
-        reverse_direction = self.reverse_direction(down_pool3)
-        # Move upward with concatonation and without crop due to pooling
 
-        up_block4 = reverse_direction if not self.skip_connect else self.crop_and_concat(reverse_direction,
-                                                                                         down_block3)
-        cat_layer3 = self.expansion4(up_block4)
 
-        up_block3 = cat_layer3 if not self.skip_connect else self.crop_and_concat(cat_layer3,
-                                                                                  down_block2)
-        cat_layer2 = self.expansion3(up_block3)
-        up_block2 = cat_layer2 if not self.skip_connect else self.crop_and_concat(cat_layer2, down_block1)
-        # cat_layer1 = self.expansion2(up_block2)
-        # up_block1 = cat_layer1 if not self.skip_connect else self.crop_and_concat(cat_layer1, down_block1)
-        final_block = self.final_layer(up_block2)
-        return final_block
 
+
+
+    def model(self, input=None):
+        self.UNET_FORCE_RECOMPUTE = False
+        UNET_IMSIZE = self.train_dataset[0][0].shape[0]
+
+
+
+        self.IMG_WIDTH = UNET_IMSIZE  # for faster computing on kaggle
+        self.IMG_HEIGHT = UNET_IMSIZE  # for faster computing on kaggle
+        self.IMG_CHANNELS = 1
+
+
+        self.inputs = Input((self.IMG_HEIGHT, self.IMG_WIDTH, self.IMG_CHANNELS))
+        s = Lambda(lambda x: x)(self.inputs)
+
+        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(s)
+        c1 = Dropout(0.1)(c1)
+        c1 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c1)
+        p1 = MaxPooling2D((2, 2))(c1)
+
+        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(p1)
+        c2 = Dropout(0.1)(c2)
+        c2 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c2)
+        p2 = MaxPooling2D((2, 2))(c2)
+
+        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(p2)
+        c3 = Dropout(0.2)(c3)
+        c3 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c3)
+        p3 = MaxPooling2D((2, 2))(c3)
+
+        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(p3)
+        c4 = Dropout(0.2)(c4)
+        c4 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c4)
+        p4 = MaxPooling2D(pool_size=(2, 2))(c4)
+
+        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(p4)
+        c5 = Dropout(0.3)(c5)
+        c5 = Conv2D(256, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c5)
+
+        u6 = Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same')(c5)
+        u6 = concatenate([u6, c4])
+        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(u6)
+        c6 = Dropout(0.2)(c6)
+        c6 = Conv2D(128, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c6)
+
+        u7 = Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same')(c6)
+        u7 = concatenate([u7, c3])
+        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(u7)
+        c7 = Dropout(0.2)(c7)
+        c7 = Conv2D(64, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c7)
+
+        u8 = Conv2DTranspose(32, (2, 2), strides=(2, 2), padding='same')(c7)
+        u8 = concatenate([u8, c2])
+        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(u8)
+        c8 = Dropout(0.1)(c8)
+        c8 = Conv2D(32, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c8)
+
+        u9 = Conv2DTranspose(16, (2, 2), strides=(2, 2), padding='same')(c8)
+        u9 = concatenate([u9, c1], axis=3)
+        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(u9)
+        c9 = Dropout(0.1)(c9)
+        c9 = Conv2D(16, (3, 3), activation='elu', kernel_initializer='he_normal', padding='same')(c9)
+
+        self.outputs = Conv2D(1, (1, 1), activation='sigmoid')(c9)
 
 
     def __group_pairs(self, lst):
         for i in range(0, len(lst), 2):
             yield tuple(lst[i: i + 2])
 
-    def collect_boxes(self, region_list, number_samples=None, resize=False, run_num=-1, training_set=False):
-        boxes = [
-            i for i in self.__group_pairs(region_list)
-        ]
-        test_dataset = []
-        number_samples = number_samples+1 if number_samples is not None else number_samples
+    def collect_boxes(self, resize=False, run_num=-1, training_set=False):# region_list,
+        # X_BOX = []
+        # Y_BOX = []
+        # print(' boxesboxe', self.box_regions)
+        # box_sets = []
+        # for box in self.box_regions:
+        #     box_set = tile_region(step_X=64, step_Y=64, step=0.5,
+        #                           Y_START=box[0], Y_END=box[1],
+        #                           X_START=box[2], X_END=box[3])
+        #     box_sets.append(box_set)
+        # print("    *: BOX TILE SETS", box_sets)
+        # for box_pair in box_sets:
+        #     for box in box_pair:
+        #         X_BOX.append(box[0])
+        #         Y_BOX.append(box[1])
+        # self.X_BOX = X_BOX
+        # self.Y_BOX = Y_BOX
+
+
+
+
+
+        self.all_region_boxes =self.all_boxes
+        self.training_boxes = list(zip(self.X_BOX, self.Y_BOX))
+
+
         if training_set:
-            number_boxes = range(len(boxes))[0:number_samples]
-        else:
-            number_boxes = range(len(boxes))
-        if training_set:
-            self.x_set = []
-            self.y_set = []
-        current_box_dict = {}
-        for current_box_idx in number_boxes:
-
-            run_num += 1
-
-            counter_file = os.path.join(LocalSetup.project_base_path, 'run_count.txt')
-            f = open(counter_file, 'r')
-            c = f.readlines()
-            run_num = int(c[0]) + 1
-            f.close()
-            f = open(counter_file, 'w')
-            f.write(str(run_num))
-            f.close()
-            print("&&&& run num ", run_num)
-
-            active_file = os.path.join(LocalSetup.project_base_path, 'continue_active.txt')
-            f = open(active_file, 'w')
-            f.write('0')
-            f.close()
-
-            #self.update_run_info()
+            train_dataset = self.get_data_crops(self.image, x_range=self.X_BOX,
+                                               with_range = not training_set,
+                                                    y_range=self.Y_BOX,
+                                               dataset=[],
+                                               resize=resize,
+                                               growth_radius = self.growth_radius,
+                                               train_set=training_set)
+            #self.see_image(gt_seg=test_dataset[0][1], save=False)
 
 
-            current_box = boxes[current_box_idx]
 
-            for bounds in current_box:
-                name_value = bounds.split(' ')
-                print(name_value)
 
-                # window selection(s)
-                # for single training box window
-                if name_value[0] not in current_box_dict.keys():
-                    current_box_dict[name_value[0]] = list(map(int, name_value[1].split(',')))
-                # for multiple boxes
-                else:
-                    current_box_dict[name_value[0]].extend(list(map(int, name_value[1].split(','))))
 
-            X_BOX = [
-                i for i in self.__group_pairs([i for i in current_box_dict['x_box']])
-            ]
-            Y_BOX = [
-                i for i in self.__group_pairs([i for i in current_box_dict['y_box']])
-            ]
+            self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
+                                              self.params['write_folder'],
+                                              'runs')
 
-            #     out_folder = os.path.join(self.pred_session_run_path)
-            #     self.write_selection_bounds(dir=out_folder,x_box=name_value[0], y_box=name_value[1], mode='a')
-            training_set, test_and_val_set = self.box_select_geomsc_training(x_range=X_BOX,
-                                                                                  y_range=Y_BOX)
+            if not os.path.exists(self.pred_run_path):
+               os.makedirs(os.path.join(self.pred_run_path))
 
-            #
-            # ensure selected training is reasonable
-            #
-            flag_class_empty = False
-            cardinality_training_sets = 0
-            for i, t_class in enumerate(training_set):
-                flag_class_empty = len(t_class) == 0 if not flag_class_empty else flag_class_empty
-                cardinality_training_sets += len(t_class)
-                print("LENGTH .. Training Set", i, 'length:', len(t_class))
-            print(".. length test: ", len(test_and_val_set))
-            # skip box if no training arcs present in region
-            if cardinality_training_sets < 1 or flag_class_empty:
-                removed_file = os.path.join(self.LocalSetup.project_base_path,
-                                            'datasets', self.params['write_folder'],
-                                            'removed_windows.txt')
-                if not os.path.exists(removed_file):
-                    open(removed_file, 'w').close()
-                removed_box_file = open(os.path.join(self.LocalSetup.project_base_path,
-                                                     'datasets', self.params['write_folder'],
-                                                     'removed_windows.txt'), 'a+')
-                removed_box_file.write(
-                    str(self.run_num) + ' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
-                removed_box_file.write(
-                    str(self.run_num) + ' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
-                continue
+            self.run_num = self.training_size
+            self.pred_session_run_path = os.path.join(self.pred_run_path,
+                                                      str(self.training_size))
+            if not os.path.exists(self.pred_session_run_path):
+                os.makedirs(os.path.join(self.pred_session_run_path))
 
-            self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
-                                                       validation_samples=1, test_samples=None)
 
-            all_validation = self.validation_set_ids["positive"].union(self.validation_set_ids["negative"])
-            all_selected = [self.selected_positive_arc_ids, self.selected_negative_arc_ids]
-            # self.model.selected_positive_arc_ids.union(self.model.selected_negative_arc_ids)
-            # if not self.check_valid_partitions(all_selected, all_validation):
-            #     removed_box_file = open(os.path.join(self.LocalSetup.project_base_path,
-            #                                          'datasets', self.params['write_folder'],
-            #                                          'removed_windows.txt'), 'a+')
-            #     removed_box_file.write(
-            #         str(self.run_num) + ' x_box ' + str(X_BOX[0][0]) + ',' + str(X_BOX[0][1]) + '\n')
-            #     removed_box_file.write(
-            #         str(self.run_num) + ' y_box ' + str(Y_BOX[0][0]) + ',' + str(Y_BOX[0][1]) + '\n')
-            #     continue
 
-            if training_set:
-                self.x_set += X_BOX
-                self.y_set += Y_BOX
 
-            X = self.image.shape[0]
-            Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
 
-            if resize:
-                resize = (self.X_train, self.Y_train) if (self.X, self.Y) != (self.X_train, self.Y_train) else False
-            self.resize = resize
 
-            #self.data_array = self.train_dataloader
-            test_dataset = self.get_data_crops(self.image, x_range=X_BOX,
-                                                    y_range=Y_BOX, dataset=test_dataset, resize=resize)
-        if training_set:
-            inf_or_train_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-            val_dataset = test_dataset
-        else:
-            inf_or_train_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-            val_dataset = test_dataset
+
+            inf_or_train_dataset = dataset(train_dataset, do_transform= False,
+                                            with_hand_seg=False, with_range= not training_set)
+
+            val_dataset = train_dataset
+
+        else:#if not training_set:
+            self.training_labels = self.get_data_crops(self.image, x_range=[[0, self.image.shape[0]]],
+                                               y_range=[[0, self.image.shape[1]]],
+                                                with_range= not training_set,
+                                               full_img=True,
+                                                dataset=[],
+                                                resize=resize,
+                                               train_set=training_set,
+                                               growth_radius = self.growth_radius)
+
+            inf_crops = self.get_data_crops(self.image, x_range=self.X_BOX_all,
+                                               with_range=not training_set,
+                                               y_range=self.Y_BOX_all,
+                                               dataset=[],
+                                               resize=resize,
+                                               growth_radius=self.growth_radius,
+                                               train_set=training_set)
+            inf_or_train_dataset = dataset(inf_crops, do_transform=False,
+                                           with_hand_seg=False, with_range=not training_set)
+            val_dataset = inf_crops
+
+
         return inf_or_train_dataset, val_dataset
 
-    def infer(self, running_best_model, dataset=None, training_window_file=None,
-              load=False, view_results=False,
-              infer_subsets=False, test=True, pred_thresh=0.5):
+    def train(self, test=False):
 
-        #self.UNet = UNet
-
-        image, msc_collection, mask, segmentation = self.train_dataloader[
-            int(self.params['train_data_idx'])]
-
-
-
-        f = open(training_window_file, 'r')
-        box_dict = {}
-        param_lines = f.readlines()
-        f.close()
-
-
-
-
-        if test:
-            param_lines = param_lines[0:6]
-
-
-
-        test_dataset = dataset
-        if infer_subsets:
-            test_dataset, val_dataset = self.collect_boxes( region_list = param_lines ,
-                                                            training_set=False,
-                                                            number_samples=None)
-        else:
-            X = image.shape[0]
-            Y = image.shape[1] if len(image.shape) == 2 else image.shape[2]
-            X_train = self.X_train
-            Y_train = self.Y_train
-
-            data_array = self.train_dataloader
-
-            new_width = round(self.X_train * Y / X)
-            new_height = round(self.Y_train * X / Y)
-
-            if self.resize:
-                self.resize = (self.X_train, self.Y_train) if (X, Y) != (self.X_train, self.Y_train) else False
-
-            test_dataset = self.get_data_crops(image, x_range=[(0, X)],
-                                                    y_range=[(0, Y)], dataset=test_dataset,
-                                                    resize=self.resize)
-
-            test_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-            test_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-        if load:
-            running_best_model = torch.load('UNet_F1_opt.pth')
-        else:
-            running_best_model = running_best_model  # self.UNet.running_best_model
-
-        print(running_best_model)
-
-        given = False
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
-        # hand_seg = dataset(self.data_array, with_hand_seg=True)
-
-        if 'sci' in LocalSetup.project_base_path:
-            device = torch.device('cpu')
-        else:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        running_best_model.eval()
-
-        criterion = torch.nn.BCEWithLogitsLoss(
-            pos_weight=torch.as_tensor(self.class_weights, dtype=torch.float)).to(device)
-
-        test_loss, running_val_loss = 0, 0
-        val_loss, running_val_loss, loss_val_norm = 0, 0, 0
-        test_losses, val_imgs, val_segs, val_img_preds = [], [], [], []
-        F1_scores = []
-        F1_score_img, labels_img, predictions_img = None, None, None
-
-        total_inf_img = np.zeros((self.X , self.Y))
-        total_gt_seg = np.zeros((self.X , self.Y)).astype(np.int8)
-        total_img = np.zeros((self.X , self.Y))
-        pad = 8
-        im, se, _ = test_dataset[0]
-
-        pred_list = []
-        range_list = []
-        seg_tile = np.zeros([0, 1, se.shape[0], se.shape[1]])
-
-        num_val = 0
-        self.run_num = 0
-        out_folder = ''
-        with torch.no_grad():
-            for image, segmentation, ranges in test_loader:
-                seg_tile = np.zeros([0, 1, se.shape[0], se.shape[1]])
-
-
-                # segmentation = hand_segmentation
-
-                num_val += 1
-                image, segmentation = image.to(device), segmentation.to(device)
-                image = image.unsqueeze(1)
-
-                X = image.shape[-2]
-                Y = image.shape[-1]
-
-                segmentation = segmentation.unsqueeze(1)  # .permute(1,2,0)
-
-                predicted = running_best_model(deepcopy(image))
-
-                predicted_seg = predicted#.cpu().detach().numpy()
-                pred_tile =  predicted_seg.cpu().detach().numpy()#np.concatenate((pred_tile,
-                #                             predicted_seg),
-                #                             axis=0)
-                pred_list.append(pred_tile)
-                ranges = ranges
-
-                ground_truth_seg = segmentation.cpu().detach().numpy()
-                seg_tile = deepcopy(ground_truth_seg)
-                image_subset = image.cpu().detach().numpy()
-
-                print("    * ", type(image_subset))
-                print("    * ", type(predicted_seg))
-
-                # only consider loss for pixels
-                # within masked region
-
-                # print('mask ', mask.shape, ' pred ', predicted.shape, ' image ', image.shape, ' seg ', segmentation.shape)
-
-                # Compute Loss from forward pass
-                # val_loss = criterion(predicted, segmentation)#[:,:,:1], segmentation.permute(1,2,0)[:,:,:1])
-
-                running_val_loss += val_loss  # .item()
-                # collect sample to observe performance
-                val_imgs.append(image)
-                val_segs.append(segmentation)  # .cpu().numpy())
-                val_img_preds.append(predicted_seg)  # .cpu().numpy())
-
-                test_losses.append(val_loss)  # .item())
-
-                self.run_num = num_val - 1
-                self.update_run_info(batch_multi_run=str(self.training_size))
-
-                # F1_score, labels, predictions = get_score_model(running_best_model, test_loader,
-                #                                                          X=self.X, Y=self.Y)
-                # segmentation = og_segmentation[None].cpu().detach().numpy()
-                # self.ground_truth_seg = segmentatiodimen
-                if self.resize:
-                    dprint("Resizing image during inference...")
-                    if (X, Y) != (self.X_train, self.Y_train):
-                        image = resize_img(image_subset[0, 0, :, :],
-                                           Y=X, X=Y, sampling='lanczos')
-                        segmentation = resize_img(ground_truth_seg[0, 0, :, :],
-                                                  Y=X, X=Y, sampling='hamming')
-                        predicted = resize_img(predicted[0, 0, :, :],
-                                               Y=segmentation.shape[-1], X=segmentation.shape[-1],
-                                               sampling='lanczos')
-                        image = image[None][None]
-                        predicted = predicted[None][None]
-                        segmentation = segmentation[None][None]
-
-                        ground_truth_seg, predicted_seg, image_subset = segmentation,\
-                                                                                                predicted_seg,\
-                                                                                                image
-                X = X if self.resize else self.X_train
-                Y = Y if self.resize else self.Y_train
-
-
-
-                if view_results:
-                    with torch.no_grad():
-                        self.see_image(
-                            image_seg_set=(image_subset, ground_truth_seg, predicted),
-                            as_grey=True, save=False)  # False)
-
-
-                dprint(ranges)
-                ranges = ranges.cpu().detach().numpy()
-                x_range = list(map(int , ranges[0][1][0]))
-                y_range = list(map(int,ranges[0][0][0]))
-                range_list.append([x_range,y_range])
-
-
-                print("    * xrange yrange", x_range, y_range)
-                with torch.no_grad():
-                    #total_inf_img[x_range[0]:x_range[1],y_range[0]:y_range[1]] = pred_tile[0,0,:,:]
-                    total_img[x_range[0]:x_range[1], y_range[0]:y_range[1]] =  deepcopy(image_subset)
-                    total_gt_seg[x_range[0]:x_range[1], y_range[0]:y_range[1]] = seg_tile
-
-                    # self.save_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),#(total_img, total_gt_seg, total_inf_img),
-                    #                 as_grey=True,
-                    #                 dirpath=out_folder)
-                    #                #save=True)
-                    out_folder = os.path.join(self.pred_session_run_path,
-                                              str(self.training_size))
-                    if not os.path.exists(out_folder):
-                        os.makedirs(out_folder)
-
-                    self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set,
-                                                mode='w')
-
-
-                    self.see_image(image_seg_set=(image_subset, ground_truth_seg, predicted_seg),
-                                   names=("og_tile"+str(self.run_num), "groundseg_tile"+str(self.run_num),
-                                          "pred_tile"+str(self.run_num)),
-
-                                   as_grey=True,
-                                    dirpath=out_folder,
-                                    save=True)
-                    # self.see_image(image_seg_set=(image_subset, ground_truth_seg, predicted_segmentation),
-                    #                # (total_img, total_gt_seg, total_inf_img),
-                    #                as_grey=True,
-                    #                dirpath=out_folder,
-                    #                save=False)
-
-        for ranges, pred_im in zip(range_list, pred_list):
-            x_range = ranges[0]
-            y_range = ranges[1]
-            total_inf_img[x_range[0]:x_range[1], y_range[0]:y_range[1]] = pred_im
-            total_inf_img = total_inf_img.cpu().detach().numpy()
-        dprint(total_inf_img.shape,"inf shape")
-        dprint(total_gt_seg.shape,"gt seg shape")
-        F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=total_inf_img[None][None],
-                                                                               segmentation=total_gt_seg[None][None],
-                                                                               X=self.X, Y=self.Y)
-        F1_score_topo, labels_topo, predictions_topo, \
-        self.node_gid_to_prediction, self.node_gid_to_label = get_topology_prediction_score(predicted=total_inf_img[None][None],
-                                                                                            segmentation=total_gt_seg[None][None],
-                                                                                            gid_gnode_dict=self.gid_gnode_dict,
-                                                                                            node_gid_to_prediction=self.node_gid_to_prediction,
-                                                                                            node_gid_to_label=self.node_gid_to_label,
-                                                                                            X=self.X, Y=self.Y,
-                                                                                            pred_thresh=pred_thresh)
-        #out_folder = os.path.join(self.pred_session_run_path, str(self.run_num))
-        # self.pred_session_run_path = out_folder
-        #
-        out_folder = os.path.join(self.pred_session_run_path,
-                                  str(self.training_size))
+        self.update_run_info(batch_multi_run=str(self.training_size))
+        out_folder = os.path.join(self.pred_session_run_path)  # ,
+        #                          str(self.training_size))
 
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
-        compute_prediction_metrics('unet', predictions_topo, labels_topo, out_folder)
+        self.write_selection_bounds(dir=out_folder,
+                                    x_box=self.X_BOX, y_box=self.Y_BOX,
+                                    mode='w')
+
+
+
+        self.train_dataset, self.val_dataset = self.collect_boxes(#region_list=self.region_list,
+                                                                  # number_samples=self.training_size,
+                                                                  training_set=True)
+
+        self.val_dataset = self.train_dataset
+
+        self.model()
+
+        BATCH_SIZE = max(len(self.X_BOX)//4, 1)#self.params['batch_size']
+
+
+
+
+        # Creating the training Image and Mask generator
+        image_datagen = image.ImageDataGenerator(shear_range=0.5, rotation_range=50, zoom_range=0.2,
+                                                 width_shift_range=0.2, height_shift_range=0.2, fill_mode='reflect')
+        mask_datagen = image.ImageDataGenerator(shear_range=0.5, rotation_range=50, zoom_range=0.2,
+                                                width_shift_range=0.2, height_shift_range=0.2, fill_mode='reflect')
+
+        # Keep the same seed for image and mask generators so they fit together
+        #print("    * train dataset shape", self.train_dataset.shape)
+        #print("      * t set ", self.train_dataset.shape)
+
+        self.X_train = self.train_dataset.get_images()#[:,0]
+
+        self.Y_train = self.train_dataset.get_segmentations()#[:,1]
+        self.X_train = self.X_train.reshape((*self.X_train.shape, 1))
+        self.Y_train = self.Y_train.reshape((*self.Y_train.shape, 1))
+
+        # fig, ax = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(12, 4))
+        # ax[0].imshow(np.squeeze(self.X_train[0], axis=2))
+        # #ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[0].set_title('Image')
+        # ax[1].imshow(np.squeeze(self.Y_train[0], axis=2))
+        # #ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[1].set_title('ground truth')
+        # plt.show()
+
+
+
+
+
+        seed = 101
+        np.random.seed(97)
+
+        train_partition = 0.9 #if self.training_size >= 10 else 0.9
+        val_partition = 1.0 - train_partition
+        if self.training_size == 1:
+            train_partition = 1.0
+            val_partition = 0.
+
+        image_datagen.fit(self.X_train[:int(self.X_train.shape[0] * train_partition)], augment=True, seed=seed)
+        mask_datagen.fit(self.Y_train[:int(self.Y_train.shape[0] * train_partition)], augment=True, seed=seed)
+
+        x = image_datagen.flow(self.X_train[:int(self.X_train.shape[0] * train_partition)], batch_size=BATCH_SIZE, shuffle=True, seed=seed)
+        y = mask_datagen.flow(self.Y_train[:int(self.Y_train.shape[0] * train_partition)], batch_size=BATCH_SIZE, shuffle=True, seed=seed)
+
+        # Creating the validation Image and Mask generator
+        image_datagen_val = image.ImageDataGenerator()
+        mask_datagen_val = image.ImageDataGenerator()
+
+        image_datagen_val.fit(self.X_train[int(self.X_train.shape[0] * val_partition):], augment=True, seed=seed)
+        mask_datagen_val.fit(self.Y_train[int(self.Y_train.shape[0] * val_partition):], augment=True, seed=seed)
+
+        x_val = image_datagen_val.flow(self.X_train[int(self.X_train.shape[0] * val_partition):],
+                                       batch_size=BATCH_SIZE, shuffle=True,
+                                       seed=seed)
+        y_val = mask_datagen_val.flow(self.Y_train[int(self.Y_train.shape[0] * val_partition):],
+                                      batch_size=BATCH_SIZE, shuffle=True,
+                                      seed=seed)
+
+        train_generator = zip(x, y)
+        val_generator = zip(x_val, y_val)
+
+        #self.run_num = self.training_size
+        #self.update_run_info(batch_multi_run=str(self.training_size))
+        out_folder = os.path.join(self.pred_session_run_path)  # ,
+        #                          str(self.training_size))
+        if not os.path.exists(out_folder):
+             os.makedirs(out_folder)
+
+
+        self.model_file = os.path.join(out_folder, self.label_file + ".h5")
+
+
+        DID_TRAINING = False
+        #if self.UNET_FORCE_RECOMPUTE or not os.path.isfile(self.model_file):
+        DID_TRAINING = True
+        model = Model(inputs=[self.inputs], outputs=[self.outputs])
+        optmzr = 'adam' #Adam(learning_rate=0.001)
+        model.compile(optimizer=optmzr, loss='binary_crossentropy', metrics=[self.mean_iou])#MeanIoU(num_classes=2)])
+        model.summary()
+        print("about to fit generator")
+        start_train = timeit.default_timer()
+        earlystopper = EarlyStopping(patience=15, verbose=1)
+
+        # reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1,
+        #                               min_delta=0.0001, cooldown=1,
+        #                               patience=6, min_lr=0, verbose=1)
+
+
+        save_best_only = True#self.training_size > 1
+
+        steps_per_epoch = max(int(self.X_train.shape[0])*5,250)
+
+        checkpointer = ModelCheckpoint(self.model_file, verbose=1, save_best_only=save_best_only)
+        self.results = model.fit_generator(train_generator,
+                                           validation_data=val_generator,
+                                           validation_steps=5,
+                                           validation_freq=1,
+                                           steps_per_epoch= 10,#steps_per_epoch,        #   !!!!!
+                                           epochs=self.params['epochs'],
+                                           callbacks=[earlystopper,
+                                                      checkpointer])
+                                                      # reduce_lr])
+        end_train = timeit.default_timer()
+
+        self.record_time(round(end_train -start_train , 4), dir=out_folder, type='train')
+
+        self.trained_model = model
+
+        print("    * Finished training")
+
+    def infer(self, model=None, dataset=None, training_window_file=None, INTERACTIVE=False,
+              load_pretrained=False, view_results=False, test=True, pred_thresh=0.5):
+
+        out_folder = os.path.join(self.pred_session_run_path)  # ,
+        #                          str(self.training_size))
+        if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
+
+        # print( "    * :" "loading inference windows from: ")
+        # print( "    ", training_window_file)
+        # training_window_file = training_window_file.split('.')[0] + '_infer.txt'
+        # print("    * ", training_window_file)
+        # f = open(training_window_file, 'r')
+        # box_dict = {}
+        # param_lines = f.readlines()
+        # f.close()
+        #
+        # if test and len(param_lines) > 16:
+        #     print("    * Truncating number of training regions for testing...........")
+        #     param_lines = param_lines[0:8]
+
+        test_dataset, val_dataset = self.collect_boxes(# region_list = param_lines ,
+                                                        training_set=False)
+
+        self.X_test = test_dataset.get_images()
+
+        self.X_test = self.X_test.reshape((*self.X_test.shape, 1))
+        self.Y_test = test_dataset.get_segmentations()
+        self.Y_test = self.Y_test.reshape((*self.Y_test.shape, 1))
+
+
+        #self.training_labels = self.training_labels[0][1]
+
+
+        self.X_train = self.train_dataset.get_images()
+
+        self.Y_train = self.train_dataset.get_segmentations()
+        self.X_train = self.X_train.reshape((*self.X_train.shape, 1))
+        self.Y_train = self.Y_train.reshape((*self.Y_train.shape, 1))
+
+
+        if load_pretrained:
+            print("about to load and predict")
+            model = load_model(self.model_file, custom_objects={'mean_iou':self.mean_iou})# MeanIoU(num_classes=2)})
+        else:
+            print("using pre-trained model to predict")
+            model = self.trained_model
+
+        partition = 1.0
+        preds_train = model.predict(self.X_train[:int(self.X_train.shape[0] * partition)],
+                                    verbose=1 if not test else 0)
+        # preds_val = model.predict(self.X_train[int(self.X_train.shape[0] * 1.0-partition):], verbose=0)
+
+
+
+
+        start_test = timeit.default_timer()
+
+        preds_test = model.predict(self.X_test, verbose=1 if not test else 0)
+
+        end_test = timeit.default_timer()
+        self.record_time(round( end_test - start_test, 4), dir=out_folder, type='pred')
+
+
+        self.training_reg_bg = np.zeros(self.image.shape[:2], dtype=np.uint8)
+        for idx, box_set in enumerate(self.training_boxes):
+
+            x_box = box_set[0]
+            y_box = box_set[1]
+            self.training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+
+
+
+
+
+        return preds_test
+
+
+    def compute_metrics(self, pred_images,# scores, pred_labels, pred_thresh,
+                        INTERACTIVE=False):#predictions_topo, labels_topo,
+
+        use_average = True
+
+        self.pred_val_im = np.zeros(self.image.shape[:2], dtype=np.float32)
+        tile_samples = []
+        sample_box = []
+        for idx, box_set in enumerate(self.all_region_boxes):
+
+            x_box = box_set[0]
+            y_box = box_set[1]
+
+            pad = 8
+            pred_tile = np.squeeze(pred_images[idx], axis=2)
+            self.pred_val_im[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad] = \
+                pred_tile[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
+
+            if idx ==len(self.all_region_boxes)//4:
+                sample_box = box_set
+                im_tile = self.image[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+                seg_tile = self.training_labels[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+                p_tile = pred_tile[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
+                tile_samples = [im_tile,seg_tile,p_tile]
+
+
+        self.cutoffs = np.arange(0.01, 0.98, 0.01)
+        scores = np.zeros((len(self.cutoffs), 4), dtype="int32")
+        self.pred_prob_im = np.ones(self.image.shape[:2], dtype=np.float32)*0.25
+        predictions = []
+        true_labels = []
+        for gid in self.node_gid_to_label.keys():
+            gnode = self.gid_gnode_dict[gid]
+            label = self.node_gid_to_label[gid]
+            label = label if type(label) != list else label[1]
+            line = get_points_from_vertices([gnode])
+            # else is fg
+            vals = []
+
+            for point in line:
+                ly = int(point[0])
+                lx = int(point[1])
+                vals.append(self.pred_val_im[lx, ly])
+
+            inferred = np.array(vals, dtype="float32")
+            infval = np.average(inferred)
+            pred_mode = infval
+            if not use_average:
+                vals, counts = np.unique(inferred, return_counts=True)
+                mode_value = np.argwhere(counts == np.max(counts))
+                pred_mode = inferred[mode_value].flatten().tolist()[0]
+
+            infval = infval if use_average else pred_mode
+
+
+
+            self.node_gid_to_prediction[gid] = [1. - infval, infval]
+
+            for idx, cutoff in enumerate(self.cutoffs):
+                if infval >= cutoff:
+                    if label == 1:
+                        scores[idx, 0] += len(line)  # true positive
+                    else:
+                        scores[idx, 2] += len(line)  # false positive
+                else:
+                    if label == 1:
+                        scores[idx, 1] += len(line)  # false negative
+                    else:
+                        scores[idx, 3] += len(line)  # true negative
+
+            for point in line:
+                ly = int(point[0])
+                lx = int(point[1])
+                self.pred_prob_im[lx, ly] = infval
+                if self.training_reg_bg[lx, ly] != 1:
+                    predictions.append(infval )
+                    true_labels.append(label )
+
+
+        # print("       labelslslslsls", labels_topo)
+        # print("After sampling back to lines, using 0.5 cutoff:")
+        restab = pd.DataFrame(scores.T)
+        restab.columns = [str(x) for x in self.cutoffs]
+
+        self.F1_log = {}
+        self.max_f1 = 0
+        self.opt_thresh = 0
+        for thresh in self.cutoffs:
+
+            threshed_arc_segmentation_logits = [logit > thresh for logit in true_labels]
+            threshed_arc_predictions_proba = [logit > thresh for logit in predictions]
+
+            F1_score_topo = f1_score(y_true=threshed_arc_segmentation_logits,
+                                     y_pred=threshed_arc_predictions_proba,average=None)[-1]
+
+            #self.F1_log[F1_score_topo] = thresh
+            if F1_score_topo >= self.max_f1:
+                self.max_f1 = F1_score_topo
+
+                self.F1_log[self.max_f1] = thresh
+                self.opt_thresh = thresh
+
+
+        gt_polyline_labels = []
+        pred_labels_conf_matrix = np.zeros(self.image.shape[:2], dtype=np.float32)#dtype=np.uint8)
+        pred_labels_msc = np.ones(self.image.shape[:2], dtype=np.float32) * 0.25
+        predictions_topo_bool = []
+        labels_topo_bool = []
+        check=30
+        for gid in self.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
+
+            gnode = self.gid_gnode_dict[gid]
+            label = self.node_gid_to_label[gid]
+            label = label if type(label) != list else label[1]
+            line = get_points_from_vertices([gnode])
+            # else is fg
+            cutoff = self.F1_log[self.max_f1]
+
+            vals = []
+
+            for point in line:
+                ly = int(point[0])
+                lx = int(point[1])
+                pred = self.pred_val_im[lx, ly]
+                vals.append(pred)
+
+            if not use_average:
+                vals = list(map(lambda x : round(x,2),vals))
+            inferred = np.array(vals, dtype="float32")
+            infval = np.average(inferred)
+            pred_mode = infval
+            if not use_average:
+                vals, counts = np.unique(inferred, return_counts=True)
+                mode_value = np.argwhere(counts == np.max(counts))
+                pred_mode = inferred[mode_value].flatten().tolist()[0]
+
+            infval = infval if use_average else pred_mode
+
+            self.node_gid_to_prediction[gid] = [1.-infval, infval]
+            if check >= 0:
+
+                check -= 1
+
+            t = 0
+            if infval >= self.opt_thresh:
+                if label == 1:
+                    t = 0.25 # 1
+                else:
+                    t = .75 #3
+            else:
+                if label == 1:
+                    t = .5 # 2
+                else:
+                    t = 1 # 4
+
+            for point in line:
+                ly = int(point[0])
+                lx = int(point[1])
+                pred_labels_conf_matrix[lx, ly] = t
+                pred_labels_msc[lx,ly] = 1 if infval >= self.F1_log[self.max_f1] else 0
+                if self.training_reg_bg[lx, ly] != 1:
+                    self.node_gid_to_partition[gid] = 'test'
+                    predictions_topo_bool.append(infval >= cutoff)
+                    gt_label = self.training_labels[lx, ly]
+                    labels_topo_bool.append(label >= cutoff)
+                else:
+                    self.node_gid_to_partition[gid] = 'train'
+
+
+        out_folder = os.path.join(self.pred_session_run_path)#,
+        #                          str(self.training_size))
+        if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
+
+
+
+        exp_folder = os.path.join(self.params['experiment_folder'])#, 'runs')
+
+        batch_metric_folder = os.path.join(exp_folder, 'batch_metrics')
+        if not os.path.exists(batch_metric_folder):
+            os.makedirs(batch_metric_folder)
+
+        self.draw_segmentation(dirpath=out_folder)
+        compute_prediction_metrics('unet', predictions_topo_bool,
+                                   labels_topo_bool,
+                                   out_folder)
         self.write_arc_predictions(dir=out_folder)
+        self.write_training_percentages(dir=out_folder,msc_segmentation=self.training_labels)
+        self.write_training_percentages(dir=out_folder,train_regions=self.training_reg_bg)
         self.draw_segmentation(dirpath=out_folder)
         self.write_gnode_partitions(dir=out_folder)
-        # self.write_selection_bounds(dir=out_folder, x_box=self.x_set, y_box=self.y_set,
-        #                             mode='w+')  # name_value[0], y_box=name_value[1], mode='a')
 
-
-
-
-
-
-        self.see_image(image_seg_set=(total_img, total_gt_seg, total_inf_img),
-                                    names=("total_og_tiled", "total_groundseg", "total_prediction"),
-                                    as_grey=True,
-                                    dirpath=out_folder,
-                                    save=True)
-
-        exp_folder = os.path.join(self.params['experiment_folder'], 'runs')
-
-        # batch_metric_folder = os.path.join(exp_folder,
-        #                                    str(self.training_size),'f1')
-        # if not os.path.exists(batch_metric_folder):
-        #     os.makedirs(batch_metric_folder)
-
-        # compute_prediction_metrics('unet', predictions, labels, out_folder)
-        #
-        # UNet.write_arc_predictions(UNet.session_name)
-        # UNet.draw_segmentation(dirpath=UNet.pred_session_run_path)
-        print("    * ","after single batch")
         multi_run_metrics(model='unet', exp_folder=exp_folder,
                           batch_multi_run=True,
-                          bins=7, runs=str(self.training_size),
+                          bins=7, runs='runs',#str(self.training_size),
                           plt_title=exp_folder.split('/')[-1])
-        return test_losses, val_imgs, val_segs, val_img_preds, running_val_loss, F1_score_img, labels_img, predictions_img
 
+        print("UNET_MAX_F1:", self.max_f1)
+        print("pthresh:", self.F1_log[self.max_f1], 'opt', self.opt_thresh)#cutoffs[F1_MAX_ID])
+        print("Num Pixels:", self.image.shape[0] * self.image.shape[1], "Num Pixels training:", np.sum(self.training_labels), "Percent:",
+              100.0 * np.sum(self.training_labels) / (self.image.shape[0] * self.image.shape[1]))
+
+
+
+
+        num_fig = 6
+        fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig*4, num_fig-1))
+        ax[0].imshow(self.image)
+        ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[0].set_title('Image')
+        ax[1].imshow(self.training_labels)
+        ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[1].set_title('Ground Truth Segmentation')
+        ax[2].imshow(self.pred_val_im)
+        ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[2].set_title('Predicted Segmentation')
+        ax[3].imshow(pred_labels_conf_matrix)
+        ax[3].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[3].set_title('MSC TF TP TN FN')
+        ax[4].imshow(self.pred_prob_im)
+        ax[4].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[4].set_title('MSC Pixel Inference Confidence')
+        ax[5].imshow(pred_labels_msc)
+        ax[5].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[5].set_title('MSC Binary Prediction')
+        #fig.tight_layout()
+        if INTERACTIVE:
+            plt.show()
+
+        #batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+        #if not os.path.exists(batch_folder):
+        #    os.makedirs(batch_folder)
+        plt.savefig(os.path.join(out_folder,"unet_imgs.pdf"))
+
+
+
+        # tile samples
+        x_box = sample_box[0]
+        y_box = sample_box[1]
+        pad=128
+
+        im_tile = self.image[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        seg_tile = self.training_labels[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        p_tile = self.pred_val_im[300:464, 300:464]#[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
+
+        sample_conf_mat = pred_labels_conf_matrix[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        sample_proba = self.pred_prob_im[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        sample_pred_label = pred_labels_msc[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        num_fig = 6
+        fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+        ax[0].imshow(im_tile)
+        # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[0].set_title('Image')
+
+        ax[2].imshow(seg_tile)
+        # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[2].set_title('Ground Truth Segmentation')
+        ax[1].imshow(p_tile)
+        # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[1].set_title('Predicted Segmentation')
+        ax[3].imshow(sample_conf_mat)
+        # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[3].set_title('MSC TF TP TN FN')
+        ax[4].imshow(sample_proba)
+        # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[4].set_title('Polyline Inference Confidence')
+        ax[5].imshow(sample_pred_label)
+        # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        ax[5].set_title('MSC Binary Prediction')
+        if INTERACTIVE:
+            plt.show()
+        plt.savefig(os.path.join(out_folder, "unet_imgs_sample.pdf"))
+
+
+
+        np.savez_compressed(os.path.join(out_folder,'pred_matrix.npz'),self.pred_val_im)
+        np.savez_compressed(os.path.join(out_folder,'training_matrix.npz'),self.training_reg_bg)
+        # dict_data = np.load('data.npz')
+        # # extract the first array
+        # data = dict_data['arr_0']
+        # # print the array
+        # print(data)
 
-    #
-    #
-    #                   Train U-Net
-    #
-    #
-class UNet_Trainer:
-    def __init__(self, UNet : UNetwork, train_dataset=None, val_dataset=None,
-                 class_weights=None):
-        sys.setrecursionlimit(3000)#10000)
-        #print("     * : recursion limit ", )
-        torch.cuda.empty_cache()
-        #define_gpu_to_use(gpu_to_use=0)
-        # instantiate your model here:
 
-        available_gpus = [torch.cuda.device(i) for i in range(torch.cuda.device_count())]
-        if 'sci' in LocalSetup.project_base_path:
-            self.device = torch.device('cpu')
-        else:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.UNet = UNet.to(self.device)
-        self.params = self.UNet.params
-        #self.attributes = UNet.get_attributes()
-        # Instantiate U-Net network
 
-        self.val_dataset = val_dataset
-        self.train_dataset = train_dataset
-        self.class_weights = UNet.class_weights
 
-        if train_dataset is None or val_dataset is None:
-            self.val_dataset = self.UNet.val_dataset
-            self.train_dataset = self.UNet.train_dataset
-        if class_weights is None:
-            self.class_weights = UNet.class_weights
-
-
-
-    def launch_training(self, view_results=False,pred_thresh=0.5):
-
-
-        # Initialize weights
-        self.UNet.apply(weights_init)
-
-        optimizer = torch.optim.SGD(self.UNet.parameters(), lr=self.UNet.params['learning_rate'], momentum=0.9, nesterov=True)
-        n_epochs = self.params['epochs']
-
-        import torch.utils.data as dutil
-        batch_size = 1
-        # train_dataloaders = dutil.DataLoader(train_dataset, batch_size=batch_size,
-        #                                   shuffle=True, num_workers=4)
-        val_dataloaders = torch.utils.data.DataLoader(self.val_dataset, batch_size=int(batch_size),
-                                           shuffle=False, num_workers=0)
-
-        train_loader = torch.utils.data.DataLoader(self.train_dataset, batch_size=int(batch_size),
-                                                   shuffle=False, num_workers=0)
-        dataloaders = {'val': val_dataloaders}  # 'train': train_dataloaders,
-
-        # Learning rate is reduced after plateauing to stabilize the end of training.
-        # use the learning rate scheduler as defined here. Example on how to integrate it to training in
-        # https://pytorch.org/docs/stable/optim.html#torch.optim.lr_scheduler.StepLR
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[200, 250], gamma=0.1)
-
-        # train your model here:
-        criterion = torch.nn.BCEWithLogitsLoss(
-            pos_weight=torch.as_tensor(self.class_weights[1], dtype=torch.float)).to(self.device)
-
-        steps = 0
-        print_every = 3  # batch_size/2.
-        val_sample_rate = 15000
-        train_losses, test_losses, F1_scores = [], [], []
-        val_imgs, val_segs, val_img_preds, sample_losses = [], [], [], []
-
-        test_loss = 0
-
-        running_best_model = copy.deepcopy(self.UNet)
-        self.running_best_model = running_best_model
-        best_loss = 1
-        best_f1, max_f1 = 0, 0
-        last_mark = 0
-        # Loop over epochs
-        self.predicted_segmentation = None
-        self.UNet.train()
-        for epoch in range(n_epochs):
-            # Training
-            scheduler.step()  # notify lr scheduler
-            running_loss = 0
-
-            iter_count = 0
-
-            # for batch_idx, (image, segmentation, mask) in enumerate( RetinaDataset(train_dataset)):
-            for image, segmentation, ranges in train_loader:
-                steps += 1
-                iter_count += 1
-                #self.image = image
-
-
-                image, segmentation = image.to(self.device), segmentation.to(self.device)
-                print("image," , image.shape)
-                print("seg,", segmentation.shape)
-                self.X = image.shape[-2]
-                self.Y = image.shape[-1]
-                self.X_train = self.X
-                self.Y_train = self.Y
-                self.UNet.X_train = self.X
-                self.UNet.Y_train = self.Y
-                # Variable(val_batch.cuda(),volatile=True)
-                # segmentation[segmentation > 0] = 1
-                optimizer.zero_grad()  # zero gradients for forward/bakward pass
-
-                image = image.unsqueeze(1)
-                segmentation = segmentation.unsqueeze(1)
-
-                # Forward pass with network model
-                predicted = self.UNet(image)  # [None])
-                self.predicted_segmentation = predicted.cpu().detach().numpy()
-                self.ground_truth_seg = segmentation.cpu().detach().numpy()
-                self.image_crop = image.cpu().detach().numpy()
-
-                # only consider loss for pixels
-                # within masked region
-                # predicted = predicted * mask  # .permute(1,2,0)
-
-                # segmentation = segmentation.permute(1,2,0)[0,:,:]
-                # mask = mask.permute(1,2,0)
-
-                # segmentation = segmentation * mask
-
-                # Compute Loss from forward pass
-                print("    *: pred size", predicted.size())
-                print("    *: seg size", segmentation.size())
-                train_loss = criterion(predicted, segmentation)  # [None])
-                # train update with backprop
-                train_loss.backward()
-                optimizer.step()
-                running_loss += train_loss.item()
-
-                torch.cuda.empty_cache()
-
-                if steps % print_every == 0:
-
-                    self.UNet.eval()
-
-                    test_loss, accuracy = 0, 0
-                    val_loss, running_val_loss, loss_val_norm = 0, 0, 0
-                    num_val = 0
-                    with torch.no_grad():
-                        for image, segmentation, _ in val_dataloaders:
-                            num_val += 1
-                            image, segmentation = image.to(self.device), segmentation.to(self.device)
-                            image = image.unsqueeze(1)
-                            segmentation = segmentation.unsqueeze(1)
-                            # segmentation[segmentation > 0] = 1
-
-                            predicted = self.UNet(image)
-
-                            # only consider loss for pixels
-                            # within masked region
-                            # predicted = predicted * mask.permute(1, 2, 0)
-
-                            #segmentation = segmentation.permute(1, 2, 0)[0, :, :]
-                            # mask = mask.permute(1, 2, 0)
-
-                            # segmentation = segmentation * mask
-
-                            # Compute Loss from forward pass
-                            val_loss = criterion(predicted, segmentation)
-                            running_val_loss += val_loss.item()
-                            # collect sample to observe performance
-                            if steps % val_sample_rate:
-                                sample_losses.append(running_val_loss / num_val)
-                                val_imgs.append(image.cpu().numpy())
-                                val_segs.append(segmentation.cpu().numpy())
-                                val_img_preds.append(predicted.cpu().numpy())
-
-                    # get F1 score
-
-                    # val_score, segmentation_gt, binary_preds = get_score_model(self.UNet,
-                    #                                                            val_dataloaders,
-                    #                                                            X=self.X, Y=self.Y)
-                    predicted = predicted.cpu().detach().numpy()  # [0,:,:,:]
-                    segmentation = segmentation.cpu().detach().numpy()
-                    F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=predicted,
-                                                                                           segmentation=segmentation,
-                                                                                           X=self.X, Y=self.Y)
-                    F1_score_topo, labels_topo, predictions_topo, _, _= get_topology_prediction_score(
-                        predicted=predicted,
-                        segmentation=segmentation,
-                        gid_gnode_dict=self.UNet.gid_gnode_dict,
-                        node_gid_to_prediction=self.UNet.node_gid_to_prediction,
-                        node_gid_to_label=self.UNet.node_gid_to_label,
-                        pred_thresh=pred_thresh,
-                        X=self.X, Y=self.Y,
-                    ranges=ranges)
-
-                    current_training_loss = running_loss / print_every
-                    current_validation_loss = running_val_loss / num_val
-
-                    train_losses.append(current_training_loss)
-                    test_losses.append(current_validation_loss)
-                    F1_scores.append(F1_score_topo)#val_score)
-
-                    print("Epoch {epoch}/{epochs}.. ".format(epoch=epoch + 1, epochs=n_epochs))
-                    print("Train loss: {rl}.. ".format(rl=current_training_loss))  # loss over 20 iterations
-
-                    print("Validation loss: {test_loss}.. ".format(test_loss=current_validation_loss))
-                    print("Validation F1 image: {acc}".format(acc=F1_score_img))
-                    print("Validation F1 topo: {acc}".format(acc=F1_score_topo))
-
-                    # update lr if plateau in val_loss
-                    # plat_lr_scheduler.step(loss_val_mean/loss_val_norm) #update learning rate if validation loss plateaus
-
-                    if F1_score_topo > best_f1:
-                        max_f1 = F1_score_topo
-                    if F1_score_topo > best_f1:  # and val_score > 0.35:
-                        best_f1 = F1_score_topo
-                        running_best_model = copy.deepcopy(self.UNet)
-                        self.running_best_model = running_best_model
-                        #torch.save(running_best_model, 'UNet_F1_opt.pth')
-
-                    print("current opt F1: ", best_f1)
-                    print(".....")
-                    # My GPU is small I need to free memory
-                    del current_training_loss
-                    del current_validation_loss
-                    del predicted
-                    del segmentation
-                    del image
-
-                    running_loss = 0
-
-                    torch.cuda.empty_cache()
-
-                    self.UNet.train()
-        self.UNet = self.UNet.cpu()#.detach()
-
-        if max_f1 > best_f1:
-            best_f1 = max_f1
-        print('iterations per epoch: ', iter_count)
-        #torch.save(running_best_model, 'UNet_trained.pth')
-
-        if view_results:
-            with torch.no_grad():
-                    self.UNet.view_image(image_seg_set=(self.image_crop, self.ground_truth_seg, self.predicted_segmentation),
-                                         as_grey=True)#False)
-
-        print(train_losses, test_losses, F1_scores, best_f1, val_imgs, val_segs, sample_losses, val_img_preds)
-        torch.cuda.empty_cache()
-        return train_losses, test_losses, F1_scores, best_f1, val_imgs, val_segs, sample_losses, val_img_preds, running_best_model
-
-
-class  UNet_Classifier:
-    def __init__(self, UNet : UNetwork, training_window_file):
-
-        self.UNet  = UNet
-        self.train_dataloader = UNet.train_dataloader
-        self.image, self.msc_collection, self.mask, self.segmentation = self.train_dataloader[int(UNet.params['train_data_idx'])]
-
-        self.params = UNet.params
-        #self.attributes = UNet.get_attributes()
-        self.node_gid_to_feature = UNet.node_gid_to_feature
-        print("       * 8*****",self.node_gid_to_feature)
-
-
-
-        f = open(training_window_file, 'r')
-        self.box_dict = {}
-        self.param_lines = f.readlines()
-        f.close()
-
-        self.param_lines = self.param_lines[0:4]
-        self.test_dataset = None
-
-    def __group_pairs(self, lst):
-        for i in range(0, len(lst), 2):
-            yield tuple(lst[i : i + 2])
-
-    def collect_boxes(self, resize=False):
-        boxes = [
-            i for i in self.__group_pairs(self.param_lines)
-        ]
-        test_dataset = []
-        for current_box_idx in range(len(boxes)):
-
-            self.UNet.run_num += 1
-
-            self.counter_file = os.path.join(LocalSetup.project_base_path, 'run_count.txt')
-            f = open(self.counter_file, 'r')
-            c = f.readlines()
-            self.run_num = int(c[0]) + 1
-            f.close()
-            f = open(self.counter_file, 'w')
-            f.write(str(self.run_num))
-            f.close()
-            print("&&&& run num ", self.run_num)
-
-            self.active_file = os.path.join(LocalSetup.project_base_path, 'continue_active.txt')
-            f = open(self.active_file, 'w')
-            f.write('0')
-            f.close()
-
-            self.UNet.update_run_info()
-
-            current_box_dict = {}
-            current_box = boxes[current_box_idx]
-
-            for bounds in current_box:
-                name_value = bounds.split(' ')
-                print(name_value)
-
-                # window selection(s)
-                # for single training box window
-                if name_value[0] not in current_box_dict.keys():
-                    current_box_dict[name_value[0]] = list(map(int, name_value[1].split(',')))
-                # for multiple boxes
-                else:
-                    current_box_dict[name_value[0]].extend(list(map(int, name_value[1].split(','))))
-
-            X_BOX = [
-                i for i in self.__group_pairs([i for i in current_box_dict['x_box']])
-            ]
-            Y_BOX = [
-                i for i in self.__group_pairs([i for i in current_box_dict['y_box']])
-            ]
-
-            training_set, test_and_val_set = self.UNet.box_select_geomsc_training(x_range=X_BOX,
-                                                                             y_range=Y_BOX)
-
-            partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
-                self.UNet.node_gid_to_partition,
-                self.UNet.node_gid_to_feature,
-                self.UNet.node_gid_to_label,
-                test_all=True)
-
-            gid_features_dict = partition_feat_dict['all']
-            gid_label_dict = partition_label_dict['all']
-            train_gid_label_dict = partition_label_dict['train']
-            train_gid_feat_dict = partition_feat_dict['train']
-
-            self.UNet.get_train_test_val_sugraph_split(collect_validation=False, validation_hops=1,
-                                                  validation_samples=1, test_samples=None)
-
-
-            self.X = self.image.shape[0]
-            self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
-            self.X_train = self.UNet.X_train
-            self.Y_train = self.UNet.Y_train
-
-            if resize:
-                resize = (self.X_train , self.Y_train) if (self.X, self.Y) != (self.X_train , self.Y_train) else False
-            self.resize = resize
-
-            self.data_array = self.train_dataloader
-            test_dataset = self.UNet.get_data_crops(self.image, x_range=X_BOX,
-                                                     y_range=Y_BOX, dataset=test_dataset, resize=resize)
-
-
-        self.test_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-        self.val_dataset = self.test_dataset
-        self.class_weights = self.UNet.class_weights
-
-
-
-    def infer(self,running_best_model, load=False, view_results=False, infer_subsets=False):
-        test_dataset=[]
-        if infer_subsets:
-            self.collect_boxes()
-        else:
-            self.X = self.image.shape[0]
-            self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
-            self.X_train = self.UNet.X_train
-            self.Y_train = self.UNet.Y_train
-
-
-            self.data_array = self.train_dataloader
-
-            new_width = round(self.X_train * self.Y/self.X)
-            new_height = round(self.Y_train * self.X/self.Y)
-
-            if self.resize:
-                resize = (self.X_train, self.Y_train)  if (self.X, self.Y) != (self.X_train, self.Y_train) else False
-
-            test_dataset = self.UNet.get_data_crops(self.image, x_range=[(0,self.X)],
-                                                    y_range=[(0,self.Y)], dataset=test_dataset,
-                                                    resize=self.resize)
-
-            self.test_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-            self.val_dataset = self.test_dataset
-            self.class_weights = self.UNet.class_weights
-        self.test_dataset = dataset(test_dataset, do_transform=False, with_hand_seg=False)
-        if load:
-            running_best_model = torch.load('UNet_F1_opt.pth')
-        else:
-            running_best_model = running_best_model# self.UNet.running_best_model
-
-        print(running_best_model)
-
-
-
-        given = False
-        test_loader = torch.utils.data.DataLoader(self.test_dataset, batch_size=1, shuffle=False, num_workers=0)
-        #hand_seg = dataset(self.data_array, with_hand_seg=True)
-
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        running_best_model.eval()
-
-        criterion = torch.nn.BCEWithLogitsLoss(
-            pos_weight=torch.as_tensor(self.class_weights,dtype=torch.float)).to(device)
-
-        test_loss, running_val_loss = 0, 0
-        val_loss, running_val_loss, loss_val_norm = 0, 0, 0
-        test_losses, val_imgs, val_segs, val_img_preds = [], [], [], []
-        F1_scores = []
-        num_val = 0
-        with torch.no_grad():
-            for image, segmentation, og_segmentation in test_loader:
-                #segmentation = hand_segmentation
-
-                num_val += 1
-                image, segmentation = image.to(device), segmentation.to(device)
-                image = image.unsqueeze(1)
-
-                X = image.shape[-2]
-                Y = image.shape[-1]
-                print("    * : X ", X, "Y ",Y)
-
-                print("    *: im size ",image.shape)
-                print("    *: seg size",segmentation.shape)
-
-                segmentation = segmentation.unsqueeze(1)  # .permute(1,2,0)
-
-                predicted = running_best_model(image)
-
-
-
-
-                self.predicted_segmentation = predicted.cpu().detach().numpy()
-                self.ground_truth_seg = segmentation.cpu().detach().numpy()
-                self.image_subset = image.cpu().detach().numpy()
-
-                print("    * ",type(self.image_subset))
-                print("    * ",type(self.predicted_segmentation))
-
-
-                # only consider loss for pixels
-                # within masked region
-                predicted = predicted.cpu().detach().numpy()#[0,:,:,:]
-                segmentation = segmentation.cpu().detach().numpy()#.permute(1,2,0)#[0, 0, :, :] #* mask
-                print("    *: pred size", predicted.shape)
-                print("    *: seg size", segmentation.shape)
-                # print('mask ', mask.shape, ' pred ', predicted.shape, ' image ', image.shape, ' seg ', segmentation.shape)
-
-                # Compute Loss from forward pass
-                #val_loss = criterion(predicted, segmentation)#[:,:,:1], segmentation.permute(1,2,0)[:,:,:1])
-
-                running_val_loss += val_loss#.item()
-                # collect sample to observe performance
-                val_imgs.append(image)
-                val_segs.append(segmentation)#.cpu().numpy())
-                val_img_preds.append(predicted)#.cpu().numpy())
-
-                test_losses.append(val_loss)#.item())
-
-                self.UNet.run_num = num_val-1
-                self.UNet.update_run_info()
-
-                #F1_score, labels, predictions = get_score_model(running_best_model, test_loader,
-                #                                                          X=self.X, Y=self.Y)
-                #segmentation = og_segmentation[None].cpu().detach().numpy()
-                #self.ground_truth_seg = segmentatiodimen
-                if self.resize:
-                    if (self.X, self.Y) != (self.X_train, self.Y_train):
-                        image = resize_img(self.image_subset[0, 0, :, :],
-                                           Y=self.X, X=self.Y, sampling='lanczos')
-                        segmentation = resize_img(self.ground_truth_seg[0, 0, :, :],
-                                                  Y=self.X, X=self.Y, sampling='hamming')
-                        predicted = resize_img(self.predicted_segmentation[0, 0, :, :],
-                                               Y=segmentation.shape[-1], X=segmentation.shape[-1], sampling='lanczos')
-                        image = image[None][None]
-                        predicted = predicted[None][None]
-                        segmentation = segmentation[None][None]
-
-                        self.ground_truth_seg, self.predicted_segmentation, self.image_subset = segmentation, predicted, image
-
-
-
-                F1_score_img, labels_img, predictions_img = get_image_prediction_score(predicted=predicted,
-                                                                           segmentation=segmentation,
-                                                                           X=self.X, Y=self.Y)
-                F1_score_topo, labels_topo, predictions_topo = get_topology_prediction_score(predicted=predicted,
-                                                                           segmentation=segmentation,
-                                                                                       gid_gnode_dict=self.UNet.gid_gnode_dict,
-                                                                                       X=self.X, Y=self.Y)
-
-
-
-
-                out_folder = self.UNet.pred_session_run_path
-                compute_prediction_metrics('unet', predictions_img, labels_img, out_folder)
-                #current_training_loss = running_loss / print_every
-                current_validation_loss = running_val_loss / num_val
-
-                #train_losses.append(current_training_loss)
-                test_losses.append(current_validation_loss)
-                F1_scores.append(F1_score_img)
-
-                #print("Epoch {epoch}/{epochs}.. ".format(epoch=epoch + 1, epochs=n_epochs))
-                #print("Train loss: {rl}.. ".format(rl=current_training_loss))  # loss over 20 iterations
-
-                #print("Inference loss: {test_loss}.. ".format(test_loss=current_validation_loss))
-                print("Inference F1 over image: {acc}".format(acc=F1_score_img))
-                print("Inference F1 over topology: {acc}".format(acc=F1_score_topo))
-
-                if view_results:
-                    with torch.no_grad():
-                        self.UNet.view_image(image_seg_set=(self.image_subset, self.ground_truth_seg, self.predicted_segmentation),
-                                             as_grey=True)#False)
-
-
-        return test_losses, val_imgs, val_segs, val_img_preds, running_val_loss, F1_score_img, labels_img, predictions_img
-
-
-
-
-
-
-
-
-
-# Visualing a few cases in the training set
-def view_UNet_preds_during_training(val_imgs, val_segs, sample_losses, val_img_preds, num_im=20,
-                                    train_or_test='Training', net_2=False):
-    half_max = num_im
-    print("...")
-    if train_or_test == 'Training':
-        print("....Initial and Final Predictions During Training....")
-    else:
-        print("....Predictions During Testing....")
-        half_max = 0
-    print("...")
-
-    if train_or_test == 'Training':
-        for idx, image in enumerate(val_imgs):
-            half_max -= 1
-            if half_max > 0:
-                # print(image.shape)
-                plt.figure()
-                plt.title("Input Image")
-                plt.imshow(image.transpose((1, 2, 0)))
-                plt.figure()
-                plt.title("Segmentation ground truth")
-                # print(val_img_preds[idx].shape)
-                if train_or_test == 'Training' and not net_2:
-                    # plt.imshow(val_segs[idx].transpose((1,2,0))[0,:,:])#.cpu().numpy())
-                    plt.imshow(val_segs[idx][0, :, :])
-                else:
-                    plt.imshow(val_segs[idx].transpose((1, 2, 0))[:, :, 0])
-                plt.figure()
-                plt.title("Predicted Segmentation W/ LOSS: " + str(sample_losses[idx]))
-                plt.imshow(val_img_preds[idx][0, 0, :, :])  # .cpu().numpy())
-    half_max = 0
-    for idx, image in enumerate(val_imgs[::-1]):
-        half_max += 1
-        if half_max < num_im:
-            # print(image.shape)
-            plt.figure()
-            plt.title("Input Image")
-            plt.imshow(image.transpose((1, 2, 0)))
-            plt.figure()
-            plt.title("Segmentation ground truth")
-            # print(val_img_preds[idx].shape)
-            if train_or_test == 'Training' and not net_2:
-                plt.imshow(val_segs[idx][0, :, :])  # .cpu().numpy())
-                plt.figure()
-                plt.title("Predicted Segmentation W/ LOSS: " + str(sample_losses[idx]))
-                plt.imshow(val_img_preds[idx][0, 0, :, :])  # .cpu().numpy())
-            else:
-                plt.imshow(val_segs[idx].transpose((1, 2, 0))[:, :, 0])
-                plt.figure()
-                plt.title("Predicted Segmentation W/ LOSS: " + str(sample_losses[idx]))
-                plt.imshow(val_img_preds[idx][0, :, :])  # .cpu().numpy())

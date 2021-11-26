@@ -55,10 +55,10 @@ class dataflow:
                     dest_folder = dest_folder + "/"
                 if item.endswith(filetype):
                     img = imageio.imread(dest_folder + item)
-                    if len(img.shape) == 3:
-                        img = np.pad(img, ((12, 12), (69, 70), (0, 0)), mode='constant')
-                    else:
-                        img = np.pad(img, ((12, 12), (69, 70)), mode='constant')
+                    # if len(img.shape) == 3:
+                    #     img = np.pad(img, ((12, 12), (69, 70), (0, 0)), mode='constant')
+                    # else:
+                    #     img = np.pad(img, ((12, 12), (69, 70)), mode='constant')
                     img = img.astype(np.float32)
                     if len(img.shape) == 2:
                         img = img.astype(np.float32)

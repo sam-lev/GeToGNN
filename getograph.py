@@ -281,18 +281,18 @@ class GeToGraph(Attributes):
         self.use_ridge_arcs = ridge
         self.use_valley_arcs = valley
 
-        black_box = np.zeros((X, Y)) if not invert else np.zeros(
-            (Y, X))
+        # black_box = np.zeros((X, Y)) if not invert else np.zeros(
+        #     (Y, X))
         cmap = cm.get_cmap('bwr')
-        cmap.set_under('black')
-        cmap.set_bad('black')
+        # cmap.set_under('black')
+        # cmap.set_bad('black')
         plt.set_cmap(cmap)
-        fig = plt.imshow(black_box, cmap=cmap, alpha=None, vmin=0)
-        plt.axis('off')
-        fig.axes.get_xaxis().set_visible(False)
-        fig.axes.get_yaxis().set_visible(False)
+        # fig = plt.imshow(black_box, cmap=cmap, alpha=None, vmin=0)
+        # plt.axis('off')
+        # fig.axes.get_xaxis().set_visible(False)
+        # fig.axes.get_yaxis().set_visible(False)
 
-        original_image = np.stack((original_image,) * 3, axis=-1)
+        original_image = np.stack((original_image.astype(np.float32),) * 3, axis=-1)
 
         if original_image.shape[0] == 3:
             mapped_image = np.transpose(original_image, (2, 1, 0))
@@ -318,13 +318,16 @@ class GeToGraph(Attributes):
                 if len(prediction) == 3:
                     label_color = cmap(0.56) if float(prediction[2]) > 0.5 else cmap(float(prediction[1]))
                 else:
-                    if prediction == []:
-                        #print('perd ' , prediction)
-                        #print(gnode.gid)
-                        #print(partition)
-                        #print(self.node_gid_to_feature[gnode.gid])
-                        continue
-                    label_color = cmap(float(prediction[len(prediction) - 1]))
+                    if type(prediction) == list:
+                        if prediction == []:
+                            #print('perd ' , prediction)
+                            #print(gnode.gid)
+                            #print(partition)
+                            #print(self.node_gid_to_feature[gnode.gid])
+                            continue
+                        label_color = cmap(float(prediction[len(prediction) - 1]))
+                    else:
+                        label_color = cmap(prediction)
 
             if original_image is not None:
                 x = 1#  if invert else 0
@@ -368,9 +371,19 @@ class GeToGraph(Attributes):
             plt.figure()
             plt.title("Input Image")
             import matplotlib as mplt
-            plt.imsave(os.path.join(dirpath, 'inference.png'),mapped_image.astype('uint8'),cmap=mplt.cm.Greys_r)
+            max_val = np.max(mapped_image)
+            min_val = np.min(mapped_image)
+            mapped_image = (mapped_image.astype(np.float32) - min_val) / (max_val - min_val)
+            plt.imsave(os.path.join(dirpath, 'inference.png'),mapped_image.astype(np.float32))
 
-            plt.imsave(os.path.join(dirpath , 'groundseg.png'),label_map_image.astype('uint8'),cmap=mplt.cm.Greys_r)
+            max_val = np.max(label_map_image)
+            min_val = np.min(label_map_image)
+            label_map_image = (label_map_image.astype(np.float32) - min_val) / (max_val - min_val)
+            plt.imsave(os.path.join(dirpath , 'groundseg.png'),label_map_image.astype(np.float32))
+
+
+
+
             # Img = Image.fromarray(map_im.astype('uint8'))  # .astype(np.float32))#mapped_img)
             # Img.save(os.path.join(dirpath, 'inference.png'))
             #

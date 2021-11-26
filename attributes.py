@@ -88,7 +88,7 @@ class Attributes(object):
 
         self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
                                       self.params['write_folder'],
-                                      'runs'+self.run_name)
+                                      'runs')#+self.run_name)
         if not os.path.exists(self.pred_run_path):
             os.makedirs(os.path.join(self.pred_run_path))
 

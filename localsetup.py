@@ -16,6 +16,7 @@ class LocalSetup:
             # Paths for Multivax
 
             if env == 'multivax':
+                self.model = None
                 paths_for_multivax = """ training_data_path = "/Users/multivax/Documents/PhD/4spring19/DeepLearning/DeepLearning/HW3/datasets/drive/DRIVE/training/images"
                                     #training_data_path = "/Users/multivax/Documents/PhD/4spring19/DeepLearning/DeepLearning/final_project/results/neuron_msc"
                                     testing_data_path = "/Users/multivax/Documents/PhD/4spring19/DeepLearning/DeepLearning/HW3/datasets/drive/DRIVE/test/images"
@@ -69,6 +70,7 @@ class LocalSetup:
             ## Paths for SCI  ##
             ####################
             if env == 'slurm':
+                self.model = None
 
                 self.project_base_path = "/home/sci/samlev/GeToGNN/"
                 self.dataset_base_path = os.path.join(self.project_base_path, "datasets")

@@ -33,7 +33,7 @@ def parse_params(param_dict):
     params_dict = {
         'selection_type' : int(param_dict['selection_type']),
         'load_preprocessed' : tobool(param_dict['load_preprocessed']),
-        'load_preprocessed_walks' : tobool(param_dict['load_preprocessed_walks']),
+        'load_preprocessed_walks' : False,
         'write_msc' : tobool(param_dict['write_msc']),
         'write_growing_boxes' : tobool(param_dict['write_growing_boxes']),
         'write_features' : tobool(param_dict['write_features']),

@@ -291,15 +291,15 @@ def get_train_test_val_partitions(node_gid_to_partition, gid_to_node, test_all=F
 #
 # Create prediction and label array
 # where idx prediction is idx of label for same node
-def make_binary_prediction_label_pairs(predictions, labels):
+def make_binary_prediction_label_pairs(predictions, labels, threshold=0.5):
     predictions_b = predictions
     labels_b = []
     for l in labels:
         labels_b.append(l)
     predictions_b = np.array(predictions_b)
     labels_b = np.array(labels_b)
-    predictions_b[predictions_b > 0.5] = 1.
-    predictions_b[predictions_b <= 0.5] = 0.
+    predictions_b[predictions_b >= threshold] = 1.
+    predictions_b[predictions_b < threshold] = 0.
     return predictions_b, labels_b
 
 def get_partition_feature_label_pairs(node_gid_to_partition, node_gid_to_feature,
