@@ -16,7 +16,7 @@ from metrics.model_metrics import compute_prediction_metrics
 from data_ops.set_params import set_parameters
 from compute_multirun_metrics import multi_run_metrics, multi_model_metrics
 from ml.features import get_points_from_vertices
-from data_ops.utils import grow_box
+from data_ops.utils import plot
 from data_ops.utils import tile_region
 
 from localsetup import LocalSetup
@@ -25,8 +25,8 @@ LocalSetup = LocalSetup()
 #__all__ = ['run_experiment', 'experiment_logger']
 
 class runner:
-    def __init__(self, experiment_name, window_file_base = None, clear_runs=False
-                 , sample_idx=2, multi_run = True, parameter_file_number = 1):
+    def __init__(self, experiment_name, window_file_base = None, clear_runs=False, percent_train_thresh = 0,
+                 sample_idx=2, multi_run = True, parameter_file_number = 1):
 
         # base attributes shared between models
         self.attributes = Attributes()
@@ -110,20 +110,16 @@ class runner:
                 shutil.rmtree(run_folder)
             
         self.feature_file = os.path.join( self.write_path, 'features', self.model_name)
-        self.window_file = os.path.join(LocalSetup.project_base_path, "datasets",
-                                   self.write_path,
-                                   self.window_file_base)
+        self.window_file = None    # os.path.join(LocalSetup.project_base_path, "datasets",
+                                   # self.write_path,
+                                   # self.window_file_base)
         self.parameter_file_number = parameter_file_number
 
         self.thresh_list = [0.3,0.4,0.5,0.6]
 
         self.growth_radius = 2 if self.name is not 'berghia_membrane' else 4
 
-        self.train_growth = 4
-        self.second_train_growth = 4
-        self.increase_train_growth = 7
-        self.percent_stop = 9
-        self.percent_growth = 0.1
+        self.percent_train_thresh = percent_train_thresh
 
 
 
@@ -158,6 +154,16 @@ class runner:
         for i in range(0, len(lst), 2):
             yield tuple(lst[i : i + 2])
 
+    def graph_statistics(self, node_gid_dict, gid_edge_dict, gid_split_dict):
+
+        total_number_nodes = len(node_gid_dict.keys())
+        total_training_nodes = len(node_gid_dict.keys())
+        total_number_edges = len(gid_edge_dict.keys())
+        for gid in gid_split_dict.keys():
+            if gid_split_dict[gid] == 'test':
+                total_training_nodes -= 1
+        return total_number_nodes, total_training_nodes, total_number_edges
+
 
     def grow_box(self, dims, boxes):
         IMG_WIDTH = dims[0]
@@ -165,22 +171,37 @@ class runner:
         growth_regions = []
         add_y = 0
         add_x = 0
-        percent_training = np.log2((IMG_HEIGHT*IMG_WIDTH)*0.66)
+        percent_training = IMG_HEIGHT*IMG_WIDTH
         for grow in range(int(percent_training)):
-            #if (2**(grow-1))*16 >  IMG_HEIGHT / 1.6 and (2**(grow-1))*16 >  IMG_WIDTH / 1.6:
-            #    continue
             g_box = []
             for box in boxes:
 
-                add_y = (2 ** grow)  #
-                add_x = (2 ** grow)   #
+                add_y = int( 0.05*IMG_WIDTH) * grow
+                add_x = int(0.05*IMG_HEIGHT) * grow
+
+                # if add_y + box[1] > IMG_WIDTH or box[0] - add_y < 0:
+                #     add_x = int(0.015*IMG_HEIGHT) * grow
+                # if add_x + box[3] > IMG_HEIGHT or box[2] - add_x < 0:
+                #     add_y = int(0.015 * IMG_WIDTH) * grow
+
+
+
                 growth_box = [max(0, box[0] - add_y), min(IMG_WIDTH, box[1] + add_y),
                               max(box[2] - add_x, 0), min(IMG_HEIGHT, box[3] + add_x)]
                 g_box.append(growth_box)
 
 
             growth_regions.append(g_box)
+        g_box = []
+        for box in boxes:
+            add_y = int(0.42 * IMG_WIDTH)
+            add_x = int(0.42 * IMG_HEIGHT)
 
+            growth_box = [max(0, box[0] - add_y), min(IMG_WIDTH, box[1] + add_y),
+                          max(box[2] - add_x, 0), min(IMG_HEIGHT, box[3] + add_x)]
+            g_box.append(growth_box)
+        growth_regions.append(g_box)
+        
         return growth_regions
 
     def get_box_regions(self, boxes, INVERT=False):
@@ -190,8 +211,8 @@ class runner:
         box_sets = []
         for box in boxes:
             box_set = tile_region(step_X=64, step_Y=64, step=0.5,
-                                  Y_START=box[0], Y_END=box[1],
-                                  X_START=box[2], X_END=box[3],
+                                  Y_START=box[2], Y_END=box[3],
+                                  X_START=box[0], X_END=box[1],
                                   INVERT=INVERT)
             box_sets.append(box_set)
 
@@ -202,6 +223,8 @@ class runner:
             #     X_BOX.append(box[0])
             #     Y_BOX.append(box[1])
         return boxes#X_BOX,Y_BOX
+
+
 
     def get_boxes(self, param_lines):
         boxes = []
@@ -264,7 +287,7 @@ class runner:
         for gr in range(len(growth_regions)):
 
 
-            BEGIN_LOADING_FEATURES = gr > 0
+            BEGIN_LOADING_FEATURES = True
 
             regions = growth_regions[gr]
 
@@ -276,7 +299,15 @@ class runner:
             for box in regions:
                 num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
             percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
-            percent = int(round(percent, 2) * 100)
+            percent_float = percent *100
+            print("    * percent", percent)
+            if percent_float > 50:
+                break
+            #if gr > 1 and percent_float < 1:
+            #    continue
+            if percent_float < self.percent_train_thresh:
+                continue
+            percent = int(round(percent, 2) )
 
 
             sup_getognn = supervised_getognn(model_name=self.model_name)
@@ -299,18 +330,40 @@ class runner:
                                        window_file=None,model_name="GeToGNN",
                                        X_BOX=X_BOX,
                                        Y_BOX=Y_BOX,
-                                       boxes=boxes)
+                                       regions=regions)
 
+            if BEGIN_LOADING_FEATURES:
+                sup_getognn.getognn.params['load_features'] = True
+                sup_getognn.getognn.params['write_features'] = False
+                sup_getognn.getognn.params['load_features'] = True
+                sup_getognn.getognn.params['write_feature_names'] = False
+                sup_getognn.getognn.params['save_filtered_images'] = False
+                sup_getognn.getognn.params['collect_features'] = False
+                sup_getognn.getognn.params['load_preprocessed'] = True
+                sup_getognn.getognn.params['load_geto_attr'] = True
+                sup_getognn.getognn.params['load_feature_names'] = True
+            else:
+                sup_getognn.getognn.params['load_features'] = False
+                sup_getognn.getognn.params['write_features'] = True
+                sup_getognn.getognn.params['load_features'] = False
+                sup_getognn.getognn.params['write_feature_names'] = True
+                sup_getognn.getognn.params['save_filtered_images'] = True
+                sup_getognn.getognn.params['collect_features'] = True
+                sup_getognn.getognn.params['load_preprocessed'] = False
+                sup_getognn.getognn.params['load_geto_attr'] = False
+                sup_getognn.getognn.params['load_feature_names'] = False
 
+            sup_getognn.compute_features()
 
-            self.attributes = sup_getognn.attributes
+            getognn = sup_getognn.train(run_num=str(percent))
 
-
-
-            getognn = sup_getognn.train()
-
-            getognn.update_run_info(batch_multi_run=str(percent))
+            #getognn.update_run_info(batch_multi_run=str(percent))
             getognn.run_num = percent
+
+            out_folder = os.path.join(getognn.pred_session_run_path)
+            if not os.path.exists(out_folder):
+                os.makedirs(out_folder)
+
 
             #
 
@@ -333,23 +386,16 @@ class runner:
                 getognn.write_feature_importance()
 
             training_reg_bg = np.zeros(getognn.image.shape[:2], dtype=np.uint8)
-            for x_b, y_b in zip(getognn.X_BOX, getognn.Y_BOX):
+            for x_b, y_b in zip(getognn.x_box, getognn.y_box):
                 x_box = x_b
                 y_box = y_b
                 training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
-            getognn.write_training_percentages(dir=getognn.pred_session_run_path, train_regions=training_reg_bg)
+            # getognn.write_training_percentages(dir=getognn.pred_session_run_path, train_regions=training_reg_bg)
 
             #
             # Perform remainder of runs and don't need to read feats again
             #
-            #if not getognn.params['load_features']:
-            getognn.params['write_features'] = False
-            getognn.params['load_features'] = True
-            getognn.params['write_feature_names'] = False
-            getognn.params['save_filtered_images'] = False
-            getognn.params['collect_features'] = False
-            getognn.params['load_geto_attr'] = True
-            getognn.params['load_preprocessed_walks'] = True
+
 
             getognn.supervised_train()
             getognn.record_time(round(getognn.train_time, 4),
@@ -364,42 +410,47 @@ class runner:
 
 
             # get inference metrics
-            predictions = []
-            labels = []
-            for gid in getognn.node_gid_to_prediction.keys():
-                if isinstance(getognn.node_gid_to_prediction[gid], list):
-                    # continue
-                    print("Empty pred, gid:", gid, 'pred', getognn.node_gid_to_prediction[gid])
-                    predictions.append(-1)  # gid_to_prediction[gid][1])
-                else:
-
-                    predictions.append(getognn.node_gid_to_prediction[gid])
-                labels.append(getognn.node_gid_to_label[gid][1])
-            predictions = np.array(predictions)
-            labels = np.array(labels)
+            # predictions = []
+            # labels = []
+            # for gid in getognn.node_gid_to_prediction.keys():
+            #     if isinstance(getognn.node_gid_to_prediction[gid], list):
+            #         # continue
+            #         print("Empty pred, gid:", gid, 'pred', getognn.node_gid_to_prediction[gid])
+            #         predictions.append(-1)  # gid_to_prediction[gid][1])
+            #     else:
+            #
+            #         predictions.append(getognn.node_gid_to_prediction[gid])
+            #     labels.append(getognn.node_gid_to_label[gid][1])
+            # predictions = np.array(predictions)
+            # labels = np.array(labels)
 
             # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
             #                out_folder=self.model.pred_session_run_path)
 
-            opt_thresh = compute_getognn_metrics(getognn=getognn)
+            predictions, labels, opt_thresh = compute_getognn_metrics(getognn=getognn)
 
 
             getognn.write_arc_predictions(dir=getognn.pred_session_run_path)
             getognn.draw_segmentation(dirpath=getognn.pred_session_run_path)
+            getognn.write_gnode_partitions(dir=getognn.pred_session_run_path)  # self.getognn.session_name)
+            getognn.write_selection_bounds(dir=getognn.pred_session_run_path)  # self.getognn.session_name)
 
             # update newly partitioned/infered graoh
             G = getognn.get_graph()
             getognn.equate_graph(G)
 
-            pred_labels_conf_matrix = np.zeros(getognn.image.shape[:2], dtype=np.float32)  # dtype=np.uint8)
-            pred_labels_msc = np.ones(getognn.image.shape[:2], dtype=np.float32) * 0.25
-            gt_labels_msc = np.ones(getognn.image.shape[:2], dtype=np.float32) * 0.25
+            total_number_nodes, total_training_nodes, total_number_edges = self.graph_statistics(getognn.gid_gnode_dict,
+                                                                                                 getognn.gid_edge_dict,
+                                                                                                 getognn.node_gid_to_partition)
+            getognn.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges)
+
+            getognn.write_training_graph_percentages(dir=getognn.pred_session_run_path, graph_orders=(total_number_nodes,total_training_nodes))
+
+            pred_labels_conf_matrix = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(0.25,opt_thresh/2.) # dtype=np.uint8)
+            pred_labels_msc = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(0.25, opt_thresh/2.)
+            gt_labels_msc = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(.25,opt_thresh/2.)
             pred_prob_im = np.zeros(getognn.image.shape[:2], dtype=np.float32)
-            training_reg_bg = np.zeros(getognn.image.shape[:2], dtype=np.uint8)
-            for x_b, y_b in zip(Y_BOX, X_BOX):  # RF.x_box, RF.y_box):
-                x_box = x_b
-                y_box = y_b
-                training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+
             predictions_topo_bool = []
             labels_topo_bool = []
             check = 30
@@ -437,12 +488,12 @@ class runner:
                 t = 0
                 if infval >= opt_thresh:
                     if label == 1:
-                        t = 0.25  # 1
+                        t = 4  # 1
                     else:
-                        t = .75  # 3
+                        t = 2  # 3
                 else:
                     if label == 1:
-                        t = .5  # 2
+                        t = 3  # 2
                     else:
                         t = 1  # 4
 
@@ -462,58 +513,501 @@ class runner:
 
             out_folder = getognn.pred_session_run_path
 
-            num_fig = 5
-            fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-            ax[0].imshow(getognn.image)
-            ax[0].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            ax[0].set_title('Image')
-            ax[1].imshow(gt_labels_msc)
-            ax[1].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            ax[1].set_title('Polyline Ground Truth Labeling')
-            ax[2].imshow(pred_labels_conf_matrix)
-            ax[2].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            ax[2].set_title('MSC TF TP TN FN')
-            ax[3].imshow(pred_prob_im)
-            ax[3].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            ax[3].set_title('MSC Pixel Inference Confidence')
-            ax[4].imshow(pred_labels_msc)
-            ax[4].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            ax[4].set_title('MSC Binary Prediction')
-            # fig.tight_layout()
+            # num_fig = 5
+            # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+            # ax[0].imshow(getognn.image)
+            # ax[0].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            # ax[0].set_title('Image')
+            # ax[1].imshow(gt_labels_msc)
+            # ax[1].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            # ax[1].set_title('Polyline Ground Truth Labeling')
+            # ax[2].imshow(pred_labels_conf_matrix)
+            # ax[2].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            # ax[2].set_title('MSC TF TP TN FN')
+            # ax[3].imshow(pred_prob_im)
+            # ax[3].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            # ax[3].set_title('MSC Pixel Inference Confidence')
+            # ax[4].imshow(pred_labels_msc)
+            # ax[4].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
+            # ax[4].set_title('MSC Binary Prediction')
+            # # fig.tight_layout()
+            #
+            #
+            # # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+            # # if not os.path.exists(batch_folder):
+            # #    os.makedirs(batch_folder)
+            # plt.savefig(os.path.join(out_folder, "gnn_pix_imgs.pdf"))
+            #
+            # num_fig = 5
+            # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+            # ax[0].imshow(getognn.image)
+            # # ax[0].contour(region_contour[400:464,400:464], [0.0, 0.15], linewidths=0.5)
+            # ax[0].set_title('Image')
+            # ax[1].imshow(gt_labels_msc[300:464, 300:464])
+            # ax[1].set_title('MSC Ground Segmentation')
+            #
+            # ax[2].imshow(pred_labels_conf_matrix[300:464, 300:464])
+            # # ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+            # ax[2].set_title('MSC TF TP TN FN')
+            #
+            # ax[3].imshow(pred_prob_im[300:464, 300:464])
+            # #x[4.contour(region_contour, [0.0, 0.15], linewidths=0.5)
+            # ax[3].set_title('MSC Pixel Inference Confidence')
+            # ax[4].imshow(pred_labels_msc[300:464, 300:464])
+            # # ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+            # ax[4].set_title('MSC Binary Prediction')
+            #
+            # plt.savefig(os.path.join(out_folder, "gnn_pix_zoom_imgs.pdf"))
+
+
+
+            images = [getognn.image, gt_labels_msc, pred_labels_msc,
+                      pred_prob_im]
+            names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
+                     "Line Foreground Probability"]
+            for image, name in zip(images, names):
+                plot(image_set=[image, training_reg_bg], name=name, type='contour', write_path=out_folder)
+
+            image_set = [pred_labels_msc, training_reg_bg, pred_labels_conf_matrix]
+            plot(image_set, name="TP FP TF TN Line Prediction",
+                 type='confidence', write_path=out_folder)
+
+            plot(image_set, name="TP FP TF TN Line Prediction",
+                 type='zoom', write_path=out_folder)
+
+            for image, name in zip(images, names):
+                plot(image_set=[image, training_reg_bg], name=name, type='zoom', write_path=out_folder)
+
+
 
 
             # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
             # if not os.path.exists(batch_folder):
             #    os.makedirs(batch_folder)
-            plt.savefig(os.path.join(out_folder, "gnn_pix_imgs.pdf"))
+            #
 
-            num_fig = 5
-            fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-            ax[0].imshow(getognn.image)
-            # ax[0].contour(region_contour[400:464,400:464], [0.0, 0.15], linewidths=0.5)
-            ax[0].set_title('Image')
-            ax[1].imshow(gt_labels_msc[300:464, 300:464])
-            ax[1].set_title('MSC Ground Segmentation')
-
-            ax[2].imshow(pred_labels_conf_matrix[300:464, 300:464])
-            # ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-            ax[2].set_title('MSC TF TP TN FN')
-
-            ax[3].imshow(pred_prob_im[300:464, 300:464])
-            #x[4.contour(region_contour, [0.0, 0.15], linewidths=0.5)
-            ax[3].set_title('MSC Pixel Inference Confidence')
-            ax[4].imshow(pred_labels_msc[300:464, 300:464])
-            # ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-            ax[4].set_title('MSC Binary Prediction')
+            del getognn
 
 
-            # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
-            # if not os.path.exists(batch_folder):
-            #    os.makedirs(batch_folder)
-            plt.savefig(os.path.join(out_folder, "gnn_pix_zoom_imgs.pdf"))
 
-            getognn = None
-            sup_getognn = None
+    #
+    #
+    #                   *     UNET            *
+    #
+    #
+    #
+    def run_unet(self,multi_run=False, dims=None, boxes=None):
+
+
+
+
+        IMG_WIDTH = dims[0]
+        IMG_HEIGHT = dims[1]
+
+        growth_regions = self.grow_box(dims=dims, boxes=boxes)
+
+        all_boxes = self.get_box_regions([[0, IMG_WIDTH, 0, IMG_HEIGHT]])
+        X_BOX_all = [b[0] for b in all_boxes]
+        Y_BOX_all = [b[1] for b in all_boxes]
+
+        exp_folder = ''
+
+
+        for gr in range(len(growth_regions)):
+
+
+            BEGIN_LOADING_FEATURES = True
+
+            regions = growth_regions[gr]
+
+            BOXES = self.get_box_regions(regions)
+            X_BOX = [b[0] for b in BOXES]
+            Y_BOX = [b[1] for b in BOXES]
+
+
+            num_percent = 0
+            for box in regions:
+                num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
+            percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
+            percent_float=percent *100
+
+            if percent_float > 50:
+                break
+            #if gr > 1 and percent_float < 1:
+            #    continue
+            if percent_float < self.percent_train_thresh:
+                continue
+            print("    * percent", percent)
+            # if percent_float > 60:
+            #     break
+
+            percent = int(round(percent_float,2))
+
+
+
+            UNet = UNetwork(
+                            write_folder = self.write_path,
+                            ground_truth_label_file=self.ground_truth_label_file,
+                            parameter_file_number = self.parameter_file_number,
+                            geomsc_fname_base = self.msc_file,
+                            label_file=self.ground_truth_label_file,
+                            load_feature_graph_name=False,
+                            image=self.image,
+                            name=self.name
+                            )
+            UNet.set_attributes(
+                BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                            in_channel=1, out_channel=1,
+                            ground_truth_label_file=self.ground_truth_label_file,
+                            skip_connect=True,
+                            run_num=percent,
+                            parameter_file_number = self.parameter_file_number,
+                            geomsc_fname_base = self.msc_file,
+                            label_file=self.ground_truth_label_file,
+                            model_name=self.model_name,
+                            load_feature_graph_name=False,
+                            image=self.image,
+                            name=self.name,
+                            growth_radius=self.growth_radius,
+                            # compute_features=num_samp!=0,
+                            training_size=percent,
+                            # region_list=samp,
+                            X_BOX=X_BOX,
+                            Y_BOX=Y_BOX,
+                            X_BOX_all=X_BOX_all,
+                            Y_BOX_all=Y_BOX_all,
+                            boxes=regions,
+                            all_boxes=all_boxes,
+                            )
+            # UNet.update_run_info(batch_multi_run=str(percent))
+            # UNet.run_num = percent
+            # UNet.training_size = percent
+
+            debug = False
+            INTERACTIVE = False
+
+
+            trained_model = UNet.train( test = debug)
+
+
+            pred_thresh = 0.5
+            preds = UNet.infer(model=trained_model, training_window_file=self.window_file, load_pretrained=False,
+                        pred_thresh=pred_thresh, test=debug, INTERACTIVE=INTERACTIVE)
+
+
+            UNet.compute_metrics( pred_images=preds, # scores=scores, pred_labels=pred_labels, pred_thresh = pred_thresh,
+                                 # predictions_topo=predictions_topo, labels_topo=labels_topo,
+                                 INTERACTIVE= INTERACTIVE)
+
+
+
+
+            del UNet
+
+
+
+        # multi_run_metrics(model='unet', exp_folder=exp_folder, bins=7,
+        #
+        #                   # data_folder = self.model.params['write_folder'].split('/')[0],
+        #                   runs='runs', plt_title=exp_folder.split('/')[-1],
+        #                   batch_multi_run=True)
+
+
+
+    #
+    #
+    #                     *  RANDOM FOREST *
+    #
+    #
+    def run_random_forest(self, multi_run , boxes=None, dims= None, learning='pixel'):
+        if multi_run:
+
+            IMG_WIDTH = dims[0]
+            IMG_HEIGHT = dims[1]
+
+            growth_regions = self.grow_box(dims=dims, boxes=boxes)
+
+
+
+
+
+            start_exp = 1
+
+            for gr in  range(len(growth_regions)):
+
+
+                BEGIN_LOADING_FEATURES = True
+
+                regions = growth_regions[gr]
+
+                BOXES = self.get_box_regions(regions)
+                X_BOX = [b[0] for b in BOXES]
+                Y_BOX = [b[1] for b in BOXES]
+
+                num_percent = 0
+                for box in regions:
+                    num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
+                percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
+                percent_float = percent * 100
+                if percent_float > 50:
+                    break
+                #if gr > 1 and percent_float < 1:
+                #    continue
+                if percent_float < self.percent_train_thresh:
+                    continue
+                percent = int(round(percent_float, 2))
+
+
+
+
+
+                RF = RandomForest(training_selection_type='box',
+                                  classifier = learning,
+                                  run_num=percent,
+                                  parameter_file_number = self.parameter_file_number,
+                                  name=self.name,
+                                  image=self.image,
+                                  feature_file=self.feature_file,
+                                  geomsc_fname_base = self.msc_file,
+                                  label_file=self.ground_truth_label_file,
+                                  write_folder=self.write_path,
+                                 model_name=self.model_name,
+                                  load_feature_graph_name=None,
+                                  write_json_graph = False,
+                                  X_BOX=X_BOX,
+                                  Y_BOX=Y_BOX,
+                                  boxes=regions)
+
+
+
+
+
+                RF.build_random_forest(
+                    BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES, type = learning,
+                                       ground_truth_label_file=self.ground_truth_label_file,
+                                       X_BOX=X_BOX,Y_BOX=Y_BOX, boxes=regions)
+
+                #RF.run_num = 0
+
+
+
+                partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
+                    RF.node_gid_to_partition,
+                    RF.node_gid_to_feature,
+                    RF.node_gid_to_label,
+                    test_all=True)
+
+
+                gid_features_dict = partition_feat_dict['all']
+                gid_label_dict = partition_label_dict['all']
+                train_gid_label_dict = partition_label_dict['train']
+                train_gid_feat_dict = partition_feat_dict['train']
+
+                n_trees = RF.params['number_forests']
+                tree_depth = RF.params['forest_depth']
+
+                if RF.params['forest_class_weights']:
+                    class_1_weight = RF.params['class_1_weight']
+                    class_2_weight = RF.params['class_2_weight']
+                else:
+                    class_1_weight = 1.0
+                    class_2_weight = 1.0
+
+                if learning=='pixel':
+                    predictions, labels, node_gid_to_prediction = RF.pixel_classifier(self.attributes.node_gid_to_prediction,
+                                                                                train_labels=train_gid_label_dict,
+                                                                                train_features=train_gid_feat_dict,
+                                                                                test_labels=gid_label_dict,
+                                                                                test_features=gid_features_dict,
+                                                                                n_trees=n_trees,
+                                                                                class_1_weight=class_1_weight,
+                                                                                      growth_radius=self.growth_radius,
+                                                                                class_2_weight=class_2_weight,
+                                                                                weighted_distribution=RF.params[
+                                                                                    'forest_class_weights'],
+                                                                                depth=tree_depth)
+                else:
+                    predictions, labels, node_gid_to_prediction = RF.classifier(self.attributes.node_gid_to_prediction,
+                                                                            train_labels=train_gid_label_dict,
+                                                                            train_features=train_gid_feat_dict,
+                                                                            test_labels=gid_label_dict,
+                                                                            test_features=gid_features_dict,
+                                                                            n_trees=n_trees,
+                                                                            class_1_weight=class_1_weight,
+                                                                            class_2_weight=class_2_weight,
+                                                                            weighted_distribution=RF.params['forest_class_weights'],
+                                                                            depth=tree_depth)
+                    ###
+
+
+                    # get inference metrics
+                    # predictions = []
+                    # labels = []
+                    # for gid in RF.node_gid_to_prediction.keys():
+                    #
+                    #     if isinstance(RF.node_gid_to_prediction[gid], list):
+                    #         # continue
+                    #         print("Empty pred, gid:", gid, 'pred', RF.node_gid_to_prediction[gid])
+                    #         if RF.node_gid_to_partition[gid] != 'train':
+                    #             print('empty')
+                    #             predictions.append(RF.node_gid_to_prediction[gid][1])  # gid_to_prediction[gid][1])
+                    #     else:
+                    #         if RF.node_gid_to_partition[gid] != 'train':
+                    #             predictions.append(RF.node_gid_to_prediction[gid])
+                    #             labels.append(RF.node_gid_to_label[gid])#[1])
+
+                    predictions = np.array(predictions)
+                    labels = np.array(labels)
+
+                    # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
+                    #                out_folder=self.model.pred_session_run_path)
+
+                    #predictions, labels, opt_thresh = compute_getognn_metrics(getognn=RF)
+
+                    RF.write_arc_predictions(dir=RF.pred_session_run_path)
+                    RF.draw_segmentation(dirpath=RF.pred_session_run_path)
+
+                    # update newly partitioned/infered graoh
+                    #RF.equate_graph(G)
+
+                    pred_labels_conf_matrix = np.zeros(RF.image.shape[:2], dtype=np.float32)# * min(0.25, opt_thresh/2.) # dtype=np.uint8)
+                    pred_labels_msc = np.zeros(RF.image.shape[:2], dtype=np.float32)# * min(0.25, opt_thresh/2.)
+                    gt_labels_msc = np.zeros(RF.image.shape[:2], dtype=np.float32) #* min(0.25, opt_thresh/2.)
+                    pred_prob_im = np.zeros(RF.image.shape[:2], dtype=np.float32)
+                    training_reg_bg = np.zeros(RF.image.shape[:2], dtype=np.uint8)
+                    for x_b, y_b in zip(RF.x_box, RF.y_box):  # RF.x_box, RF.y_box):
+                        x_box = x_b
+                        y_box = y_b
+                        training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+                    predictions_topo_bool = []
+                    labels_topo_bool = []
+                    check = 30
+                    for gid in RF.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
+
+                        gnode = RF.gid_gnode_dict[gid]
+                        label = RF.node_gid_to_label[gid]
+                        label = label if type(label) != list else label[1]
+                        line = get_points_from_vertices([gnode])
+                        # else is fg
+                        cutoff = RF.opt_thresh
+
+                        vals = []
+
+                        for point in line:
+                            ly = int(point[0])
+                            lx = int(point[1])
+                            pred = RF.node_gid_to_prediction[gid]
+                            vals.append(pred)
+
+                        inferred = np.array(vals, dtype="float32")
+                        infval = np.average(inferred)
+                        pred_mode = infval
+
+                        RF.node_gid_to_prediction[gid] = [1. - infval, infval]
+
+                        RF.node_gid_to_prediction[gid] = [1. - infval, infval]
+                        if check >= 0:
+                            check -= 1
+
+                        t = 0
+                        if infval >= RF.opt_thresh:
+                            if label == 1:
+                                t = 4  # 0.25  # 1
+                            else:
+                                t = 2  # .75  # 3
+                        else:
+                            if label == 1:
+                                t = 3  # .5  # 2
+                            else:
+                                t = 1  # 4
+
+                        for point in line:
+                            ly = int(point[0])
+                            lx = int(point[1])
+                            pred_labels_conf_matrix[lx, ly] = t
+                            pred_labels_msc[lx, ly] = 1 if infval >= RF.opt_thresh else 0
+                            gt_labels_msc[lx, ly] = label
+                            pred_prob_im[lx, ly] = infval
+                            if training_reg_bg[lx, ly] != 1:
+                                RF.node_gid_to_partition[gid] = 'test'
+                                # predictions_topo_bool.append(infval >= cutoff)
+                                # gt_label = seg_whole[lx, ly]
+                                labels_topo_bool.append(label >= cutoff)
+
+                    out_folder = RF.pred_session_run_path
+
+
+
+
+                    ###############
+                    images = [RF.image, gt_labels_msc, pred_labels_msc,
+                              pred_prob_im]
+                    names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
+                             "Line Foreground Probability"]
+                    for image, name in zip(images, names):
+                        plot(image_set=[image,training_reg_bg], name=name, type='contour', write_path=out_folder)
+
+                    image_set = [pred_labels_msc, training_reg_bg, pred_labels_conf_matrix]
+                    plot(image_set, name="TP FP TF TN Line Prediction",
+                         type='confidence', write_path=out_folder)
+
+                    plot(image_set, name="TP FP TF TN Line Prediction",
+                         type='zoom', write_path=out_folder)
+
+                    for image, name in zip(images, names):
+                        plot(image_set=[image, training_reg_bg], name=name, type='zoom', write_path=out_folder)
+
+                    np.savez_compressed(os.path.join(out_folder, 'pred_matrix.npz'), pred_prob_im)
+                    np.savez_compressed(os.path.join(out_folder, 'training_matrix.npz'), training_reg_bg)
+
+
+
+                    ####################################################################################3
+                out_folder = RF.attributes.pred_session_run_path
+
+                RF.write_arc_predictions(RF.pred_session_run_path)
+                RF.draw_segmentation(dirpath=RF.pred_session_run_path)
+
+                compute_prediction_metrics('random_forest', predictions, labels, out_folder)
+                #predictions, labels, opt_thresh = compute_getognn_metrics(getognn=RF)
+
+                # training_reg_bg = np.zeros(RF.image.shape[:2], dtype=np.uint8)
+                # for x_b, y_b in zip(RF.X_BOX,RF.Y_BOX):
+                #     x_box = x_b
+                #     y_box = y_b
+                #     training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+
+
+                # training_reg_bg = np.zeros(RF.image.shape[:2], dtype=np.uint8)
+                # for region in RF.box_regions:
+                #     training_reg_bg[region[0]:region[1], region[2]:region[3]] = 1
+                total_number_nodes, total_training_nodes, total_number_edges = self.graph_statistics(RF.gid_gnode_dict,
+                                                                                                     RF.gid_edge_dict,
+                                                                                                     RF.node_gid_to_partition)
+                RF.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges)
+
+                if learning=='pixel':
+                    RF.write_training_percentages(dir=RF.pred_session_run_path,
+                                                  train_regions=RF.training_reg_bg)
+                else:
+                    RF.write_training_graph_percentages(dir=RF.pred_session_run_path,
+                                                     graph_orders=(total_number_nodes, total_training_nodes))
+                #if RF.params['load_feature_names']:
+                #    RF.load_feature_names()
+                if RF.params['feature_importance']:
+                    RF.feature_importance(feature_names=RF.feature_names,
+                                          features=gid_features_dict,
+                                          labels=gid_label_dict,
+                                          plot=False)
+                    RF.write_feature_importance()
+
+                del RF
+                start_exp = 0
+
+
+
+
+
 
 
 
@@ -673,267 +1167,6 @@ class runner:
         manp_mlp = mlp_accuracy[1]
         manr_mlp = mlp_accuracy[2]
         mlp_accuracy = mlp_accuracy[0]'''
-
-
-    #
-    #
-    #                   *     UNET            *
-    #
-    #
-    #
-    def run_unet(self,multi_run=False, dims=None, boxes=None):
-
-
-
-
-        IMG_WIDTH = dims[0]
-        IMG_HEIGHT = dims[1]
-
-        growth_regions = self.grow_box(dims=dims, boxes=boxes)
-
-
-
-        exp_folder = ''
-
-
-        for gr in range(len(growth_regions)):
-
-
-            BEGIN_LOADING_FEATURES = gr > 0
-
-            regions = growth_regions[gr]
-
-            BOXES = self.get_box_regions(regions,INVERT=True)
-            X_BOX = [b[0] for b in BOXES]
-            Y_BOX = [b[1] for b in BOXES]
-
-            all_boxes = self.get_box_regions([[0, IMG_WIDTH, 0, IMG_HEIGHT]])
-            X_BOX_all = [b[0] for b in all_boxes]
-            Y_BOX_all = [b[1] for b in all_boxes]
-
-
-            num_percent = 0
-            for box in regions:
-                num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
-            percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
-            percent = int(round(percent, 2)*100)
-
-
-
-            UNet = UNetwork(
-                            write_folder = self.write_path,
-                            ground_truth_label_file=self.ground_truth_label_file,
-                            run_num=percent,
-                            parameter_file_number = self.parameter_file_number,
-                            geomsc_fname_base = self.msc_file,
-                            label_file=self.ground_truth_label_file,
-                            load_feature_graph_name=False,
-                            image=self.image,
-                            name=self.name
-                            )
-            UNet.set_attributes(
-                BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
-                            in_channel=1, out_channel=1,
-                            ground_truth_label_file=self.ground_truth_label_file,
-                            skip_connect=True,
-                            run_num=percent,
-                            parameter_file_number = self.parameter_file_number,
-                            geomsc_fname_base = self.msc_file,
-                            label_file=self.ground_truth_label_file,
-                            model_name=self.model_name,
-                            load_feature_graph_name=False,
-                            image=self.image,
-                            name=self.name,
-                            growth_radius=self.growth_radius,
-                            # compute_features=num_samp!=0,
-                            training_size=percent,
-                            # region_list=samp,
-                            X_BOX=X_BOX,
-                            Y_BOX=Y_BOX,
-                            X_BOX_all=X_BOX_all,
-                            Y_BOX_all=Y_BOX_all,
-                            boxes=regions,
-                            all_boxes=all_boxes,
-                            )
-            # UNet.update_run_info(batch_multi_run=len(X_BOX))
-            # UNet.run_num = percent
-
-            debug = False
-            INTERACTIVE = False
-
-
-            UNet.train(test = debug)
-
-
-            pred_thresh = 0.5
-            preds = UNet.infer(training_window_file=self.window_file, load_pretrained=False,
-                        pred_thresh=pred_thresh, test=debug, INTERACTIVE=INTERACTIVE)
-
-
-            UNet.compute_metrics( pred_images=preds, # scores=scores, pred_labels=pred_labels, pred_thresh = pred_thresh,
-                                 # predictions_topo=predictions_topo, labels_topo=labels_topo,
-                                 INTERACTIVE= INTERACTIVE)
-
-
-
-
-            UNet = None
-
-
-
-        multi_run_metrics(model='unet', exp_folder=exp_folder, bins=7,
-
-                          # data_folder = self.model.params['write_folder'].split('/')[0],
-                          runs='runs', plt_title=exp_folder.split('/')[-1],
-                          batch_multi_run=True)
-
-
-
-    #
-    #
-    #                     *  RANDOM FOREST *
-    #
-    #
-    def run_random_forest(self, multi_run , boxes=None, dims= None, learning='pixel'):
-        if multi_run:
-
-            IMG_WIDTH = dims[0]
-            IMG_HEIGHT = dims[1]
-
-            growth_regions = self.grow_box(dims=dims, boxes=boxes)
-
-
-
-
-
-
-
-            for gr in  range(len(growth_regions)):
-
-
-                BEGIN_LOADING_FEATURES = gr > 0
-
-                regions = growth_regions[gr]
-
-
-                BOXES = self.get_box_regions(regions)
-                X_BOX = [b[0] for b in BOXES]
-                Y_BOX = [b[1] for b in BOXES]
-
-                num_percent = 0
-                for box in regions:
-                    num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
-                percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
-                percent = int(round(percent, 2) * 100)
-
-
-
-
-
-                RF = RandomForest(training_selection_type='box',
-                                  classifier = learning,
-                                  run_num=percent,
-                                  parameter_file_number = self.parameter_file_number,
-                                  name=self.name,
-                                  image=self.image,
-                                  feature_file=self.feature_file,
-                                  geomsc_fname_base = self.msc_file,
-                                  label_file=self.ground_truth_label_file,
-                                  write_folder=self.write_path,
-                                 model_name=self.model_name,
-                                  load_feature_graph_name=None,
-                                  write_json_graph = False,
-                                  X_BOX=X_BOX,
-                                  Y_BOX=Y_BOX,
-                                  boxes=regions)
-
-
-
-
-
-                RF.build_random_forest(
-                    BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
-                                       ground_truth_label_file=self.ground_truth_label_file,
-                                       X_BOX=X_BOX,Y_BOX=Y_BOX, boxes=regions)
-
-                #RF.run_num = 0
-
-
-
-                partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
-                    RF.node_gid_to_partition,
-                    RF.node_gid_to_feature,
-                    RF.node_gid_to_label,
-                    test_all=True)
-
-
-                gid_features_dict = partition_feat_dict['all']
-                gid_label_dict = partition_label_dict['all']
-                train_gid_label_dict = partition_label_dict['train']
-                train_gid_feat_dict = partition_feat_dict['train']
-
-                n_trees = RF.params['number_forests']
-                tree_depth = RF.params['forest_depth']
-
-                if RF.params['forest_class_weights']:
-                    class_1_weight = RF.params['class_1_weight']
-                    class_2_weight = RF.params['class_2_weight']
-                else:
-                    class_1_weight = 1.0
-                    class_2_weight = 1.0
-
-                if learning=='pixel':
-                    predictions, labels, node_gid_to_prediction = RF.pixel_classifier(self.attributes.node_gid_to_prediction,
-                                                                                train_labels=train_gid_label_dict,
-                                                                                train_features=train_gid_feat_dict,
-                                                                                test_labels=gid_label_dict,
-                                                                                test_features=gid_features_dict,
-                                                                                n_trees=n_trees,
-                                                                                class_1_weight=class_1_weight,
-                                                                                      growth_radius=self.growth_radius,
-                                                                                class_2_weight=class_2_weight,
-                                                                                weighted_distribution=RF.params[
-                                                                                    'forest_class_weights'],
-                                                                                depth=tree_depth)
-                else:
-                    predictions, labels, node_gid_to_prediction = RF.classifier(self.attributes.node_gid_to_prediction,
-                                                                            train_labels=train_gid_label_dict,
-                                                                            train_features=train_gid_feat_dict,
-                                                                            test_labels=gid_label_dict,
-                                                                            test_features=gid_features_dict,
-                                                                            n_trees=n_trees,
-                                                                            class_1_weight=class_1_weight,
-                                                                            class_2_weight=class_2_weight,
-                                                                            weighted_distribution=RF.params['forest_class_weights'],
-                                                                            depth=tree_depth)
-                out_folder = RF.attributes.pred_session_run_path
-
-                RF.write_arc_predictions(RF.pred_session_run_path)
-                RF.draw_segmentation(dirpath=RF.pred_session_run_path)
-
-                compute_prediction_metrics('random_forest', predictions, labels, out_folder)
-
-                training_reg_bg = np.zeros(RF.image.shape[:2], dtype=np.uint8)
-                for x_b, y_b in zip(RF.X_BOX,RF.Y_BOX):
-                    x_box = x_b
-                    y_box = y_b
-                    training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
-                RF.write_training_percentages(dir=RF.pred_session_run_path,
-                                              train_regions=training_reg_bg)
-
-                #if RF.params['load_feature_names']:
-                #    RF.load_feature_names()
-                if RF.params['feature_importance']:
-                    RF.feature_importance(feature_names=RF.feature_names,
-                                          features=gid_features_dict,
-                                          labels=gid_label_dict,
-                                          plot=False)
-                    RF.write_feature_importance()
-
-
-
-
-                RF = None
 
 
 

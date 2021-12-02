@@ -3,11 +3,13 @@ from skimage import  segmentation, feature, future
 import numpy as np
 from functools import partial
 import matplotlib.pyplot as plt
+from matplotlib import colors
 import os
 from copy import deepcopy
 import time
 
 from mlgraph import MLGraph
+from getofeaturegraph import GeToFeatureGraph
 from getograph import  Attributes
 from proc_manager import experiment_manager
 from data_ops import set_parameters
@@ -18,15 +20,15 @@ from sklearn.metrics import f1_score
 from ml.features import multiscale_basic_features
 from scipy import ndimage
 from data_ops import dataflow
-from data_ops.utils import grow_box
+from data_ops.utils import plot
 
-
+from data_ops.collect_data import collect_training_data, compute_geomsc, collect_datasets
 
 
 
 class RandomForest(MLGraph):
 
-    def __init__(self, training_selection_type='box',run_num=1, classifier='msc',parameter_file_number = None,
+    def __init__(self, training_selection_type='box',run_num=1, classifier_type='msc',parameter_file_number = None,
                  geomsc_fname_base = None, label_file=None, X_BOX=None,Y_BOX=None,boxes=None,
                  model_name=None, load_feature_graph_name=False,image=None,  **kwargs):
 
@@ -34,7 +36,7 @@ class RandomForest(MLGraph):
 
         self.details = "Random forest classifier with feature importance"
 
-        self.type = "random_forest"+'_'+classifier
+        self.type = "random_forest"+'_'+classifier_type
 
 
 
@@ -99,16 +101,21 @@ class RandomForest(MLGraph):
         # self.X_BOX = X_BOX
         # self.Y_BOX = Y_BOX
         # self.boxes = boxes
+        self.name = kwargs['name']
+        self.image_path = image
+
+        self.X_BOX = X_BOX
+        self.Y_BOX = Y_BOX
 
 
 
     def build_random_forest(self,
                             BEGIN_LOADING_FEATURES=False,
-                 ground_truth_label_file=None, write_path=None,
+                 ground_truth_label_file=None, write_path=None, type = 'pixel',
                             feature_file=None,X_BOX=None, Y_BOX=None, boxes=None,
                  window_file=None, model_name="GeToGNN"):
 
-
+        self.attributes = self.get_attributes()
 
 
         if BEGIN_LOADING_FEATURES:
@@ -121,7 +128,16 @@ class RandomForest(MLGraph):
             self.params['load_preprocessed'] = True
             self.params['load_geto_attr'] = True
             self.params['load_feature_names'] = True
-
+        else:
+            self.params['load_features'] = False
+            self.params['write_features'] = True
+            self.params['load_features'] = False
+            self.params['write_feature_names'] = True
+            self.params['save_filtered_images'] = True
+            self.params['collect_features'] = True
+            self.params['load_preprocessed'] = False
+            self.params['load_geto_attr'] = False
+            self.params['load_feature_names'] = False
 
         if self.params['load_geto_attr']:
             if self.params['geto_as_feat']:
@@ -158,13 +174,112 @@ class RandomForest(MLGraph):
         self.read_labels_from_file(file=ground_truth_label_file)
 
 
+        # if self.type == 'pixel':
+        #     _ , _ , box_set = self.box_select_geomsc_training(x_range=X_BOX,
+        #                                                                                  y_range=Y_BOX,
+        #                                                                                  boxes=boxes)#
+        #     self.X_BOX, self.Y_BOX = box_set
+        # else:
+        X_BOX = []
+        Y_BOX = []
+        box_sets = []
+        for box in boxes:
+            X_BOX.append((box[0],box[1]))
+            Y_BOX.append((box[2], box[3]))
 
-        training_set , test_and_val_set, empty_set = self.box_select_geomsc_training(x_range=X_BOX,
-                                                                                     y_range=Y_BOX,
-                                                                                     boxes=boxes)#params['y_box'])
+        for box_pair in box_sets:
+            for box in box_pair:
+                X_BOX.append(box[0])
+                Y_BOX.append(box[1])
+        _, _, box_set = self.box_select_geomsc_training(x_range=X_BOX,
+                                                        y_range=Y_BOX,
+                                                        boxes=None)  #
+        self.X_BOX, self.Y_BOX = box_set
+
 
         self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,
                                                  validation_samples = 1)
+
+        self.box_regions = boxes
+        # X_BOX = []
+        # Y_BOX = []
+        # box_sets = []
+        # for box in boxes:
+        #     box_set = tile_region(step_X=64, step_Y=64, step=0.5,
+        #                           Y_START=box[0], Y_END=box[1],
+        #                           X_START=box[2], X_END=box[3])
+        #     box_sets.append(box_set)
+        #
+        # for box_pair in box_sets:
+        #     for box in box_pair:
+        #         X_BOX.append(box[0])
+        #         Y_BOX.append(box[1])
+        #self.X_BOX = X_BOX
+        #self.Y_BOX = Y_BOX
+
+        # X_BOX_all = []
+        # Y_BOX_all = []
+        # box_sets_test = []
+        # for box in [[0, self.image.shape[0], 0, self.image.shape[1]]]:
+        #     box_set_test = tile_region(step_X=64, step_Y=64, step=0.5,
+        #                           Y_START=0, Y_END=self.image.shape[1],
+        #                           X_START=0, X_END=self.image.shape[0])
+        #     box_sets_test.append(box_set_test)
+        #
+        #
+        # for box_pair in box_sets_test:
+        #     for box in box_pair:
+        #         X_BOX_all.append(box[0])
+        #         Y_BOX_all.append(box[1])
+        # self.X_BOX_all = X_BOX_all
+        # self.Y_BOX_all = Y_BOX_all
+
+        num_percent = 0
+        for xbox,ybox in zip(self.X_BOX, self.Y_BOX):
+            num_percent += float((xbox[1] - xbox[0]) * (ybox[1] - ybox[0]))
+        percent = num_percent / float(self.image.shape[0] * self.image.shape[1])
+        percent_f = percent * 100
+        print("    * ", percent_f)
+        percent = int(round(percent_f))
+        self.training_size = percent
+        self.run_num = percent
+
+        self.update_run_info(batch_multi_run=str(self.training_size))
+        out_folder = os.path.join(self.pred_session_run_path)
+
+        if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
+
+        self.training_reg_bg = np.zeros(self.image.shape[:2], dtype=np.uint8)
+        for region in self.box_regions:
+            self.training_reg_bg[region[0]:region[1], region[2]:region[3]] = 1
+
+        self.data_array, self.data_set = collect_datasets(name=self.name, image=self.image_path,
+                                                          dim_invert=self.params['dim_invert'],
+                                                          format=self.params['format'])
+
+
+        self.train_dataloader = collect_training_data(
+            dataset=self.data_set,
+            data_array=self.data_array,
+            params=self.params,
+            name=self.name,
+            format=format,
+            msc_file=None,
+            dim_invert=self.params['dim_invert'])
+
+        self.image, self.msc_collection, self.mask, self.segmentation = self.train_dataloader[
+            int(self.params['train_data_idx'])]
+        self.image = self.image.astype(np.float32)
+        max_val = np.max(self.image)
+        min_val = np.min(self.image)
+        self.image = (self.image - min_val) / (max_val - min_val)
+        # self.image = self.image if len(self.image.shape) == 2 else np.transpose(np.mean(self.image, axis=1), (1, 0))
+
+        self.X = self.image.shape[0]
+        self.Y = self.image.shape[1] if len(self.image.shape) == 2 else self.image.shape[2]
+
+
 
 
 
@@ -176,6 +291,9 @@ class RandomForest(MLGraph):
         print("                Random_Forest MSC   ")
         print("number trees: ", n_trees)
         print("depth: ", depth)
+
+
+
 
         self.update_run_info(batch_multi_run=self.run_num)
 
@@ -206,7 +324,12 @@ class RandomForest(MLGraph):
             wn = float(len(train_labels)) / (2.*(len(train_labels) - np.sum(train_labels)))
             wp = float(len(train_labels)) / (2.* np.sum(train_labels))
 
+        print("    * RF train shape", train_features.shape)
 
+        print("    * RF test shape", test_features.shape)
+
+        print("    * RF msc feat shape", test_features.shape)
+        #####################################
         s = time.time()
         rf = RandomForestClassifier(max_depth=depth,
                                     n_estimators=n_trees, class_weight={0:wn,1:wp}, random_state=666)
@@ -288,7 +411,7 @@ class RandomForest(MLGraph):
             #if len(x_range) == 1:
             #    x_range  = x_range[0]
             #    y_range= y_range[0]
-            range_group = zip(x_range, y_range)
+            range_group = zip(self.X_BOX,self.Y_BOX)#zip(x_range, y_range)
             #print(range_group, 'range group')
 
             seg_whole = np.zeros(self.image.shape).astype(np.uint8)
@@ -298,7 +421,7 @@ class RandomForest(MLGraph):
 
             seg = np.zeros(self.image.shape).astype(np.uint8)
             region_contour = np.zeros(self.image.shape).astype(np.uint8)
-            for y_rng, x_rng in range_group:
+            for x_rng, y_rng in range_group:
 
                 #print('y_range', y_rng)
                 #print('x_range', x_rng)
@@ -318,13 +441,15 @@ class RandomForest(MLGraph):
 
                 #print("segmentation shape", segmentation.shape)
                 dataset.append((image, segmentation, region_contour, seg_whole))
-
-            return dataset[len(dataset)-1]
+            # segmentation = generate_pixel_labeling((self.X_BOX, self.Y_BOX), growth_radius=growth_radius,
+            #                                        seg_image=seg)
+            dataset = (self.image,segmentation,self.training_reg_bg,seg_whole )
+            return dataset#[len(dataset)-1]
 
         def generate_pixel_labeling( train_region, growth_radius=2, seg_image=None):
             x_box = train_region[0]
             y_box = train_region[1]
-            dim_train_region = (int(y_box[1] - y_box[0]), int(x_box[1] - x_box[0]))
+            #dim_train_region = (int(y_box[1] - y_box[0]), int(x_box[1] - x_box[0]))
             train_im = seg_image  # np.zeros(dim_train_region)
             X = train_im.shape[0]
             Y = train_im.shape[1]
@@ -375,13 +500,13 @@ class RandomForest(MLGraph):
                 #    # __box_grow_label(train_im, (mapped_x, mapped_y), 2)
 
             train_im = ndimage.maximum_filter(train_im, size=growth_radius)
-            n_samples = dim_train_region[0] * dim_train_region[1]
-            n_classes = 2
-            class_bins = np.bincount(train_im.astype(np.int64).flatten())
+            # n_samples = dim_train_region[0] * dim_train_region[1]
+            # n_classes = 2
+            # class_bins = np.bincount(train_im.astype(np.int64).flatten())
             self.class_weights = 1.#n_samples / (n_classes * class_bins)
 
 
-            return train_im.astype(np.uint8)
+            return train_im
 
         dataset = get_data_crops(self.image, x_range=x_range,growth_radius=growth_radius,
                                            y_range=y_range, dataset=dataset, resize=resize)
@@ -472,8 +597,10 @@ class RandomForest(MLGraph):
 
 
 
-        train_im_crop, segmentation, region_contour, seg_whole =self.get_train_labels(y_range=self.y_box,#[self.params['x_box']],
-                                                    growth_radius=growth_radius,x_range=self.x_box)
+        train_im_crop, segmentation, region_contour,\
+        seg_whole =self.get_train_labels(y_range=self.Y_BOX,#[self.params['x_box']],
+                                                    growth_radius=growth_radius,
+                                         x_range=self.X_BOX)
 
 
         # (x_range=[(0, X)],
@@ -494,13 +621,22 @@ class RandomForest(MLGraph):
         # features_func.
         features = features_func(train_im_crop)
 
+        aug_ims = []
         filtered_im_folder = os.path.join(self.experiment_folder,'filtered_images')
         df = dataflow()
-        filtered_imgs = df.read_images(filetype='.png', dest_folder=filtered_im_folder)
+        filtered_imgs = df.read_images(filetype='.png',screen='feat-func_', dest_folder=filtered_im_folder)
         for im in filtered_imgs:
-            features=np.concatenate((features, im),axis=2)
+            np.max(im)
+            min_val = np.min(im)
+            im = (im- min_val) / (max_val - min_val)
+            print("loaded im shape:",im.shape)
+            im = np.mean(im,axis=2)
+            im = np.expand_dims(im, axis=-1)
+            print(im.shape)
+            features=np.concatenate((im, features), axis=2)
 
-
+        print("Features shape:", features.shape)
+        print("i,j, shape:", features[0, 0].shape)
 
         s = time.time()
         clf = RandomForestRegressor(n_estimators=50, bootstrap=True, n_jobs=-1,
@@ -519,8 +655,8 @@ class RandomForest(MLGraph):
 
 
 
-        segmentation = segmentation - 1
 
+        result =np.array(result).astype(np.float32)
         # opt_f1 = 0
         # opt_thresh = 0
         # for thresh in [0.2,0.3,0.4,0.5,0.6,0.7,0.9]:
@@ -550,7 +686,7 @@ class RandomForest(MLGraph):
         #                                                     pred_thresh=opt_thresh)
         self.cutoffs = np.arange(0.01, 0.98, 0.01)
         scores = np.zeros((len(self.cutoffs), 4), dtype="int32")
-        self.pred_prob_im = np.ones(self.image.shape[:2], dtype=np.float32) * 0.25
+        self.pred_prob_im = np.zeros(self.image.shape[:2], dtype=np.float32)
         predictions = []
         true_labels = []
         for gid in self.node_gid_to_label.keys():
@@ -618,8 +754,9 @@ class RandomForest(MLGraph):
                 self.opt_thresh = thresh
 
         gt_polyline_labels = []
-        pred_labels_conf_matrix = np.zeros(self.image.shape[:2], dtype=np.float32)  # dtype=np.uint8)
-        pred_labels_msc = np.ones(self.image.shape[:2], dtype=np.float32) * 0.25
+        pred_labels_conf_matrix = np.zeros(self.image.shape[:2], dtype=np.float32) #* min(0.25self.opt_thresh/2.) # dtype=np.uint8)
+        overlay_image = np.zeros(self.image.shape[:2], dtype=np.float32)
+        pred_labels_msc = np.zeros(self.image.shape[:2], dtype=np.float32) #* min(0.25, self.opt_thresh/2.)
         predictions_topo_bool = []
         labels_topo_bool = []
         check = 30
@@ -660,14 +797,14 @@ class RandomForest(MLGraph):
             t = 0
             if infval >= self.opt_thresh:
                 if label == 1:
-                    t = 0.25  # 1
+                    t = 4#0.25  # 1
                 else:
-                    t = .75  # 3
+                    t = 2#.75  # 3  yellow
             else:
                 if label == 1:
-                    t = .5  # 2
+                    t = 3#.5  # 2 dark blue
                 else:
-                    t = 1  # 4
+                    t = 1  # 4 light blue
 
             for point in line:
                 ly = int(point[0])
@@ -696,65 +833,83 @@ class RandomForest(MLGraph):
         #           result,
         #           msc_pred_segmentation,
         #           opt_thresh)
-        num_fig = 6
-        fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-        ax[0].imshow(self.image)
-        ax[0].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[0].set_title('Image')
-        ax[1].imshow(seg_whole)
-        ax[1].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[1].set_title('Ground Truth Segmentation')
-        ax[2].imshow(result)
-        ax[2].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[2].set_title('Prediction')
-        ax[3].imshow(pred_labels_conf_matrix)
-        ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[3].set_title('MSC TF TP TN FN')
-        ax[4].imshow(self.pred_prob_im)
-        ax[4].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[4].set_title('MSC Pixel Prediction Confidence')
-        ax[5].imshow(pred_labels_msc)
-        ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[5].set_title('MSC Binary Prediction')
-        # fig.tight_layout()
-        if INTERACTIVE:
-            plt.show()
+        # num_fig = 6
+        # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+        # ax[0].imshow(self.image)
+        # ax[0].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[0].set_title('Image')
+        # ax[1].imshow(seg_whole)
+        # ax[1].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[1].set_title('Ground Truth Segmentation')
+        # ax[2].imshow(result)
+        # ax[2].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[2].set_title('Prediction')
+        # #ax[3].imshow(pred_labels_conf_matrix)
+        # #ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # #ax[3].set_title('MSC TF TP TN FN')
+        # ax[4].imshow(self.pred_prob_im)
+        # ax[4].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[4].set_title('Pixel to lines Foreground Probability')
+        # ax[5].imshow(pred_labels_msc)
+        # ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5) #grey
+        # ax[5].set_title('TP FP FN TN')
+        # # fig.tight_layout()
+        # if INTERACTIVE:
+        #     plt.show()
+        #
+        # # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+        # # if not os.path.exists(batch_folder):
+        # #    os.makedirs(batch_folder)
+        # plt.savefig(os.path.join(out_folder, "rf_pix_imgs.pdf"))
+        #
+        # num_fig = 6
+        # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+        # ax[0].imshow(self.image)
+        # #ax[0].contour(region_contour[400:464,400:464], [0.0, 0.15], linewidths=0.5)
+        # ax[0].set_title('Image')
+        # ax[1].imshow(seg_whole[300:464,300:464])
+        # #ax[1].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[1].set_title('Ground Truth Segmentation')
+        # ax[2].imshow(result[300:464,300:464])
+        # #ax[2].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[2].set_title('Predicted Segmentation')
+        # ax[3].imshow(pred_labels_conf_matrix[300:464,300:464])
+        # #ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[3].set_title('MSC TF TP TN FN')
+        # ax[4].imshow(self.pred_prob_im[300:464,300:464])
+        # #ax[4].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[4].set_title('MSC Pixel Inference Confidence')
+        # ax[5].imshow(pred_labels_msc[300:464,300:464])
+        # #ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5)
+        # ax[5].set_title('MSC Binary Prediction')
+        # # fig.tight_layout()
+        # if INTERACTIVE:
+        #     plt.show()
+        #
+        # # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+        # # if not os.path.exists(batch_folder):
+        # #    os.makedirs(batch_folder)
+        # plt.savefig(os.path.join(out_folder, "rf_pix_zoom_imgs.pdf"))
 
-        # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
-        # if not os.path.exists(batch_folder):
-        #    os.makedirs(batch_folder)
-        plt.savefig(os.path.join(out_folder, "rf_pix_imgs.pdf"))
 
-        num_fig = 6
-        fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-        ax[0].imshow(self.image)
-        #ax[0].contour(region_contour[400:464,400:464], [0.0, 0.15], linewidths=0.5)
-        ax[0].set_title('Image')
-        ax[1].imshow(seg_whole[300:464,300:464])
-        #ax[1].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[1].set_title('Ground Truth Segmentation')
-        ax[2].imshow(result[300:464,300:464])
-        #ax[2].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[2].set_title('Predicted Segmentation')
-        ax[3].imshow(pred_labels_conf_matrix[300:464,300:464])
-        #ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[3].set_title('MSC TF TP TN FN')
-        ax[4].imshow(self.pred_prob_im[300:464,300:464])
-        #ax[4].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[4].set_title('MSC Pixel Inference Confidence')
-        ax[5].imshow(pred_labels_msc[300:464,300:464])
-        #ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-        ax[5].set_title('MSC Binary Prediction')
-        # fig.tight_layout()
-        if INTERACTIVE:
-            plt.show()
-
-        # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
-        # if not os.path.exists(batch_folder):
-        #    os.makedirs(batch_folder)
-        plt.savefig(os.path.join(out_folder, "rf_pix_zoom_imgs.pdf"))
+        images =[self.image, seg_whole, result,
+                 self.pred_prob_im]
+        names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
+                 "Pixel to Lines Foreground Probability"]
+        for image, name in zip(images, names):
+            plot(image_set=[image,region_contour], name=name, type='contour', write_path=out_folder)
 
 
+        image_set  = [pred_labels_msc, region_contour, pred_labels_conf_matrix]
+        plot(image_set, name="TP FP TF TN Line Prediction",
+             type='confidence',write_path=out_folder)
+
+        plot(image_set, name="TP FP TF TN Line Prediction",
+             type='zoom', write_path=out_folder)
+
+
+        for image, name in zip(images, names):
+            plot(image_set=[image,region_contour], name=name, type='zoom', write_path=out_folder)
 
         np.savez_compressed(os.path.join(out_folder, 'pred_matrix.npz'), result)
         np.savez_compressed(os.path.join(out_folder, 'training_matrix.npz'), region_contour)
@@ -763,28 +918,7 @@ class RandomForest(MLGraph):
 
 
 
-    def plot(self, image, contour_box, result, segmentation, thresh, INTERACTIVE=False):
-        im2 = image
-        import matplotlib as mplt
-        fig, ax = plt.subplots(1, 3, sharex=True, sharey=True, figsize=(9, 4))
-        ax[0].imshow(im2)
-        ax[0].contour(contour_box, [0.0, 0.15, 1.15], linewidths=0.5)
-        ax[0].set_title('Image, mask and segmentation boundaries')
-        ax[1].imshow(result)
-        ax[1].contour(contour_box, [0.0, 0.15], linewidths=0.5)
-        ax[1].set_title('Pred Prob, thresh: '+ str(thresh))
 
-        ax[2].imshow(segmentation)
-        ax[2].contour(contour_box, [0.0, 0.15], linewidths=0.5)
-        ax[2].set_title('MSC Arc Pred')
-        # ax[3].imshow(msc_pred_probs)
-        # ax[3].contour(training_labels, [0.0, 0.15], linewidths=0.5)
-        # ax[3].set_title('MSC Probability Result')
-        fig.tight_layout()
-        if INTERACTIVE:
-            plt.show()
-        else:
-            plt.savefig(self.pred_session_run_path + ".imgs.pdf")
 
 
 try:

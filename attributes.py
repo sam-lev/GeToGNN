@@ -41,6 +41,7 @@ class Attributes(object):
         print("KWARG")
         print(kwargs)
         self.params = {}
+        self.params['write_folder'] = write_folder
 
 
         self.model_name = None
@@ -89,8 +90,8 @@ class Attributes(object):
         self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
                                       self.params['write_folder'],
                                       'runs')#+self.run_name)
-        if not os.path.exists(self.pred_run_path):
-            os.makedirs(os.path.join(self.pred_run_path))
+        #if not os.path.exists(self.pred_run_path):
+        #    os.makedirs(os.path.join(self.pred_run_path))
 
         self.experiment_folder = os.path.join(self.LocalSetup.project_base_path,
                                               'datasets',
@@ -99,8 +100,8 @@ class Attributes(object):
             self.session_name = str(self.run_num)
             self.pred_session_run_path = os.path.join(self.pred_run_path,
                                                       self.session_name)
-            if not os.path.exists(self.pred_session_run_path):
-                os.makedirs(self.pred_session_run_path)
+            #if not os.path.exists(self.pred_session_run_path):
+            #    os.makedirs(self.pred_session_run_path)
 
         if batch_multi_run is not None:
             self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
@@ -112,8 +113,8 @@ class Attributes(object):
 
             self.session_name = str(self.run_num)
             self.pred_session_run_path = os.path.join(self.pred_run_path, str(batch_multi_run))
-            if not os.path.exists(self.pred_session_run_path):
-                os.makedirs(self.pred_session_run_path)
+            #if not os.path.exists(self.pred_session_run_path):
+            #    os.makedirs(self.pred_session_run_path)
 
 
 

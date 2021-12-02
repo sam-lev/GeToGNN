@@ -98,10 +98,10 @@ class GeToGraph(Attributes):
         self.gid_geto_attr_dict = {'spatial_points':None, 'dim':None}
         self.gid_geto_elm_dict = {}
         self.key_arc_dict    = {}
-        #self.run_num=kwargs['run_num']
 
         super(GeToGraph, self).__init__(parameter_file_number=parameter_file_number,
                                         write_folder = kwargs['write_folder'])
+
 
         # for kdtree for sampling nearest point
         # in graph and retrieving node gid

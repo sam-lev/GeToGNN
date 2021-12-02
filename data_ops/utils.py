@@ -3,7 +3,8 @@ import numpy as np
 from skimage.measure import block_reduce
 from skimage import morphology
 from PIL import Image
-
+from matplotlib import colors
+import matplotlib.pyplot as plt
 
 
 
@@ -121,53 +122,52 @@ def tile_region(step_X, step_Y, step, X_START, X_END, Y_START, Y_END,
     X_INIT = X_START
     Y_START = Y_INIT
     X_START = X_INIT
+    zero = True
+    # for j in range(int(increment_y * increment_x )):# removed * incj
+    #
+    #     Y_START =Y_START + step_Y*step
+    #     Y_STOP = Y_START + step_Y
+    #
+    #
+    #     if  Y_STOP > Y_END :
+    #         y_box = (int(Y_END - step_Y), int(Y_END))
+    #         Y_START = Y_INIT
+    #     else:
+    #         y_box = (int(Y_START), int(Y_STOP))
+    #
+    #     for i in range( int(increment_x ) ):  # * (1. / step))):
+    #
+    #         X_START = X_START + step_X * step
+    #         X_STOP = X_START + step_X
+    #
+    #
+    #         if X_STOP > X_END :
+    #             x_box = ( int(X_END - step_X), int(X_END))
+    #             X_START = X_INIT
+    #         else:
+    #             x_box = (int(X_START), int(X_STOP))
+    #         if (x_box, y_box) not in box_set:
+    #             box_set.append((x_box, y_box))
+    #         begun_y = False
     for j in range(int(increment_y * increment_x )):# removed * incj
 
-        Y_START =Y_START + step_Y*step
+        Y_START = j*step_Y*step +Y_INIT
         Y_STOP = Y_START + step_Y
 
 
         if  Y_STOP > Y_END :
             y_box = (int(Y_END - step_Y), int(Y_END))
-            Y_START = Y_INIT
         else:
             y_box = (int(Y_START), int(Y_STOP))
 
         for i in range( int(increment_x ) ):  # * (1. / step))):
 
-            X_START = X_START + step_X * step
+            X_START = i * step_X * step + X_INIT
             X_STOP = X_START + step_X
 
 
             if X_STOP > X_END :
                 x_box = ( int(X_END - step_X), int(X_END))
-                X_START = X_INIT
-            else:
-                x_box = (int(X_START), int(X_STOP))
-            if (x_box, y_box) not in box_set:
-                box_set.append((x_box, y_box))
-            begun_y = False
-    for j in range(int(increment_y * increment_x )):# removed * incj
-
-        Y_START =Y_START + step_Y*step
-        Y_STOP = Y_START + step_Y
-
-
-        if  Y_STOP > Y_END :
-            y_box = (int(Y_END - step_Y), int(Y_END))
-            Y_START = Y_INIT
-        else:
-            y_box = (int(Y_START), int(Y_STOP))
-
-        for i in range( int(increment_x ) ):  # * (1. / step))):
-
-            X_START = X_START + step_X * step
-            X_STOP = X_START + step_X
-
-
-            if X_STOP > X_END :
-                x_box = ( int(X_END - step_X), int(X_END))
-                X_START = X_INIT
             else:
                 x_box = (int(X_START), int(X_STOP))
             if (x_box, y_box) not in box_set:
@@ -179,13 +179,59 @@ def tile_region(step_X, step_Y, step, X_START, X_END, Y_START, Y_END,
 
     outer = x_boxes if len(x_boxes) < len(y_boxes) else y_boxes
     inner = x_boxes if len(x_boxes) > len(y_boxes) else y_boxes
-    # for x_box,y_box in zip(x_boxes, y_boxes):
-    #    box_set.add((x_box, y_box))
-    # for x_box in x_boxes:
-    #     for y_box in y_boxes:
-    #         box_set.add((x_box, y_box))
+
+    if INVERT:
+        box_set_inverted = []
+        for x_box,y_box in box_set:
+            box_set_inverted.append((y_box,x_box))
+        return box_set_inverted
     return box_set
 
+def plot( image_set, name='RF-Lines Prediction', type='contour',write_path=None, INTERACTIVE=False):
+    image = image_set[0]
+
+    if len(image_set) > 2:
+        contour = image_set[1]
+        image2 = image_set[2]
+        num_fig = 1
+        mycmap = colors.ListedColormap(["lightgray", "blue", "yellow", "cyan", "red"])
+    else:
+        contour = image_set[1]
+        num_fig = 1
+
+    fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True,figsize=(9,4))
+
+
+    if type =='zoom':
+        ax.imshow(image[300:464,300:464], cmap='gray', vmin=0, vmax=1)
+    else:
+        ax.imshow(image, cmap='gray', vmin=0, vmax=1)
+
+    if len(image_set) > 2: # show the image to make the plot have the right shape
+        if type == "zoom":
+            ax.pcolormesh(image2[300:464,300:464], cmap=mycmap, rasterized=True)  # covers the image, good looking plot
+        else:
+            ax.pcolormesh(image2, cmap=mycmap, rasterized=True)
+
+    if type == 'contour':
+        ax.contour(contour, [0.0, 0.15], linewidths=0.5)  # add the training region
+
+    ax.set_title(name)
+    # ax[3].imshow(msc_pred_probs)
+    # ax[3].contour(training_labels, [0.0, 0.15], linewidths=0.5)
+    # ax[3].set_title('MSC Probability Result')
+    fig.tight_layout()
+    if INTERACTIVE:
+        plt.show()
+    else:
+        if type != 'zoom':
+            plt.savefig(os.path.join(write_path ,
+                                     name+".imgs.pdf"),
+                        dpi=300)
+        else:
+            plt.savefig(os.path.join(write_path,
+                                     name + ".zoom-imgs.pdf"),
+                        dpi=300)
 
 def dbgprint(x,name=""):
     print("    *")

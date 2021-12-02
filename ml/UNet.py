@@ -34,6 +34,7 @@ from ml.utils import get_partition_feature_label_pairs
 from data_ops.utils import dbgprint as dprint
 from compute_multirun_metrics import multi_run_metrics
 from data_ops.utils import tile_region
+from data_ops.utils import plot
 
 from localsetup import LocalSetup
 LocalSetup = LocalSetup()
@@ -264,7 +265,7 @@ class dataset():
         return x2
 
     def __init__(self, data_array, split='train', do_transform=False,
-                 with_hand_seg=False, with_range=True):
+                 with_hand_seg=False, with_range=False):
 
         self.with_hand_seg = with_hand_seg
         self.with_range = with_range
@@ -322,7 +323,7 @@ class UNetwork( MLGraph):
 
 
 
-    def get_data_crops(self, image=None, x_range=None,y_range=None, with_range=True,train_set=True,
+    def get_data_crops(self, image=None, x_range=None,y_range=None, with_range=False,train_set=True,
                        dataset=[], resize=False, full_img=False,growth_radius = 1):
 
 
@@ -349,13 +350,13 @@ class UNetwork( MLGraph):
 
             train_im_crop = deepcopy(self.image[bounds[0][0]:bounds[0][1], bounds[1][0]:bounds[1][1]])
             seg_crop = deepcopy(seg[bounds[0][0]:bounds[0][1], bounds[1][0]:bounds[1][1]])
-            if full_img:
-                return seg
+
             if with_range:
                 dataset.append((train_im_crop, seg_crop, (x_rng, y_rng)))
             else:
                 dataset.append((train_im_crop, seg_crop))
-
+        if full_img:
+            return seg, dataset
         return dataset
 
     def generate_pixel_labeling(self, train_region, seg_image=None ,growth_radius = 1, train_set=True):
@@ -394,25 +395,35 @@ class UNetwork( MLGraph):
             not_all = False
             end_points = (p1, p2)
             points = get_points_from_vertices([gnode])
+
+            points = np.reshape(points, (-1, 2))
             interior_points = []
+
             for p in points:
-                if x_box[0] < p[1] < x_box[1] and y_box[0] < p[0] < y_box[1]:
+                if x_box[0] <= p[1] <= x_box[1] and y_box[0] <= p[0] <= y_box[1]:
                     in_box = True
                     interior_points.append(p)
-
-                else:
-                    not_all = True
-            if not_all and in_box:
-                if train_set:
-                    self.node_gid_to_partition[gid] = 'train'
-                points = np.array(interior_points)
-            elif not_all:
-                continue
-
-            mapped_y = points[:,0] - y_box[0]
-            mapped_x = points[:,1] - x_box[0]
-            if int(label[1]) == 1:
-                train_im[mapped_x, mapped_y] = int(1)
+                    mapped_y = points[:, 0]  # - x_box[0]
+                    mapped_x = points[:, 1]  # - y_box[0]
+                    if int(label[1]) == 1:
+                        train_im[mapped_x, mapped_y] = 1
+            #     if x_box[0] < p[0] < x_box[1] and y_box[0] < p[1] < y_box[1]:
+            #         in_box = True
+            #         interior_points.append(p)
+            #
+            #     else:
+            #         not_all = True
+            # if not_all and in_box:
+            #     if train_set:
+            #         self.node_gid_to_partition[gid] = 'train'
+            #     points = np.array(interior_points)
+            # elif not_all:
+            #     continue
+            #
+            # mapped_y = points[:,0] #- y_box[0]
+            # mapped_x = points[:,1] #- x_box[0]
+            # if int(label[1]) == 1:
+            #     train_im[mapped_x, mapped_y] = int(1)
                 #__box_grow_label(train_im, (mapped_x,mapped_y), int(1))
             #else:
             #    train_im[mapped_x, mapped_y] = int(0)
@@ -565,7 +576,7 @@ class UNetwork( MLGraph):
                  model_name=None, load_feature_graph_name=False,image=None, **kwargs):
 
         self.type = 'unet'
-
+        self.run_num=str(run_num)
         k = [parameter_file_number, run_num, geomsc_fname_base, label_file, image,
              model_name, load_feature_graph_name]
         st_k = ['parameter_file_number', 'run_num', 'geomsc_fname_base', 'label_file', 'image',
@@ -581,8 +592,8 @@ class UNetwork( MLGraph):
                  ground_truth_label_file=None,run_num=0, parameter_file_number = None,
                  geomsc_fname_base = None, label_file=None, growth_radius=2,
                  model_name=None, load_feature_graph_name=False,image=None,
-                 X_BOX =None,Y_BOX=None,boxes=None,all_boxes=None,
-                 X_BOX_all =None,Y_BOX_all=None,
+                 boxes=None,all_boxes=None,
+
                  training_size=None, region_list=None,
                        BEGIN_LOADING_FEATURES=False,
                        **kwargs):
@@ -602,7 +613,7 @@ class UNetwork( MLGraph):
         min_val = np.min(self.image)
         self.image = (self.image - min_val) / (max_val - min_val)
 
-        self.training_size = training_size
+
 
         self.growth_radius = growth_radius
 
@@ -684,11 +695,68 @@ class UNetwork( MLGraph):
 
 
         self.box_regions = boxes
-        self.all_boxes = all_boxes
+        X_BOX = []
+        Y_BOX = []
+        box_sets = []
+        for box in boxes:
+            box_set = tile_region(step_X=64, step_Y=64, step=0.5,
+                                  Y_START=box[0], Y_END=box[1],
+                                  X_START=box[2], X_END=box[3])
+            box_sets.append(box_set)
+
+        for box_pair in box_sets:
+            for box in box_pair:
+                X_BOX.append(box[0])
+                Y_BOX.append(box[1])
         self.X_BOX = X_BOX
         self.Y_BOX = Y_BOX
+
+        _ , _ , box_pair = self.box_select_geomsc_training(x_range=self.X_BOX,y_range=self.Y_BOX)
+        self.X_BOX, self.Y_BOX = box_pair
+        print("    xboxxx", self.X_BOX)
+        print("    yboxxx* ",self.Y_BOX)
+
+        X_BOX_all = []
+        Y_BOX_all = []
+        box_sets_test = []
+        for box in [[0, self.image.shape[0], 0, self.image.shape[1]]]:
+            box_set_test = tile_region(step_X=64, step_Y=64, step=0.5,
+                                  Y_START=0, Y_END=self.image.shape[1],
+                                  X_START=0, X_END=self.image.shape[0])
+            box_sets_test.append(box_set_test)
+
+
+        for box_pair in box_sets_test:
+            for box in box_pair:
+                X_BOX_all.append(box[0])
+                Y_BOX_all.append(box[1])
         self.X_BOX_all = X_BOX_all
         self.Y_BOX_all = Y_BOX_all
+
+        # num_percent = 0
+        # for xbox,ybox in zip(self.X_BOX, self.Y_BOX):
+        #     num_percent += float((xbox[1] - xbox[0]) * (ybox[1] - ybox[0]))
+        # percent = num_percent / float(self.image.shape[0] * self.image.shape[1])
+        # percent_float = percent *100
+        # percent = int(round(percent_float, 2))
+        # print("percent")
+        percent = str(run_num)
+        self.training_size = percent
+        self.run_num = percent
+
+        self.training_reg_bg = np.zeros(self.image.shape[:2], dtype=np.uint8)
+        for xb, yb in zip(self.X_BOX, self.Y_BOX):
+            self.training_reg_bg[xb[0]:xb[1], yb[0]:yb[1]] = 1
+
+
+        self.update_run_info(batch_multi_run=str(self.training_size))
+        out_folder = os.path.join(self.pred_session_run_path)
+
+        if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
+
+
+
 
 
 
@@ -768,29 +836,10 @@ class UNetwork( MLGraph):
             yield tuple(lst[i: i + 2])
 
     def collect_boxes(self, resize=False, run_num=-1, training_set=False):# region_list,
-        # X_BOX = []
-        # Y_BOX = []
-        # print(' boxesboxe', self.box_regions)
-        # box_sets = []
-        # for box in self.box_regions:
-        #     box_set = tile_region(step_X=64, step_Y=64, step=0.5,
-        #                           Y_START=box[0], Y_END=box[1],
-        #                           X_START=box[2], X_END=box[3])
-        #     box_sets.append(box_set)
-        # print("    *: BOX TILE SETS", box_sets)
-        # for box_pair in box_sets:
-        #     for box in box_pair:
-        #         X_BOX.append(box[0])
-        #         Y_BOX.append(box[1])
-        # self.X_BOX = X_BOX
-        # self.Y_BOX = Y_BOX
 
 
 
 
-
-        self.all_region_boxes =self.all_boxes
-        self.training_boxes = list(zip(self.X_BOX, self.Y_BOX))
 
 
         if training_set:
@@ -811,14 +860,7 @@ class UNetwork( MLGraph):
                                               self.params['write_folder'],
                                               'runs')
 
-            if not os.path.exists(self.pred_run_path):
-               os.makedirs(os.path.join(self.pred_run_path))
 
-            self.run_num = self.training_size
-            self.pred_session_run_path = os.path.join(self.pred_run_path,
-                                                      str(self.training_size))
-            if not os.path.exists(self.pred_session_run_path):
-                os.makedirs(os.path.join(self.pred_session_run_path))
 
 
 
@@ -827,40 +869,43 @@ class UNetwork( MLGraph):
 
 
             inf_or_train_dataset = dataset(train_dataset, do_transform= False,
-                                            with_hand_seg=False, with_range= not training_set)
+                                            with_hand_seg=False)
 
             val_dataset = train_dataset
 
         else:#if not training_set:
-            self.training_labels = self.get_data_crops(self.image, x_range=[[0, self.image.shape[0]]],
-                                               y_range=[[0, self.image.shape[1]]],
-                                                with_range= not training_set,
-                                               full_img=True,
-                                                dataset=[],
-                                                resize=resize,
-                                               train_set=training_set,
-                                               growth_radius = self.growth_radius)
+            # self.training_labels = self.get_data_crops(self.image,
+            #                                            x_range=[[0, self.image.shape[1]]],
+            #                                    y_range=[[0, self.image.shape[0]]],
+            #                                     with_range= False,
+            #                                    full_img=True,
+            #                                     dataset=[],
+            #                                     resize=resize,
+            #                                    train_set=training_set,
+            #                                    growth_radius = self.growth_radius)
 
-            inf_crops = self.get_data_crops(self.image, x_range=self.X_BOX_all,
-                                               with_range=not training_set,
+            self.training_labels, training_tiles = self.get_data_crops(self.image,
+                                                                       x_range=self.X_BOX_all,
+                                               with_range=False,
+                                                                       full_img=True,
                                                y_range=self.Y_BOX_all,
                                                dataset=[],
                                                resize=resize,
                                                growth_radius=self.growth_radius,
                                                train_set=training_set)
-            inf_or_train_dataset = dataset(inf_crops, do_transform=False,
-                                           with_hand_seg=False, with_range=not training_set)
-            val_dataset = inf_crops
+            inf_or_train_dataset = dataset(training_tiles, do_transform=False,
+                                           with_hand_seg=False)
+            val_dataset = self.training_labels
 
 
         return inf_or_train_dataset, val_dataset
 
     def train(self, test=False):
 
-        self.update_run_info(batch_multi_run=str(self.training_size))
+        #self.update_run_info(batch_multi_run=str(self.training_size))
         out_folder = os.path.join(self.pred_session_run_path)  # ,
         #                          str(self.training_size))
-
+        print("    XBOXXXXXX",self.X_BOX)
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
         self.write_selection_bounds(dir=out_folder,
@@ -888,9 +933,7 @@ class UNetwork( MLGraph):
         mask_datagen = image.ImageDataGenerator(shear_range=0.5, rotation_range=50, zoom_range=0.2,
                                                 width_shift_range=0.2, height_shift_range=0.2, fill_mode='reflect')
 
-        # Keep the same seed for image and mask generators so they fit together
-        #print("    * train dataset shape", self.train_dataset.shape)
-        #print("      * t set ", self.train_dataset.shape)
+
 
         self.X_train = self.train_dataset.get_images()#[:,0]
 
@@ -963,7 +1006,7 @@ class UNetwork( MLGraph):
         model.summary()
         print("about to fit generator")
         start_train = timeit.default_timer()
-        earlystopper = EarlyStopping(patience=15, verbose=1)
+        earlystopper = EarlyStopping(patience=3, verbose=0)
 
         # reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1,
         #                               min_delta=0.0001, cooldown=1,
@@ -974,12 +1017,12 @@ class UNetwork( MLGraph):
 
         steps_per_epoch = max(int(self.X_train.shape[0])*5,250)
 
-        checkpointer = ModelCheckpoint(self.model_file, verbose=1, save_best_only=save_best_only)
+        checkpointer = ModelCheckpoint(self.model_file, verbose=0, save_best_only=save_best_only)
         self.results = model.fit_generator(train_generator,
                                            validation_data=val_generator,
-                                           validation_steps=5,
+                                           validation_steps=25  ,
                                            validation_freq=1,
-                                           steps_per_epoch= 10,#steps_per_epoch,        #   !!!!!
+                                           steps_per_epoch= 125,#steps_per_epoch,        #   !!!!!
                                            epochs=self.params['epochs'],
                                            callbacks=[earlystopper,
                                                       checkpointer])
@@ -988,9 +1031,10 @@ class UNetwork( MLGraph):
 
         self.record_time(round(end_train -start_train , 4), dir=out_folder, type='train')
 
-        self.trained_model = model
+        #self.trained_model = model
 
         print("    * Finished training")
+        return model
 
     def infer(self, model=None, dataset=None, training_window_file=None, INTERACTIVE=False,
               load_pretrained=False, view_results=False, test=True, pred_thresh=0.5):
@@ -1036,13 +1080,11 @@ class UNetwork( MLGraph):
         if load_pretrained:
             print("about to load and predict")
             model = load_model(self.model_file, custom_objects={'mean_iou':self.mean_iou})# MeanIoU(num_classes=2)})
-        else:
-            print("using pre-trained model to predict")
-            model = self.trained_model
+
 
         partition = 1.0
         preds_train = model.predict(self.X_train[:int(self.X_train.shape[0] * partition)],
-                                    verbose=1 if not test else 0)
+                                    verbose=0 if not test else 0)
         # preds_val = model.predict(self.X_train[int(self.X_train.shape[0] * 1.0-partition):], verbose=0)
 
 
@@ -1050,18 +1092,12 @@ class UNetwork( MLGraph):
 
         start_test = timeit.default_timer()
 
-        preds_test = model.predict(self.X_test, verbose=1 if not test else 0)
+        preds_test = model.predict(self.X_test, verbose=0)
 
         end_test = timeit.default_timer()
         self.record_time(round( end_test - start_test, 4), dir=out_folder, type='pred')
 
 
-        self.training_reg_bg = np.zeros(self.image.shape[:2], dtype=np.uint8)
-        for idx, box_set in enumerate(self.training_boxes):
-
-            x_box = box_set[0]
-            y_box = box_set[1]
-            self.training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
 
 
 
@@ -1073,34 +1109,60 @@ class UNetwork( MLGraph):
     def compute_metrics(self, pred_images,# scores, pred_labels, pred_thresh,
                         INTERACTIVE=False):#predictions_topo, labels_topo,
 
+        self.training_reg_bg = np.zeros(self.image.shape[:2], dtype=np.uint8)
+        for region in self.box_regions:
+            self.training_reg_bg[region[0]:region[1], region[2]:region[3]] = 1
+
         use_average = True
 
         self.pred_val_im = np.zeros(self.image.shape[:2], dtype=np.float32)
         tile_samples = []
         sample_box = []
-        for idx, box_set in enumerate(self.all_region_boxes):
+        for idx, box_set in enumerate(zip(self.X_BOX_all, self.Y_BOX_all)):
+            border_xl = 16
+            border_yl = 16
+            border_xh = 16
+            border_yh = 16
 
             x_box = box_set[0]
             y_box = box_set[1]
+            if x_box[0]==0:
+                border_xl = 0
+            if y_box[0] == 0:
+                border_yl = 0
+            if x_box[1]==self.training_reg_bg.shape[0]:
+                border_xh = 0
+            if y_box[1] == self.training_reg_bg.shape[1]:
+                border_yh = 0
 
-            pad = 8
+
+
+            pad_xl = border_xl
+            pad_yl = border_yl
+
+            pad_xh = border_xh
+            pad_yh = border_yh
+
             pred_tile = np.squeeze(pred_images[idx], axis=2)
-            self.pred_val_im[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad] = \
-                pred_tile[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
+            self.pred_val_im[x_box[0] + pad_xl: x_box[1] - pad_xh, y_box[0] + pad_yl: y_box[1] - pad_yh] = \
+                pred_tile[pad_xl:pred_tile.shape[0] - pad_xh, pad_yl:pred_tile.shape[1] - pad_yh]
 
-            if idx ==len(self.all_region_boxes)//4:
-                sample_box = box_set
-                im_tile = self.image[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-                seg_tile = self.training_labels[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-                p_tile = pred_tile[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
-                tile_samples = [im_tile,seg_tile,p_tile]
+            # if idx ==len(self.all_region_boxes)//4:
+            #     sample_box = box_set
+            #     im_tile = self.image[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+            #     seg_tile = self.training_labels[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+            #     p_tile = pred_tile[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
+            #     tile_samples = [im_tile,seg_tile,p_tile]
 
 
         self.cutoffs = np.arange(0.01, 0.98, 0.01)
         scores = np.zeros((len(self.cutoffs), 4), dtype="int32")
-        self.pred_prob_im = np.ones(self.image.shape[:2], dtype=np.float32)*0.25
+
         predictions = []
         true_labels = []
+        max_X_bound = max(self.image.shape)
+        max_X_bound = min(self.image.shape)
+
         for gid in self.node_gid_to_label.keys():
             gnode = self.gid_gnode_dict[gid]
             label = self.node_gid_to_label[gid]
@@ -1110,6 +1172,7 @@ class UNetwork( MLGraph):
             vals = []
 
             for point in line:
+
                 ly = int(point[0])
                 lx = int(point[1])
                 vals.append(self.pred_val_im[lx, ly])
@@ -1143,10 +1206,9 @@ class UNetwork( MLGraph):
             for point in line:
                 ly = int(point[0])
                 lx = int(point[1])
-                self.pred_prob_im[lx, ly] = infval
                 if self.training_reg_bg[lx, ly] != 1:
-                    predictions.append(infval )
-                    true_labels.append(label )
+                        predictions.append(infval )
+                        true_labels.append(label )
 
 
         # print("       labelslslslsls", labels_topo)
@@ -1174,8 +1236,9 @@ class UNetwork( MLGraph):
 
 
         gt_polyline_labels = []
-        pred_labels_conf_matrix = np.zeros(self.image.shape[:2], dtype=np.float32)#dtype=np.uint8)
-        pred_labels_msc = np.ones(self.image.shape[:2], dtype=np.float32) * 0.25
+        self.pred_prob_im = np.zeros(self.image.shape[:2], dtype=np.float32) #* min(0.25, self.opt_thresh/2.)
+        pred_labels_conf_matrix = np.zeros(self.image.shape[:2], dtype=np.float32)# * min(0.25,self.opt_thresh/2.)#dtype=np.uint8)
+        pred_labels_msc = np.zeros(self.image.shape[:2], dtype=np.float32) #* min(0.25, self.opt_thresh/2.)
         predictions_topo_bool = []
         labels_topo_bool = []
         check=30
@@ -1216,24 +1279,24 @@ class UNetwork( MLGraph):
             t = 0
             if infval >= self.opt_thresh:
                 if label == 1:
-                    t = 0.25 # 1
+                    t = 4  # 0.25  # 1
                 else:
-                    t = .75 #3
+                    t = 2  # .75  # 3
             else:
                 if label == 1:
-                    t = .5 # 2
+                    t = 3  # .5  # 2
                 else:
-                    t = 1 # 4
+                    t = 1  # 4
 
             for point in line:
                 ly = int(point[0])
                 lx = int(point[1])
                 pred_labels_conf_matrix[lx, ly] = t
                 pred_labels_msc[lx,ly] = 1 if infval >= self.F1_log[self.max_f1] else 0
+                self.pred_prob_im[lx, ly] = infval
                 if self.training_reg_bg[lx, ly] != 1:
                     self.node_gid_to_partition[gid] = 'test'
                     predictions_topo_bool.append(infval >= cutoff)
-                    gt_label = self.training_labels[lx, ly]
                     labels_topo_bool.append(label >= cutoff)
                 else:
                     self.node_gid_to_partition[gid] = 'train'
@@ -1275,73 +1338,89 @@ class UNetwork( MLGraph):
 
 
 
-        num_fig = 6
-        fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig*4, num_fig-1))
-        ax[0].imshow(self.image)
-        ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[0].set_title('Image')
-        ax[1].imshow(self.training_labels)
-        ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[1].set_title('Ground Truth Segmentation')
-        ax[2].imshow(self.pred_val_im)
-        ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[2].set_title('Predicted Segmentation')
-        ax[3].imshow(pred_labels_conf_matrix)
-        ax[3].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[3].set_title('MSC TF TP TN FN')
-        ax[4].imshow(self.pred_prob_im)
-        ax[4].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[4].set_title('MSC Pixel Inference Confidence')
-        ax[5].imshow(pred_labels_msc)
-        ax[5].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[5].set_title('MSC Binary Prediction')
-        #fig.tight_layout()
-        if INTERACTIVE:
-            plt.show()
-
-        #batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
-        #if not os.path.exists(batch_folder):
-        #    os.makedirs(batch_folder)
-        plt.savefig(os.path.join(out_folder,"unet_imgs.pdf"))
-
-
-
-        # tile samples
-        x_box = sample_box[0]
-        y_box = sample_box[1]
-        pad=128
-
-        im_tile = self.image[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        seg_tile = self.training_labels[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        p_tile = self.pred_val_im[300:464, 300:464]#[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
-
-        sample_conf_mat = pred_labels_conf_matrix[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        sample_proba = self.pred_prob_im[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        sample_pred_label = pred_labels_msc[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        num_fig = 6
-        fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-        ax[0].imshow(im_tile)
+        # num_fig = 6
+        # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig*4, num_fig-1), dpi=300)
+        # ax[0].imshow(self.image)
         # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[0].set_title('Image')
+        # ax[0].set_title('Image')
+        # ax[1].imshow(self.training_labels)
+        # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[1].set_title('Ground Truth Segmentation')
+        # ax[2].imshow(self.pred_val_im)
+        # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[2].set_title('Predicted Segmentation')
+        # ax[3].imshow(pred_labels_conf_matrix)
+        # ax[3].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[3].set_title('MSC TF TP TN FN')
+        # ax[4].imshow(self.pred_prob_im)
+        # ax[4].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[4].set_title('MSC Pixel Inference Confidence')
+        # ax[5].imshow(pred_labels_msc)
+        # ax[5].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[5].set_title('MSC Binary Prediction')
+        # #fig.tight_layout()
+        # if INTERACTIVE:
+        #     plt.show()
+        #
+        # #batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+        # #if not os.path.exists(batch_folder):
+        # #    os.makedirs(batch_folder)
+        # plt.savefig(os.path.join(out_folder,"unet_imgs.pdf")    )
+        #
+        # im_tile = self.image[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        # seg_tile = self.training_labels[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        # p_tile = self.pred_val_im[300:464, 300:464]#[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
+        #
+        # sample_conf_mat = pred_labels_conf_matrix[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        # sample_proba = self.pred_prob_im[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        # sample_pred_label = pred_labels_msc[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
+        # num_fig = 6
+        # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
+        # ax[0].imshow(im_tile)
+        # # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[0].set_title('Image')
+        #
+        # ax[2].imshow(seg_tile)
+        # # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[2].set_title('Ground Truth Segmentation')
+        # ax[1].imshow(p_tile)
+        # # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[1].set_title('Predicted Segmentation')
+        # ax[3].imshow(sample_conf_mat)
+        # # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[3].set_title('MSC TF TP TN FN')
+        # ax[4].imshow(sample_proba)
+        # # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[4].set_title('Polyline Inference Confidence')
+        # ax[5].imshow(sample_pred_label)
+        # # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
+        # ax[5].set_title('MSC Binary Prediction')
+        # if INTERACTIVE:
+        #     plt.show()
+        # plt.savefig(os.path.join(out_folder, "unet_imgs_sample.pdf"))
 
-        ax[2].imshow(seg_tile)
-        # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[2].set_title('Ground Truth Segmentation')
-        ax[1].imshow(p_tile)
-        # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[1].set_title('Predicted Segmentation')
-        ax[3].imshow(sample_conf_mat)
-        # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[3].set_title('MSC TF TP TN FN')
-        ax[4].imshow(sample_proba)
-        # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[4].set_title('Polyline Inference Confidence')
-        ax[5].imshow(sample_pred_label)
-        # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        ax[5].set_title('MSC Binary Prediction')
-        if INTERACTIVE:
-            plt.show()
-        plt.savefig(os.path.join(out_folder, "unet_imgs_sample.pdf"))
+
+
+
+        images = [self.image, self.training_labels, self.pred_val_im,
+                  self.pred_prob_im]
+        names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
+                 "Pixel to Lines Foreground Probability"]
+        for image, name in zip(images, names):
+            plot(image_set=[image, self.training_reg_bg], name=name, type='contour', write_path=out_folder)
+
+        image_set = [pred_labels_msc, self.training_reg_bg, pred_labels_conf_matrix]
+        plot(image_set, name="TP FP TF TN Line Prediction",
+             type='confidence', write_path=out_folder)
+
+        plot(image_set, name="TP FP TF TN Line Prediction",
+             type='zoom', write_path=out_folder)
+
+        for image, name in zip(images, names):
+            plot(image_set=[image, self.training_reg_bg], name=name, type='zoom', write_path=out_folder)
+
+
+
 
 
 

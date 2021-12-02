@@ -44,7 +44,7 @@ class dataflow:
             return array_to_split
         return array_to_split
 
-    def read_images(self, filetype, dest_folder, color_invert=False, image=None, dim_invert=False):
+    def read_images(self, filetype, dest_folder, color_invert=False, screen='illuminati are real',image=None, dim_invert=False):
         all_images = []
         if filetype != 'raw':
             sorted_items = sorted(os.listdir(dest_folder))
@@ -53,23 +53,23 @@ class dataflow:
             for item in sorted_items:
                 if dest_folder[-1] != '/':
                     dest_folder = dest_folder + "/"
-                if item.endswith(filetype):
+                if item.endswith(filetype) and screen not in item:
                     img = imageio.imread(dest_folder + item)
                     # if len(img.shape) == 3:
                     #     img = np.pad(img, ((12, 12), (69, 70), (0, 0)), mode='constant')
                     # else:
                     #     img = np.pad(img, ((12, 12), (69, 70)), mode='constant')
                     img = img.astype(np.float32)
-                    if len(img.shape) == 2:
-                        img = img.astype(np.float32)
-                        img = np.expand_dims(img, axis=2)
+                    #if len(img.shape) == 2:
+                    #    img = img.astype(np.float32)
+                    #    img = np.expand_dims(img, axis=2)
                     all_images.append(img)
         else:
             sorted_items = sorted(os.listdir(dest_folder))
             if image is not None:
                 sorted_items = [image]
             for item in sorted_items:
-                if not item.endswith('.raw'):
+                if not item.endswith('.raw') or screen in item:
                     continue
                 if dest_folder[-1] != '/':
                     dest_folder = dest_folder + "/"
@@ -89,6 +89,9 @@ class dataflow:
                     Y = xtemp
 
                 image = np.reshape(image, (X, Y))
+                max_val = np.max(image)
+                min_val = np.min(image)
+                image = (image - min_val) / (max_val - min_val)
                 max_p = np.max(image)
 
                 print("..max pixel ", max_p)

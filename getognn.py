@@ -20,7 +20,7 @@ from localsetup import LocalSetup
 
 class GeToGNN(MLGraph):
     def __init__(self,training_selection_type='box', parameter_file_number = None,
-                 geomsc_fname_base = None, label_file=None,run_num=0,
+                 geomsc_fname_base = None, label_file=None,run_num=1, X_BOX=None,Y_BOX=None,
                  model_name=None, load_feature_graph_name=False,image=None, **kwargs):
 
         self.type = "getognn"
@@ -38,7 +38,11 @@ class GeToGNN(MLGraph):
 
 
         self.LocalSetup = LocalSetup()
+        self.run_num=run_num
 
+
+        # self.X_BOX = X_BOX
+        # self.Y_BOX = Y_BOX
 
         super(GeToGNN, self).__init__(parameter_file_number=parameter_file_number,
                                       run_num=run_num,
@@ -81,6 +85,9 @@ class GeToGNN(MLGraph):
 
         self.train_time = 0
         self.pred_time = 0
+
+        #self.update_run_info(batch_multi_run=run_num)
+
 
 
 
@@ -334,8 +341,8 @@ class GeToGNN(MLGraph):
     def write_json_graph_data(self, folder_path, name):
         print('.writing graph family data')
         s = time.time()
-        if not os.path.exists(os.path.join(folder_path, 'json_graphs')):
-            os.makedirs(os.path.join(folder_path, 'json_graphs'))
+        #if not os.path.exists(os.path.join(folder_path, 'json_graphs')):
+        #    os.makedirs(os.path.join(folder_path, 'json_graphs'))
         graph_file_path = os.path.join(folder_path, 'json_graphs')
         # group_name = 'left'
         for graph_data, f_name in zip([json_graph.node_link_data(self.G), self.node_gid_to_feat_idx , self.node_gid_to_label, self.features],
@@ -836,19 +843,19 @@ class GeToGNN(MLGraph):
 class supervised_getognn:
     def __init__(self, model_name):
         self.model_name = model_name
-        self.attributes = Attributes()
+        #self.attributes = Attributes()
 
 
     def build_getognn(self, sample_idx, experiment_num, experiment_name, window_file_base,
-                 parameter_file_number, format = 'raw', run_num=0, experiment_folder=None,
-                 name=None, image=None, label_file=None, msc_file=None, X_BOX=None,Y_BOX=None,
+                 parameter_file_number, format = 'raw', run_num=2, experiment_folder=None,
+                 name=None, image=None, label_file=None, msc_file=None, X_BOX=None,Y_BOX=None,regions =None,
                  ground_truth_label_file=None, write_path=None, feature_file=None, boxes = None,
                  window_file=None, model_name="GeToGNN", BEGIN_LOADING_FEATURES=False):
 
 
 
 
-        self.getognn = GeToGNN(training_selection_type='box',
+        self.getognn = GeToGNN(training_selection_type='box',X_BOX=X_BOX,Y_BOX=Y_BOX,
                           run_num=run_num,
                           parameter_file_number = parameter_file_number,
                           name=name,
@@ -860,7 +867,11 @@ class supervised_getognn:
                         experiment_folder=experiment_folder,
                          model_name=model_name,
                           load_feature_graph_name=None,
-                          write_json_graph = False)
+                          write_json_graph = False,
+                               BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES)
+
+        #self.attributes = deepcopy(self.getognn.get_attributes())
+
         if BEGIN_LOADING_FEATURES:
             self.getognn.params['load_features'] = True
             self.getognn.params['write_features'] = False
@@ -871,7 +882,46 @@ class supervised_getognn:
             self.getognn.params['load_preprocessed'] = True
             self.getognn.params['load_geto_attr'] = True
             self.getognn.params['load_feature_names'] = True
+        else:
+            self.getognn.params['load_features'] = False
+            self.getognn.params['write_features'] = True
+            self.getognn.params['load_features'] = False
+            self.getognn.params['write_feature_names'] = True
+            self.getognn.params['save_filtered_images'] = True
+            self.getognn.params['collect_features'] = True
+            self.getognn.params['load_preprocessed'] = False
+            self.getognn.params['load_geto_attr'] = False
+            self.getognn.params['load_feature_names'] = False
 
+
+        X_BOX = []
+        Y_BOX = []
+        box_sets = []
+        for box in regions:
+            X_BOX.append((box[0], box[1]))
+            Y_BOX.append((box[2], box[3]))
+
+
+
+        self.getognn.box_regions = boxes
+
+        num_percent = 0
+        for xbox, ybox in zip(X_BOX, Y_BOX):
+            num_percent += float((xbox[1] - xbox[0]) * (ybox[1] - ybox[0]))
+        percent = num_percent / float(self.getognn.image.shape[0] * self.getognn.image.shape[1])
+        percent_f = percent *100
+        print("    * ", percent_f)
+        percent = int(round(percent_f))
+        self.training_size = percent
+        self.run_num = percent
+        # self.X_BOX = X_BOX
+        # self.Y_BOX = Y_BOX
+
+        self.getognn.update_run_info(batch_multi_run=str(self.training_size))
+        out_folder = os.path.join(self.getognn.pred_session_run_path)
+
+        if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
 
         if self.getognn.params['load_geto_attr']:
             if 'geto' in self.getognn.params['aggregator']:
@@ -914,23 +964,27 @@ class supervised_getognn:
 
 
 
-        training_set , test_and_val_set, empty_set = self.getognn.box_select_geomsc_training(x_range=X_BOX,
+        training_set , test_and_val_set, box_set = self.getognn.box_select_geomsc_training(x_range=X_BOX,
                                                                                   y_range=Y_BOX,
-                                                                                  boxes=boxes)
+                                                                                  boxes=None)
+        # self.getognn.X_BOX = box_set[0]
+        # self.getognn.Y_BOX = box_set[1]
+        # self.X_BOX, self.Y_BOX = box_set
+        print("BOX SET")
+        print(box_set)
 
         self.getognn.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,
                                                  validation_samples = 1)
 
 
 
-        self.attributes = deepcopy(self.getognn.get_attributes())
+
 
         if self.getognn.params['write_json_graph']:
             self.getognn.write_json_graph_data(folder_path=self.getognn.pred_session_run_path, name=model_name + '_' + self.getognn.params['name'])
 
 
-        self.getognn.write_gnode_partitions(dir=self.getognn.pred_session_run_path)#self.getognn.session_name)
-        self.getognn.write_selection_bounds(dir=self.getognn.pred_session_run_path)#self.getognn.session_name)
+
 
         # random walks
         if not self.getognn.params['load_preprocessed_walks']:
@@ -946,10 +1000,49 @@ class supervised_getognn:
             self.getognn.params['load_walks'] = walk_embedding_file
 
 
+    def compute_features(self):
+        if self.getognn.params['load_geto_attr']:
+            if 'geto' in self.getognn.params['aggregator']:
+                self.getognn.load_geto_features()
+                self.getognn.load_geto_feature_names()
+        else:
+            if 'geto' in self.getognn.params['aggregator']:
+                self.getognn.build_geto_adj_list(influence_type=self.getognn.params['geto_influence_type'])
+                self.getognn.write_geto_features(self.getognn.session_name)
+                self.getognn.write_geto_feature_names()
 
-    def train(self, getognn=None):
+        # features
+        if not self.getognn.params['load_features']:
+            self.getognn.compile_features(include_geto=self.getognn.params['geto_as_feat'])
+            self.getognn.write_gnode_features(self.getognn.session_name)
+            self.getognn.write_feature_names()
+        else:
+            self.getognn.load_gnode_features()
+            self.getognn.load_feature_names()
+            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
+                self.getognn.load_geto_features()
+                self.getognn.load_geto_feature_names()
+
+        if self.getognn.params['write_features']:
+            self.getognn.write_gnode_features(self.getognn.session_name)
+
+        if self.getognn.params['write_feature_names']:
+            self.getognn.write_feature_names()
+
+
+        if self.getognn.params['write_feature_names']:
+            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
+                self.getognn.write_geto_feature_names()
+        if self.getognn.params['write_features']:
+            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
+                self.getognn.write_geto_features(self.getognn.session_name)
+
+    def train(self, getognn=None, run_num=1):
         if getognn is not None:
             self.getognn = getognn
+        # self.X_BOX = self.getognn.X_BOX
+        #
+        # self.Y_BOX = self.getognn.Y_BOX
         #training
 
         self.getognn.supervised_train()
@@ -960,8 +1053,10 @@ class supervised_getognn:
         G = self.getognn.get_graph()
         self.getognn.equate_graph(G)
 
-        self.getognn.write_arc_predictions(dir=self.getognn.pred_session_run_path)
-        self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)
+        #self.getognn.update_run_info(batch_multi_run=run_num)
+
+        #self.getognn.write_arc_predictions(dir=self.getognn.pred_session_run_path)
+        #self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)
         self.getognn = self.getognn
         return self.getognn
 
@@ -1013,14 +1108,14 @@ class unsupervised_getognn:
 
 
 
-        self.attributes = deepcopy(self.getognn.get_attributes())
+        #self.attributes = deepcopy(self.getognn.get_attributes())
 
         if self.getognn.params['write_json_graph']:
             self.getognn.write_json_graph_data(folder_path=self.getognn.pred_session_run_path, name=model_name + '_' + self.getognn.params['name'])
 
 
         self.getognn.write_gnode_partitions(self.getognn.session_name)
-        self.getognn.write_selection_bounds(self.getognn.session_name)
+        #self.getognn.write_selection_bounds(self.getognn.session_name)
 
         # random walks
         if not self.getognn.params['load_preprocessed_walks']:
@@ -1049,5 +1144,5 @@ class unsupervised_getognn:
         #
         G = self.getognn.embedding_regression_classifier(embedding_path_and_name = embedding_name)
         self.getognn.equate_graph(G)
-        self.getognn.write_arc_predictions(self.getognn.session_name)
-        self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)
+        #self.getognn.write_arc_predictions(self.getognn.session_name)
+        #self.getognn.draw_segmentation(dirpath=self.getognn.pred_session_run_path)

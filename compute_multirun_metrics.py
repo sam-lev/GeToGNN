@@ -525,6 +525,10 @@ def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', a
     #clear_removed_windows.close()
     run_path = os.path.join(str(exp_folder), runs)
 
+    print(" multi model metric exp run folder")
+
+    print("exp",exp_folder)
+    print('runs', runs)
     runs_folder = os.listdir(os.path.join(str(exp_folder), runs)) if not batch_multi_run else \
         os.listdir(os.path.join(str(exp_folder), runs))
 
@@ -647,8 +651,9 @@ def multi_model_metrics(models,  exp_dirs, write_dir, bins=None, runs='runs', da
 
         runs_folder = os.listdir(os.path.join(str(exp_folder), runs)) if not batch_multi_run else \
             os.listdir(os.path.join(str(exp_folder), runs))
-
+        #runs_folder.sort()
         print("    * runs folder", runs_folder)
+
         # cleaned_runs_folder= []
         # for rf in runs_folder:
         #     size_r = len(os.listdir(os.path.join(r_folder, str(rf))))

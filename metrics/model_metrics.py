@@ -25,7 +25,7 @@ def _build_prediction_label_array_pairs(getognn,
             print("Empty pred, gid:", gid, 'pred',gid_to_prediction[gid])
             if node_gid_to_partition[gid] != 'train':
 
-                predictions.append(-1)#gid_to_prediction[gid][1])
+                predictions.append(gid_to_prediction[gid][1])
         else:
             if node_gid_to_partition[gid] != 'train':
 
@@ -78,7 +78,7 @@ def compute_getognn_metrics(getognn, threshold=0.5):
         write_model_scores(model='getognn',
                            scoring=scoring_type, scoring_dict=f1_recall_precision[scoring_type],
                            out_folder=getognn.pred_session_run_path)
-    return opt_thresh
+    return predictions, labels, opt_thresh
 
 
 

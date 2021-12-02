@@ -50,7 +50,7 @@ from ml.utils import load_data
 
 class GeToFeatureGraph(GeToGraph):
     def __init__(self, image=None, geomsc_fname_base = None, label_file=None,
-                 parameter_file_number = None, run_num=1,
+                 parameter_file_number = None, run_num=2,
                  dataset_group='neuron',write_folder="results",
                  model_name='ndlas',
                  name='neuron2', format='raw', load_feature_graph_name = None,
@@ -74,6 +74,7 @@ class GeToFeatureGraph(GeToGraph):
                                                geomsc_fname_base=geomsc_fname_base,
                                                write_folder= write_folder,
                                                label_file=label_file, run_num=run_num)
+
 
 
         #
@@ -110,8 +111,8 @@ class GeToFeatureGraph(GeToGraph):
         self.params['format'] = format
         self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
                                           self.params['write_folder'], 'runs')
-        if not os.path.exists(self.pred_run_path):
-            os.makedirs(os.path.join(self.pred_run_path))
+        #if not os.path.exists(self.pred_run_path):
+        #    os.makedirs(os.path.join(self.pred_run_path))
         #self.segmentation_path = self.LocalSetup.neuron_training_segmentation_path
         #self.msc_write_path = self.LocalSetup.neuron_training_base_path
 
@@ -130,10 +131,10 @@ class GeToFeatureGraph(GeToGraph):
         self.inference_target = m[0]
 
         print("    * read model", m)
-        if m[0] != 'unet':
-            self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
-            if not os.path.exists(self.pred_session_run_path):
-                os.makedirs(os.path.join(self.pred_session_run_path))
+        #if m[0] != 'unet':
+        #    self.pred_session_run_path = os.path.join(self.pred_run_path, self.session_name)
+        #    if not os.path.exists(self.pred_session_run_path):
+        #        os.makedirs(os.path.join(self.pred_session_run_path))
 
 
         #
@@ -191,6 +192,7 @@ class GeToFeatureGraph(GeToGraph):
         #    self.load_gnode_features(filename = self.params['feature_file'])
         #else:
         #    self.compiled_data = self.features
+
 
 
     def build_graph(self):
@@ -606,6 +608,7 @@ class GeToFeatureGraph(GeToGraph):
         feature_idx = 0
         feature_order = 0
 
+        check = 0
 
         for gnode in self.gid_gnode_dict.values():
 
@@ -621,6 +624,10 @@ class GeToFeatureGraph(GeToGraph):
                 gnode_pixels = get_pixel_values_from_vertices([gnode], im)
 
                 for function_name, foo in self.feature_ops.items():
+                    if check < 30:
+                        print(image_name)
+                        print(function_name)
+                        check += 1
                     attribute = foo(gnode_pixels)
                     gnode_feature_row.append(attribute)
                     if len(gnode_features) == 0:
@@ -671,7 +678,7 @@ class GeToFeatureGraph(GeToGraph):
         dbgprint(len(feature_names), 'len names')
         if self.getoelms is not None:
             dbgprint(self.getoelms.shape, 'geto elm shape')
-        dbgprint(gnode_features.shape, 'gnode shape')
+        dbgprint(gnode_features.shape, '    * feature shape')
 
         self.feature_names = feature_names if not include_geto else feature_names + self.geto_attr_names
 
@@ -810,7 +817,7 @@ class GeToFeatureGraph(GeToGraph):
             feats_file.write(str(gnode.gid)+ ' ')
             for f in feature_vec[0:-1]:
                 feats_file.write(str(f)+' ')
-            feats_file.write(str(feature_vec[-1]) + nl)
+            feats_file.write(str(feature_vec[-1]) + '\n')
             lines += 1
         gid_feats_file.close()
         feats_file.close()

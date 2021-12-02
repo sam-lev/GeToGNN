@@ -15,6 +15,7 @@ from data_ops.utils import tile_region
 
 class MLGraph(GeToFeatureGraph):
     def __init__(self,**kwargs):
+        self.run_num = kwargs['run_num']
 
         '''self.params = {}
         if parameter_file_number is None:
@@ -42,6 +43,7 @@ class MLGraph(GeToFeatureGraph):
         #                               model_name=model_name,
         #                               load_feature_graph_name=load_feature_graph_name)
         #                              params=self.params)
+
 
     def update_training_from_inference(self):
         self.selection_type = 'active'
@@ -150,7 +152,7 @@ class MLGraph(GeToFeatureGraph):
 
         return (in_arcs, out_arcs, out_pixels)
 
-    def box_select_geomsc_training(self, x_range, y_range, boxes, image=None):
+    def box_select_geomsc_training(self, x_range, y_range, boxes=None, image=None):
 
         # model_type = os.path.join(self.LocalSetup.project_base_path, 'model_type.txt')
         # logged_model = open(model_type, 'r')
@@ -159,62 +161,32 @@ class MLGraph(GeToFeatureGraph):
         #
         # print("    * read model", m)
         # if m[0] != 'unet':
-        X_BOX = []
-        Y_BOX = []
+        if boxes is not None:
 
-        box_sets = []
-        for box in boxes:
-            box_set = tile_region(step_X=64, step_Y=64, step=0.5,
-                                  Y_START=box[0],Y_END=box[1],
-                                  X_START=box[2],X_END=box[3])
-            box_sets.append(box_set)
+            X_BOX = []
+            Y_BOX = []
 
-
-        for box_pair in box_sets:
-            for box in box_pair:
-                X_BOX.append(box[0])
-                Y_BOX.append(box[1])
-        # for train_region in boxes:
-        #     for x_box in x_range:
-        #         for y_box in y_range:
-        #             #print('x_range', x_range)
-        #             #print('train regions' , train_regions)
-        #             #print('boxes', boxes)
-        #             x_min = x_box[0]
-        #             x_max = x_box[1]
-        #             #for train_region in boxes:
-        #
-        #             #         #Y_BOX.append
-        #             #for train_region in boxes:
-        #             #for y_box in x_range:
-        #             y_min = y_box[0]
-        #             y_max = y_box[1]
-        #             # for train_region in boxes:
-        #             xstart = train_region[2]
-        #             xend = train_region[3]
-        #             ystart = train_region[0]
-        #             yend = train_region[1]
-        #             #if yend > self.image.shape[0] or xend > self.image.shape[1]:
-        #             #    continue
-        #                 # Y_BOX.append(y_box)
-        #             # print('xboxxx',x_box)
-        #             # # print(x_min,'xmin')
-        #             # print(train_region,'train region')
-        #             # # print(y_box, 'ybox')
-        #             # print('ystart', y_box)
-        #
-        #             if x_min >= xstart and x_max <= xend:# and  (y_min >= ystart and y_max <= yend):
-        #                 if x_box not in Y_BOX: # dim inver from loading to numpy
-        #                     Y_BOX.append(x_box)
-        #             if y_min >= ystart and y_max <= yend:
-        #                 if y_box not in X_BOX:# X_BOX.append(x_box)
-        #                     X_BOX.append(y_box)
+            box_sets = []
+            for box in boxes:
+                box_set = tile_region(step_X=64, step_Y=64, step=0.5,
+                                      Y_START=box[2],Y_END=box[3],
+                                      X_START=box[0],X_END=box[1])
+                box_sets.append(box_set)
 
 
-        self.X_BOX = X_BOX
-        self.Y_BOX = Y_BOX
-        x_range_select = X_BOX
-        y_range_select = Y_BOX
+            for box_pair in box_sets:
+                for box in box_pair:
+                    X_BOX.append(box[0])
+                    Y_BOX.append(box[1])
+
+
+            self.X_BOX = X_BOX
+            self.Y_BOX = Y_BOX
+            x_range_select = X_BOX
+            y_range_select = Y_BOX
+        else:
+            x_range_select = x_range
+            y_range_select = y_range
 
         self.selection_type = 'box'
         xs = np.array(x_range_select).shape
@@ -222,6 +194,7 @@ class MLGraph(GeToFeatureGraph):
         # if len(xs) == 1:
         #     x_range = [x_range]
         #     y_range = [y_range]
+
 
         self.x_box = x_range_select
         self.y_box = y_range_select
@@ -238,39 +211,8 @@ class MLGraph(GeToFeatureGraph):
         empty_set = False
 
         if len(x_range_select) == 1:#np.array(x_range).shape == np.array([6,9]).shape:
-            x_range = x_range_select[0]
-            y_range = y_range_select[0]
-
-
-
-            # if self.inference_target =='msc':
-            #     contained_labels = []
-            #     for gnode in self.gid_gnode_dict.values():
-            #
-            #         gid = gnode.gid
-            #         self.node_gid_to_partition[gnode.gid] = 'test'
-            #         in_box = False
-            #         for p in gnode.points:
-            #             if x_range_select[0] <= p[0] <= x_range_select[1] and y_range_select[0] <= p[1] <= y_range_select[1]:
-            #                 in_box = True
-            #                 label_in_box = self.node_gid_to_label[gid]
-            #                 contained_labels.append(label_in_box[1])
-            #     class_counts = np.bincount(contained_labels,minlength=2)
-            #     if class_counts[1] <= 1:
-            #         empty_set = True
-            #         removed_file = os.path.join(self.LocalSetup.project_base_path,
-            #                                              'datasets', self.params['write_folder'],
-            #                                              'removed_windows.txt')
-            #         if not os.path.exists(removed_file):
-            #             open(removed_file, 'w').close()
-            #         removed_box_file = open(os.path.join(self.LocalSetup.project_base_path,
-            #                                              'datasets', self.params['write_folder'],
-            #                                              'removed_windows.txt'),'a+')
-            #         removed_box_file.write(str(self.run_num)+' x_box '+str(x_range_select[0])+','+str(x_range_select[1])+'\n')
-            #         removed_box_file.write(str(self.run_num)+' y_box ' + str(y_range_select[0]) + ',' + str(y_range_select[1]) + '\n')
-            #
-            #         return [],[], empty_set
-
+            x_ranges = x_range_select[0]
+            y_ranges = y_range_select[0]
             for gnode in self.gid_gnode_dict.values():
                 #idx = self.make_arc_id(arc)
                 gid = gnode.gid
@@ -278,7 +220,7 @@ class MLGraph(GeToFeatureGraph):
                 in_box = False
                 contained = []
                 for p in gnode.points:
-                    if x_range_select[0] <= p[0] <= x_range_select[1] and y_range_select[0] <= p[1] <= y_range_select[1]:
+                    if x_ranges[0] <= p[1] <= x_ranges[1] and y_ranges[0] <= p[0] <= y_ranges[1]:
                         in_box = True
                 if in_box and self.node_gid_to_partition[gnode.gid] != 'val':# and gnode.z != 1:
                     gnode.box = 1
@@ -297,60 +239,16 @@ class MLGraph(GeToFeatureGraph):
                     self.selected_test_arcs.add(gnode)
                     self.selected_test_arc_ids.add(gid)
         else:
-            # empty_region_dict = {}
-            # range_group = zip(x_range_select, y_range_select)
-            # for x_rng, y_rng in range_group:
-            #     empty_region_dict[(x_rng, y_rng)] = False
 
 
             for gnode in self.gid_gnode_dict.values():  # self.msc.arcs:
                 gid = gnode.gid
                 self.node_gid_to_partition[gnode.gid] = 'test'
 
-                # if self.inference_target == 'msc':
-                #     range_group = zip(x_range_select, y_range_select)
-                #     contained_labels = []
-                #     x_b, y_b = None,None
-                #     for x_rng, y_rng in range_group:
-                #
-                #         x_b = x_rng
-                #         y_b = y_rng
-                #         gid = gnode.gid
-                #         in_box = False
-                #         for p in gnode.points:
-                #             if x_rng[0] <= p[0] <= x_rng[1] and y_rng[0] <= p[1] <= y_rng[1]:
-                #                 in_box = True
-                #                 label_in_box = self.node_gid_to_label[gid]
-                #                 contained_labels.append(label_in_box[1])
-                #     class_counts = np.bincount(contained_labels, minlength=2)
-                #     if class_counts[1] <= 1:
-                #         empty_set = True
-                #         empty_region_dict[(x_b,y_b)] = True
-                #
-                #     contained_labels = []
-
 
             range_group = zip(x_range_select, y_range_select)
             empty_count = 0
             for x_rng , y_rng in range_group:
-
-                # if empty_region_dict[(x_rng,y_rng)]:
-                #     empty_count+=1
-                #
-                #     removed_file = os.path.join(self.LocalSetup.project_base_path,
-                #                                 'datasets', self.params['write_folder'],
-                #                                 'removed_windows.txt')
-                #     if not os.path.exists(removed_file):
-                #         open(removed_file, 'w').close()
-                #     removed_box_file = open(os.path.join(self.LocalSetup.project_base_path,
-                #                                          'datasets', self.params['write_folder'],
-                #                                          'removed_windows.txt'), 'a+')
-                #     removed_box_file.write(
-                #         str(self.run_num) + ' x_box ' + str(x_rng[0]) + ',' + str(x_rng[1]) + '\n')
-                #     removed_box_file.write(
-                #         str(self.run_num) + ' y_box ' + str(y_rng[0]) + ',' + str(y_rng[1]) + '\n')
-                #
-                #     continue
 
                 for gnode in self.gid_gnode_dict.values():#self.msc.arcs:
                     gid = gnode.gid
@@ -359,7 +257,7 @@ class MLGraph(GeToFeatureGraph):
                     p2 = gnode.points[-1]
                     in_box = False
                     for p in gnode.points:#(p1, p2):
-                        if x_rng[0] <= p[0] <= x_rng[1] and y_rng[0] <= p[1] <= y_rng[1]:
+                        if x_rng[0] <= p[1] <= x_rng[1] and y_rng[0] <= p[0] <= y_rng[1]:
                             in_box = True
                     if in_box and self.node_gid_to_partition[gnode.gid] != 'val':#'#gnode.z != 1:
                         gnode.box = 1
@@ -377,13 +275,6 @@ class MLGraph(GeToFeatureGraph):
                         self.node_gid_to_partition[gnode.gid] = 'test'
                         self.selected_test_arcs.add(gnode)
                         self.selected_test_arc_ids.add(gid)
-                    # else:
-                    #     gnode.box = 0
-                    #     gnode.partition = 'test'
-                    #     self.node_gid_to_partition[gnode.gid] = 'test'
-                    #     self.selected_test_arcs.add(gnode)
-                    #     self.selected_test_arc_ids.add(gid)
-            #empty_set = empty_count == len(x_range_select) - 1
         train_length = len(self.selected_positive_arc_ids) + len(self.selected_negative_arc_ids)
 
 
@@ -406,7 +297,9 @@ class MLGraph(GeToFeatureGraph):
         self.negative_arcs = self.selected_negative_arcs
         self.train_classes = [self.positive_arc_ids , self.negative_arc_ids]
         self.all_test_and_val = self.selected_test_arcs
-        return self.train_classes , self.all_test_and_val, empty_set
+
+
+        return self.train_classes , self.all_test_and_val, (self.x_box, self.y_box)
 
     def edge_map_overlap(self, arc, labeled_segmentation,  labeled_mask= None, msc=None, geomsc=None,
                          invert=True):
@@ -765,6 +658,15 @@ class MLGraph(GeToFeatureGraph):
             pred_file.write(str(gid)+ ' '+str(self.node_gid_to_prediction[gid]) + "\n")
         pred_file.close()
 
+    def write_graph_statistics(self, total_number_nodes, total_training_nodes, total_number_edges):
+
+        msc_pred_file = os.path.join(self.pred_session_run_path, 'graph_stastics.txt')
+        print("&&&& writing percentages in: ", msc_pred_file)
+        pred_file = open(msc_pred_file, "w+")
+        pred_file.write("num_nodes " + str(total_number_nodes)+"\n")
+        pred_file.write("num_edges " + str(total_number_edges)+"\n")
+        pred_file.write("num_training " + str(total_training_nodes ))
+        pred_file.close()
 
     def write_training_percentages(self, dir=None, msc_segmentation=None, train_regions=None,
                                    path=None, msc=None, name=''):
@@ -786,6 +688,23 @@ class MLGraph(GeToFeatureGraph):
         pred_file.write("num_pixels "+str( self.image.shape[0] * self.image.shape[1])+"\n")
         pred_file.write("num_pixels_training " + str( np.sum(msc_segmentation))+"\n")
         pred_file.write(tp+"_percent " + str( 100.0 * np.sum(msc_segmentation) / (self.image.shape[0] * self.image.shape[1])))
+        pred_file.close()
+
+    def write_training_graph_percentages(self, dir=None, msc_segmentation=None, graph_orders=None,
+                                   path=None, msc=None, name=''):
+        if name != '':
+            name = name+'.'
+        if dir is not None:
+            pred_session_run_path = dir
+        else:
+            pred_session_run_path = self.pred_session_run_path
+        tp = 'polyline'
+        msc_pred_file = os.path.join(pred_session_run_path, "region_percents.txt")
+        print("&&&& writing percentages in: ", msc_pred_file)
+        pred_file = open(msc_pred_file,"w+")
+        pred_file.write("num_lines "+str( self.image.shape[0] * self.image.shape[1])+"\n")
+        pred_file.write("num_lines_training " + str( graph_orders[1])+"\n")
+        pred_file.write(tp+"_percent " + str( 100.0 * graph_orders[1]/float(graph_orders[0])))
         pred_file.close()
     # write to file per line 'gid partition'
     # where partition = {train:0, test:1, val:2}
