@@ -331,8 +331,8 @@ class RandomForest(MLGraph):
         print("    * RF msc feat shape", test_features.shape)
         #####################################
         s = time.time()
-        rf = RandomForestClassifier(max_depth=depth,
-                                    n_estimators=n_trees, class_weight={0:wn,1:wp}, random_state=666)
+        rf = RandomForestClassifier(max_depth=10,
+                                    n_estimators=50, class_weight={0:wn,1:wp}, random_state=666)
 
         rf.fit(train_features, train_labels)
         f = time.time()

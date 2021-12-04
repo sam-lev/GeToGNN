@@ -55,8 +55,8 @@ dim_image = [[700,605],                      # 0
         [891,896]]                   # 10
 
 
-batch         = 1
-plot_only     = 0
+batch         = 0
+plot_only     = 1
 region_thresh = 0
 clear_runs = True if not plot_only and region_thresh == 0 else False
 
@@ -64,8 +64,9 @@ def unit_run():
     exp_runner = None
     for dataset_idx in [10]:
         # window_file = window_file+'_growing_windows_infer.txt'#_growifoamng_window.txt'
-        for exp,model in zip(['UNet'],#,'Random_Forest_Pixel'],
-                              ['unet']):#,'random_forest']):
+        pm = False
+        for exp,model in zip(['Random_Forest_MSC','Random_Forest_Pixel'],
+                              ['random_forest','random_forest']):
             #["Random_Forest_Pixel"],['random_forest']):#
             # ["UNet"],['unet']):#
             # for exp in ['fourth_windows_hidden-geto_maxpool']:
@@ -89,21 +90,25 @@ def unit_run():
 
                 exp_runner.start(model, boxes=boxes, dims=dims, learning=learn_type)
 
-        plot_models = 1
+            pm = 'Pixel' in exp
+
+        plot_models = pm
         if plot_models:
-            exp_runner.multi_model_metrics(['UNet', 'GNN', 'Random Forest MSC', 'Random Forest Pixel'],  # 'GNN','UNet',
-                                           ['UNet', 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"], None)
+            exp_runner.multi_model_metrics( [ "UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"],
+                                           [ "UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"], None,metric='time')
+            exp_runner.multi_model_metrics(["UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"],
+                                           ["UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"], None)
 
 
 
 
 def batch_runs():
     # launch random Forest
-    for dataset_idx in [10,8,9,2,0]:#10
+    for dataset_idx in [0]:#10   #10,8,9,2,
         exp_runner = None
         model_exp = []
-        for exp, model in zip(['Random_Forest_Pixel','Random_Forest_MSC','GNN'],#,'GNN', 'Random_Forest_Pixel', 'Random_Forest_MSC'],
-                              ['random_forest','random_forest','getognn']):#,'getognn', "random_forest", "random_forest"]):
+        for exp, model in zip(['UNet', 'Random_Forest_Pixel','GNN','Random_Forest_MSC'],#,'GNN', 'Random_Forest_Pixel', 'Random_Forest_MSC'],
+                              ['Unet','random_forest','getognn','random_forest']):#,'getognn', "random_forest", "random_forest"]):
 
             #window_file = window_file+'_growing_windows_infer.txt'
 
@@ -115,21 +120,22 @@ def batch_runs():
                                                    parameter_file_number=1,
                                                    multi_run=True,
                                                    percent_train_thresh=region_thresh,
-                                                   clear_runs=clear_runs)
-            learn_type = 'supervised'
-            if model == 'random_forest':
-                learn_type = 'pixel' if 'Pixel' in exp else 'msc'
+                                                   clear_runs=not plot_only)
+            if not plot_only:
+                learn_type = 'supervised'
+                if model == 'random_forest':
+                    learn_type = 'pixel' if 'Pixel' in exp else 'msc'
 
-            init_box = box_list[dataset_idx]
-            dim_im = dim_image[dataset_idx]
+                init_box = box_list[dataset_idx]
+                dim_im = dim_image[dataset_idx]
 
-            exp_runner.start(model, boxes = init_box , dims=dim_im, learning=learn_type)
+                exp_runner.start(model, boxes = init_box , dims=dim_im, learning=learn_type)
 
-            model_exp.append(exp)
+                model_exp.append(exp)
 
-        exp_runner.multi_model_metrics([ 'UNet','GNN', 'Random Forest MSC','Random Forest Pixel'],#'GNN','UNet',
-                                               [ 'UNet','GNN', "Random_Forest_MSC", "Random_Forest_Pixel"], None)
-        #model_exp, model_exp, None)
+        exp_runner.multi_model_metrics(['Random Forest Pixel'],# 'UNet','Random Forest Pixel','GNN', 'Random Forest MSC',],#'GNN','UNet',
+                                               ['UNet', 'Random_Forest_Pixel','GNN','Random_Forest_MSC'], None, metric='time')
+        #model_exp, model_exp, None)   #  'UNet',"Random_Forest_Pixel", 'GNN', "Random_Forest_MSC",
 
 
 

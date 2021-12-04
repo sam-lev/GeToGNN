@@ -139,16 +139,23 @@ class runner:
         if model == 'unet':
             self.run_unet(self.multi_run, boxes=boxes, dims=dims)
 
-    def multi_model_metrics(self, models, exp_dirs, write_dir):
+    def multi_model_metrics(self, models, exp_dirs, write_dir, metric='f1'):
         experiment_folders = []
+        models = []
         for exp in exp_dirs:
             experiment_folder = os.path.join(LocalSetup.project_base_path, 'datasets',
                                                   self.name,exp)
 
             experiment_folders.append(experiment_folder)
+            #m = str(exp).split('/')[-2]
+            m = exp.replace('_', ' ')
+            models.append(m)
+        print(experiment_folders)
         write_dir =  os.path.join(LocalSetup.project_base_path)
         multi_model_metrics(models=models, exp_dirs=experiment_folders, #batchmulti_run=True#
-                            data_name=self.name, write_dir=write_dir)
+                            data_name=self.name, write_dir=write_dir,metric=metric)
+
+
 
     def __group_pairs(self, lst):
         for i in range(0, len(lst), 2):
