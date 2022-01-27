@@ -5,7 +5,7 @@ from skimage import morphology
 from PIL import Image
 from matplotlib import colors
 import matplotlib.pyplot as plt
-
+import matplotlib.cm as cm
 
 
 #resize the images of the dataset to be half the height and half the width of the original images, so
@@ -194,24 +194,41 @@ def plot( image_set, name='RF-Lines Prediction', type='contour',write_path=None,
         contour = image_set[1]
         image2 = image_set[2]
         num_fig = 1
-        mycmap = colors.ListedColormap(["lightgray", "blue", "yellow", "cyan", "red"])
+        mycmap = colors.ListedColormap(["lightgray", "blue", "yellow", "cyan", "red",'mediumspringgreen'])
     else:
         contour = image_set[1]
         num_fig = 1
 
     fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True,figsize=(9,4))
-
-
+    if 'foam' in str(write_path):
+        start_x, start_y = 550, 20
+        zoom_x = 250
+    if 'diadem' in str(write_path):
+        start_x, start_y = 100, 150
+        zoom_x = 250
+    if 'berghia' in str(write_path):
+        start_x, start_y = 200, 200
+        zoom_x = 250
+    if 'neuron2' in str(write_path):
+        start_x, start_y = 890, 895
+        zoom_x = 250
+    if 'retinal' in str(write_path):
+        start_x, start_y = 250,50
+        zoom_x = 250
+    zoom_y = round(image.shape[1]/image.shape[0] * zoom_x)
     if type =='zoom':
-        ax.imshow(image[300:464,300:464], cmap='gray', vmin=0, vmax=1)
+        ax.imshow(image[start_x:start_x+zoom_x,start_y:start_y+zoom_y], cmap='gray', vmin=0, vmax=1)
     else:
         ax.imshow(image, cmap='gray', vmin=0, vmax=1)
 
     if len(image_set) > 2: # show the image to make the plot have the right shape
         if type == "zoom":
-            ax.pcolormesh(image2[300:464,300:464], cmap=mycmap, rasterized=True)  # covers the image, good looking plot
+            ax.pcolormesh(image2[start_x:start_x+zoom_x,start_y:start_y+zoom_y], cmap=mycmap,
+                          rasterized=True)  # covers the image, good looking plot
         else:
             ax.pcolormesh(image2, cmap=mycmap, rasterized=True)
+            if name == "Ground Truth MSC":
+                ax.contour(image_set[1],[0.0, 0.15], linewidths=0.5)
 
     if type == 'contour':
         ax.contour(contour, [0.0, 0.15], linewidths=0.5)  # add the training region
@@ -226,11 +243,21 @@ def plot( image_set, name='RF-Lines Prediction', type='contour',write_path=None,
     else:
         if type != 'zoom':
             plt.savefig(os.path.join(write_path ,
-                                     name+".imgs.pdf"),
+                                     name+".imgs.png"),
                         dpi=300)
         else:
             plt.savefig(os.path.join(write_path,
-                                     name + ".zoom-imgs.pdf"),
+                                     name + ".zoom-imgs.png"),
+                        dpi=300)
+    plt.close(fig)
+    if name == 'Image':
+        zoom_region = np.zeros(image.shape[:2], dtype=np.uint8)
+        zoom_region[start_x:start_x + zoom_x, start_y:start_y + zoom_y] = 1
+        fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(9, 4))
+        ax.imshow(image, cmap='gray', vmin=0, vmax=1)
+        ax.contour(zoom_region, [0.0, 0.15], linewidths=0.5, cmap='Greens')
+        plt.savefig(os.path.join(write_path,
+                                     "original_img_zoom_box.png"),
                         dpi=300)
 
 def dbgprint(x,name=""):

@@ -44,45 +44,47 @@ box_list = [[[375,439,590,654 ], [125,189,125,189]]   ,# [[500,680,300,450 ], [ 
 
 dim_image = [[700,605],                      # 0
              'neuron1',                 #
-             [1737,1785],                 # 2
+             [1737,1785],                    # 2
              'mat2_lines',              #
              'berghia',                 # 4
              'faults_exmouth',          # 5
              'transform_tests',         # 6
              'map_border',              #
-        [828,846],                    # 8
-        [1170,1438],                  # 9
-        [891,896]]                   # 10
+        [828,846],                           # 8
+        [1170,1438],                         # 9
+        [891,896]]                           # 10
 
 
 batch         = 0
-plot_only     = 1
+plot_only     = 0
+overide_plots = 0
 region_thresh = 0
-clear_runs = True if not plot_only and region_thresh == 0 else False
+break_training_thresh = 20 #60
+clear_runs = True if not plot_only else False
+
+experiments = [ 'MLP_MSC'] #  # ["Random_Forest_Pixel", "Random_Forest_MSC",'GNN'] #
+models =      [ 'mlp' ] # ['random_forest', 'random_forest', 'getognn']      #
 
 def unit_run():
     exp_runner = None
-    for dataset_idx in [10]:
-        # window_file = window_file+'_growing_windows_infer.txt'#_growifoamng_window.txt'
-        pm = False
-        for exp,model in zip(['Random_Forest_MSC','Random_Forest_Pixel'],
-                              ['random_forest','random_forest']):
-            #["Random_Forest_Pixel"],['random_forest']):#
-            # ["UNet"],['unet']):#
-            # for exp in ['fourth_windows_hidden-geto_maxpool']:
+    for dataset_idx in [0]: # [9,2,8,10,0]:
+        current_exp = False
+        for exp,model in zip(experiments,
+                              models):
             exp_runner = experiment_manager.runner(experiment_name=exp,
                                                    sample_idx=dataset_idx,
                                                    window_file_base=None,#window_file,
                                                    parameter_file_number=1,
                                                    multi_run=True,
                                                    percent_train_thresh=region_thresh,
+                                                   break_training_size=break_training_thresh,
                                                    clear_runs= not plot_only)
             #                            !        !  ^
             #                           ! CLEAR? ! _/
             #                          !        !
             if not plot_only:
                 learn_type = 'supervised'
-                if model == 'random_forest':
+                if model == 'random_forest' or model == 'mlp':
                     learn_type = 'pixel' if 'Pixel' in exp else 'msc'
 
                 boxes = box_list[dataset_idx]
@@ -90,14 +92,15 @@ def unit_run():
 
                 exp_runner.start(model, boxes=boxes, dims=dims, learning=learn_type)
 
-            pm = 'Pixel' in exp
+            current_exp = exp
 
-        plot_models = pm
+        plot_models = current_exp == experiments[-1] if not overide_plots else 0
         if plot_models:
-            exp_runner.multi_model_metrics( [ "UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"],
-                                           [ "UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"], None,metric='time')
-            exp_runner.multi_model_metrics(["UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"],
-                                           ["UNet", 'GNN', "Random_Forest_MSC", "Random_Forest_Pixel"], None)
+            exp_runner.multi_model_metrics( [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN', 'MLP_MSC'],
+                                           [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC'], None,
+                                            metric='time')
+            exp_runner.multi_model_metrics(["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC'],
+                                           ["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC'], None)
 
 
 
@@ -108,7 +111,7 @@ def batch_runs():
         exp_runner = None
         model_exp = []
         for exp, model in zip(['UNet', 'Random_Forest_Pixel','GNN','Random_Forest_MSC'],#,'GNN', 'Random_Forest_Pixel', 'Random_Forest_MSC'],
-                              ['Unet','random_forest','getognn','random_forest']):#,'getognn', "random_forest", "random_forest"]):
+                              ['unet','random_forest','getognn','random_forest']):#,'getognn', "random_forest", "random_forest"]):
 
             #window_file = window_file+'_growing_windows_infer.txt'
 

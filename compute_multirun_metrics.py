@@ -389,7 +389,7 @@ def plot_time_to_f1(run_region_dict=None, run_percentage_dict=None, results_dict
         ax.loglog(x, y,basex=2,basey=10, color=colors(1))  # , label='Class F1')
 
         # ax.legend(loc='lower right')
-        ax.set(title=plt_title + " Training Time to F1",
+        ax.set(
                xlabel='Time (s) Taken to Train', ylabel='F1 Score vs Training Time')
         # plt.yscale('log')
 
@@ -466,10 +466,10 @@ def plot_region_to_f1(run_region_dict=None, run_percentage_dict=None, results_di
     p_regions = sorted(percent_regions_metrics.items(), key=lambda x: x[1][0])
     # p_regions = dict(p_regions)
     x = [i[1][0] for i in p_regions]
-    x = x[1:]  # x       = x[1:]#-1]
-    y_macro = [i[1][1] for i in p_regions][1:]  # y_macro[1:]#-1]
-    y_micro = [i[1][2] for i in p_regions][1:]  # y_micro[1:]#-1]
-    y_class = [i[1][3] for i in p_regions][1:]  # y_class[1:]#-1]
+    x = x[0:]  # x       = x[1:]#-1]
+    y_macro = [i[1][1] for i in p_regions][0:]  # y_macro[1:]#-1]
+    y_micro = [i[1][2] for i in p_regions][0:]  # y_micro[1:]#-1]
+    y_class = [i[1][3] for i in p_regions][0:]  # y_class[1:]#-1]
 
     if plot_each:
         fig, ax = plt.subplots()
@@ -486,7 +486,7 @@ def plot_region_to_f1(run_region_dict=None, run_percentage_dict=None, results_di
         # ax.plot(x, y_micro, color=colors(3), label='Micro F1')
         ax.plot(x, y_class, color=colors(1))  # , label='Class F1')
         # ax.legend(loc='lower right')
-        ax.set(title=plt_title + " Training Size to F1",
+        ax.set(
                xlabel='Percent Sub-Region Used for Training', ylabel='F1 Score')
         # plt.yscale('log')
 
@@ -660,7 +660,8 @@ def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', a
                 os.makedirs(metric_subfolder)
             metric_file = None
 
-            results_dict, attributes_dict, run_region_dict, idx_run_dict, run_percent_dict = collect_run_metrics(
+            results_dict, attributes_dict, run_region_dict,\
+            idx_run_dict, run_percent_dict = collect_run_metrics(
                 metric=metric,
                 run_path=run_path,
                 runs_folder=runs_folder,
@@ -731,26 +732,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
 
         model_statistics[model] = []
 
-        # removed_windows_file = os.path.join(exp_folder, 'removed_windows.txt')
-        #
-        # print("     removed windows *", removed_windows_file)
-        # r_folder = os.path.join(exp_folder, runs)
-        # rm_runs = []
-        # if os.path.exists(removed_windows_file):
-        #     removed_runs = open(removed_windows_file,'r+')
-        #     print("    * exp:", exp_folder)
-        #     #print("    * removed file: ", removed_runs)
-        #     lines = removed_runs.readlines()
-        #     print("    * removed windows", lines)
-        #     rm_runs = []
-        #     for l in lines:
-        #         run_window = l.split(" ")
-        #         r =  run_window[0]
-        #         rm_runs.append(str(r))
-        #     removed_runs.close()
 
-        # clear_removed_windows = open(removed_windows_file,'w+')
-        # clear_removed_windows.close()
         run_path = os.path.join(str(exp_folder), runs)
 
         runs_folder = os.listdir(os.path.join(str(exp_folder), runs)) if not batch_multi_run else \
@@ -758,12 +740,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
         # runs_folder.sort()
         print("    * runs folder", runs_folder)
 
-        # cleaned_runs_folder= []
-        # for rf in runs_folder:
-        #     size_r = len(os.listdir(os.path.join(r_folder, str(rf))))
-        #     if rf not in rm_runs and size_r > 0:
-        #         cleaned_runs_folder.append(rf)
-        # runs_folder = cleaned_runs_folder
+
 
         metric_plot_folder = os.path.join(str(exp_folder), 'batch_metrics') if not batch_multi_run else \
             os.path.join(str(exp_folder), 'batch_metrics', runs)
@@ -869,7 +846,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
     colors = plt.cm.get_cmap('Dark2')
 
 
-    c = 1
+
     for model_name, stats in model_statistics.items():
         x = stats[0]
         y = stats[1]
@@ -893,17 +870,63 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
         else:
             formatter0 = PercentFormatter()
             ax.xaxis.set_major_formatter(formatter0)
-        ax.plot(x, y,color=colors(c), label=model_name)
-        c += 1
-    ax.legend(loc='lower right')
-    ax.set(title=title,
-           xlabel=xlab, ylabel='F1 Score')
-    # plt.yscale('log')
+        if model_name=='UNet':
+            model_name = 'U-Net'
+            c = 'blue'
+            lstyle = (0, (1, 1)) # densely dotted 'solid' #(0, (5, 1))#'densely dashed'
+            lw = 2.0
+        if 'Pixel' in model_name and 'Forest' in model_name:
+            c = 'orange'
+            lstyle =  (0, (3, 1, 1, 1, 1, 1)) # densely daddotted
+            ## (0, (1, 1)) # densely dotted(0, (5, 1)) # dashed (0, (1, 1))# 'densely dotted'
+            lw = 1.5
+        if 'Pixel' in model_name and 'MLP' in model_name:
+            c = 'palegreen'
+            lstyle =  (0, (3, 1, 1, 1, 1, 1)) # densely daddotted
+            ## (0, (1, 1)) # densely dotted(0, (5, 1)) # dashed (0, (1, 1))# 'densely dotted'
+            lw = 1.5
+        if model_name == 'GNN':
+            c = 'darkgreen'
+            lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
+            lw = 2.0
+        if 'MSC' in model_name and 'Forest' in model_name:
+            model_name = 'Random Forest Priors'
+            c = 'gold'
+            lstyle = (0, (5, 1))#(0, (1, 1)) #(0, (5, 1))#'densely dashed'   #(0, (3, 5, 1, 5))#'dashdotted'
+            lw = 1.5
+        if 'MSC' in model_name and 'MLP' in model_name:
+            model_name = 'MLP Priors'
+            c = 'chartreuse' # for pixel chartreuse
+            lstyle = (0, (5, 1))#(0, (1, 1))  #(0, (3, 5, 1, 5))#'dashdotted'
+            lw = 1.5
+        ax.plot(x, y,color=c, label=model_name, linestyle=lstyle, linewidth=lw)
+    plt.xticks(fontsize=15)
+    plt.yticks(fontsize=15)
+    if 'retinal' in data_name:
+        ax.legend(loc='lower right',fontsize=11)
+        if metric != 'time':
+            plt.xlabel("Percent Sub-Set Used for Training",fontsize=17)
+        else:
+            plt.xlabel("Time log(s) Taken to Train",fontsize=17)
+    else:
+        plt.xlabel(" ")
+        plt.ylabel(" ")
+
+    # ax.set(
+    #        xlabel=xlab, ylabel='F1 Score')#, fontsize=12)
+
 
     fig.tight_layout()
     write_folder = os.path.join(str(write_dir), 'batch_metrics')
     if not os.path.exists(write_folder):
         os.makedirs(write_folder)
+    #ax.set_xticklabels(x, fontsize=5)
+    #ax.set_yticklabels(y, fontsize=5)
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(color='gray', linestyle='dashed')
+    if metric != 'time':
+        ax.xaxis.grid(color='gray', linestyle='dashed')
+    print("    * : placing plots in ", write_folder)
     plt.savefig(os.path.join(write_folder, data_name + '_multi_model_performance_' + metric + '.png'))
     plt.close(fig)
 

@@ -138,7 +138,7 @@ class GeToFeatureGraph(GeToGraph):
 
 
         #
-        # Data
+        # Data Collection
         #
         self.data_array, self.data_set = collect_datasets(name=name,image=image,
                                                           dim_invert=self.params['dim_invert'],
@@ -147,6 +147,10 @@ class GeToFeatureGraph(GeToGraph):
         if geomsc_fname_base is None:
             compute_geomsc(self.params, self.data_array, self.pred_run_path, self.segmentation_path,
                            self.msc_write_path, map_labels=False)
+
+        #
+        # Collect data flow with im, msc, mask-(if avail/used)
+        #
         self.train_dataloader = collect_training_data(
             dataset=self.data_set,
             data_array=self.data_array,

@@ -407,27 +407,6 @@ class UNetwork( MLGraph):
                     mapped_x = points[:, 1]  # - y_box[0]
                     if int(label[1]) == 1:
                         train_im[mapped_x, mapped_y] = 1
-            #     if x_box[0] < p[0] < x_box[1] and y_box[0] < p[1] < y_box[1]:
-            #         in_box = True
-            #         interior_points.append(p)
-            #
-            #     else:
-            #         not_all = True
-            # if not_all and in_box:
-            #     if train_set:
-            #         self.node_gid_to_partition[gid] = 'train'
-            #     points = np.array(interior_points)
-            # elif not_all:
-            #     continue
-            #
-            # mapped_y = points[:,0] #- y_box[0]
-            # mapped_x = points[:,1] #- x_box[0]
-            # if int(label[1]) == 1:
-            #     train_im[mapped_x, mapped_y] = int(1)
-                #__box_grow_label(train_im, (mapped_x,mapped_y), int(1))
-            #else:
-            #    train_im[mapped_x, mapped_y] = int(0)
-            #    __box_grow_label(train_im, (mapped_x, mapped_y), int(0))
         train_im = ndimage.maximum_filter(train_im, size=growth_radius)
         n_samples = dim_train_region[0] * dim_train_region[1]
         n_classes = 2
@@ -835,13 +814,7 @@ class UNetwork( MLGraph):
         for i in range(0, len(lst), 2):
             yield tuple(lst[i: i + 2])
 
-    def collect_boxes(self, resize=False, run_num=-1, training_set=False):# region_list,
-
-
-
-
-
-
+    def collect_boxes(self, resize=False, run_num=-1, training_set=False):
         if training_set:
             train_dataset = self.get_data_crops(self.image, x_range=self.X_BOX,
                                                with_range = not training_set,
@@ -850,40 +823,15 @@ class UNetwork( MLGraph):
                                                resize=resize,
                                                growth_radius = self.growth_radius,
                                                train_set=training_set)
-            #self.see_image(gt_seg=test_dataset[0][1], save=False)
-
-
-
-
-
             self.pred_run_path = os.path.join(self.LocalSetup.project_base_path, 'datasets',
                                               self.params['write_folder'],
                                               'runs')
-
-
-
-
-
-
-
-
-
             inf_or_train_dataset = dataset(train_dataset, do_transform= False,
                                             with_hand_seg=False)
 
             val_dataset = train_dataset
 
-        else:#if not training_set:
-            # self.training_labels = self.get_data_crops(self.image,
-            #                                            x_range=[[0, self.image.shape[1]]],
-            #                                    y_range=[[0, self.image.shape[0]]],
-            #                                     with_range= False,
-            #                                    full_img=True,
-            #                                     dataset=[],
-            #                                     resize=resize,
-            #                                    train_set=training_set,
-            #                                    growth_radius = self.growth_radius)
-
+        else:
             self.training_labels, training_tiles = self.get_data_crops(self.image,
                                                                        x_range=self.X_BOX_all,
                                                with_range=False,
@@ -1239,6 +1187,7 @@ class UNetwork( MLGraph):
         self.pred_prob_im = np.zeros(self.image.shape[:2], dtype=np.float32) #* min(0.25, self.opt_thresh/2.)
         pred_labels_conf_matrix = np.zeros(self.image.shape[:2], dtype=np.float32)# * min(0.25,self.opt_thresh/2.)#dtype=np.uint8)
         pred_labels_msc = np.zeros(self.image.shape[:2], dtype=np.float32) #* min(0.25, self.opt_thresh/2.)
+        gt_msc = np.zeros(self.image.shape[:2], dtype=np.float32)
         predictions_topo_bool = []
         labels_topo_bool = []
         check=30
@@ -1278,19 +1227,21 @@ class UNetwork( MLGraph):
 
             t = 0
             if infval >= self.opt_thresh:
-                if label == 1:
-                    t = 4  # 0.25  # 1
-                else:
-                    t = 2  # .75  # 3
+                if label == 1:  # true positive
+                    t = 4  # red
+                    ## ["lightgray", "blue", "yellow", "cyan", "red", 'mediumspringgreen'])
+                else:  # . False positive
+                    t = 2  # yellow
             else:
-                if label == 1:
-                    t = 3  # .5  # 2
-                else:
-                    t = 1  # 4
+                if label == 1:  # false negative
+                    t = 5  # mediumspringgreen
+                else:  # True Negatuve
+                    t = 1  # blue
 
             for point in line:
                 ly = int(point[0])
                 lx = int(point[1])
+                gt_msc[lx, ly] = 4 if label == 1 else 1
                 pred_labels_conf_matrix[lx, ly] = t
                 pred_labels_msc[lx,ly] = 1 if infval >= self.F1_log[self.max_f1] else 0
                 self.pred_prob_im[lx, ly] = infval
@@ -1336,72 +1287,6 @@ class UNetwork( MLGraph):
               100.0 * np.sum(self.training_labels) / (self.image.shape[0] * self.image.shape[1]))
 
 
-
-
-        # num_fig = 6
-        # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig*4, num_fig-1), dpi=300)
-        # ax[0].imshow(self.image)
-        # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[0].set_title('Image')
-        # ax[1].imshow(self.training_labels)
-        # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[1].set_title('Ground Truth Segmentation')
-        # ax[2].imshow(self.pred_val_im)
-        # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[2].set_title('Predicted Segmentation')
-        # ax[3].imshow(pred_labels_conf_matrix)
-        # ax[3].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[3].set_title('MSC TF TP TN FN')
-        # ax[4].imshow(self.pred_prob_im)
-        # ax[4].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[4].set_title('MSC Pixel Inference Confidence')
-        # ax[5].imshow(pred_labels_msc)
-        # ax[5].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[5].set_title('MSC Binary Prediction')
-        # #fig.tight_layout()
-        # if INTERACTIVE:
-        #     plt.show()
-        #
-        # #batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
-        # #if not os.path.exists(batch_folder):
-        # #    os.makedirs(batch_folder)
-        # plt.savefig(os.path.join(out_folder,"unet_imgs.pdf")    )
-        #
-        # im_tile = self.image[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        # seg_tile = self.training_labels[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        # p_tile = self.pred_val_im[300:464, 300:464]#[pad:pred_tile.shape[0] - pad, pad:pred_tile.shape[1] - pad]
-        #
-        # sample_conf_mat = pred_labels_conf_matrix[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        # sample_proba = self.pred_prob_im[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        # sample_pred_label = pred_labels_msc[300:464, 300:464]#[x_box[0] + pad: x_box[1] - pad, y_box[0] + pad: y_box[1] - pad]
-        # num_fig = 6
-        # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-        # ax[0].imshow(im_tile)
-        # # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[0].set_title('Image')
-        #
-        # ax[2].imshow(seg_tile)
-        # # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[2].set_title('Ground Truth Segmentation')
-        # ax[1].imshow(p_tile)
-        # # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[1].set_title('Predicted Segmentation')
-        # ax[3].imshow(sample_conf_mat)
-        # # ax[0].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[3].set_title('MSC TF TP TN FN')
-        # ax[4].imshow(sample_proba)
-        # # ax[1].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[4].set_title('Polyline Inference Confidence')
-        # ax[5].imshow(sample_pred_label)
-        # # ax[2].contour(self.training_reg_bg, [0.0, 0.15], linewidths=0.5)
-        # ax[5].set_title('MSC Binary Prediction')
-        # if INTERACTIVE:
-        #     plt.show()
-        # plt.savefig(os.path.join(out_folder, "unet_imgs_sample.pdf"))
-
-
-
-
         images = [self.image, self.training_labels, self.pred_val_im,
                   self.pred_prob_im]
         names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
@@ -1414,6 +1299,13 @@ class UNetwork( MLGraph):
              type='confidence', write_path=out_folder)
 
         plot(image_set, name="TP FP TF TN Line Prediction",
+             type='zoom', write_path=out_folder)
+
+        image_set = [self.image, self.training_reg_bg, gt_msc]
+        plot(image_set, name="Ground Truth MSC",
+             type='confidence', write_path=out_folder)
+
+        plot(image_set, name="Ground Truth MSC",
              type='zoom', write_path=out_folder)
 
         for image, name in zip(images, names):

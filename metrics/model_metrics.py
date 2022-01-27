@@ -112,3 +112,23 @@ def compute_opt_f1(model, predictions, labels, out_folder):
             write_model_scores(model=model,threshold=str(thresh),
                                scoring=scoring_type, scoring_dict=f1_recall_precision[scoring_type],
                                out_folder=out_folder)
+def compute_opt_F1_and_threshold(model, threshold=0.5):
+    predictions, labels, opt_thresh = _build_prediction_label_array_pairs(model,
+                                                              model.node_gid_to_prediction,
+                                                              model.node_gid_to_label,
+                                                              model.node_gid_to_partition,
+                                                              threshold=threshold)
+
+
+    #get dictionary of scores
+    # keys are
+    f1_dict = f1(predictions=predictions, labels=labels)
+    recall_dict = recall(predictions=predictions, labels=labels)
+    precision_dict = precision(predictions=predictions, labels=labels)
+
+    f1_recall_precision = {'f1': f1_dict , 'recall': recall_dict , 'precision': precision_dict}
+    for scoring_type in f1_recall_precision.keys():
+        write_model_scores(model='getognn',
+                           scoring=scoring_type, scoring_dict=f1_recall_precision[scoring_type],
+                           out_folder=model.pred_session_run_path)
+    return predictions, labels, f1_dict['class'], opt_thresh

@@ -658,18 +658,34 @@ class MLGraph(GeToFeatureGraph):
             pred_file.write(str(gid)+ ' '+str(self.node_gid_to_prediction[gid]) + "\n")
         pred_file.close()
 
-    def write_graph_statistics(self, total_number_nodes, total_training_nodes, total_number_edges):
+    def write_graph_statistics(self, total_number_nodes, total_training_nodes, total_number_edges,
+                               total_test_nodes=None, total_length_training_nodes=None,
+                               total_length_positive_training_nodes=None,
+                               total_length_positive_nodes=None,
+                               total_length_test_nodes=None,
+                               total_length_nodes=None, fname = 'graph_statistics'):
 
-        msc_pred_file = os.path.join(self.pred_session_run_path, 'graph_stastics.txt')
+        msc_pred_file = os.path.join(self.pred_session_run_path, fname+'.txt')
         print("&&&& writing percentages in: ", msc_pred_file)
         pred_file = open(msc_pred_file, "w+")
         pred_file.write("num_nodes " + str(total_number_nodes)+"\n")
         pred_file.write("num_edges " + str(total_number_edges)+"\n")
-        pred_file.write("num_training " + str(total_training_nodes ))
+        pred_file.write("total_test_nodes "+ str(total_test_nodes)+"\n")
+        pred_file.write("total_training_nodes " + str(total_training_nodes )+"\n")
+        pred_file.write("total_length_test_nodes " + str(total_length_test_nodes)+"\n")
+        pred_file.write("total_length_train_nodes " +str(total_length_training_nodes)+"\n")
+        pred_file.write("total_length_nodes " + str(total_length_nodes)+"\n")
+        pred_file.write("percent_graph_training " + str(100.0*(total_training_nodes/total_number_nodes)) + "\n")
+
+        pred_file.write("percent_length_training " + str(
+            100.0 * (total_length_training_nodes / total_length_nodes)) + "\n")
+        pred_file.write("percent_length_positive_training " + str(
+            100.0 * (total_length_positive_training_nodes / total_length_positive_nodes)) + "\n")
         pred_file.close()
 
     def write_training_percentages(self, dir=None, msc_segmentation=None, train_regions=None,
-                                   path=None, msc=None, name=''):
+                                   path=None, msc=None, name='',total_positive_training_pixels=None,
+                                                  total_positive_pixels=None, object='region'):
         if name != '':
             name = name+'.'
         if dir is not None:
@@ -682,12 +698,18 @@ class MLGraph(GeToFeatureGraph):
         if train_regions is not None:
             msc_segmentation=train_regions
             tp = 'region'
-        msc_pred_file = os.path.join(pred_session_run_path, tp+"_percents.txt")
+        msc_pred_file = os.path.join(pred_session_run_path, object+"_percents.txt")
         print("&&&& writing percentages in: ", msc_pred_file)
         pred_file = open(msc_pred_file,"w+")
         pred_file.write("num_pixels "+str( self.image.shape[0] * self.image.shape[1])+"\n")
         pred_file.write("num_pixels_training " + str( np.sum(msc_segmentation))+"\n")
-        pred_file.write(tp+"_percent " + str( 100.0 * np.sum(msc_segmentation) / (self.image.shape[0] * self.image.shape[1])))
+        pred_file.write(tp+"_percent " + str( 100.0 * (np.sum(msc_segmentation) / (self.image.shape[0] * self.image.shape[1]))))
+        if total_positive_training_pixels is not None:
+            pred_file.write("total_positive_training_pixels " + str(total_positive_training_pixels) + "\n")
+            pred_file.write("total_positive_pixels " + str(total_positive_pixels) + "\n")
+            pred_file.write("percent_positive_training " + str(
+                100.0 * (total_positive_training_pixels / total_positive_pixels)) + "\n")
+
         pred_file.close()
 
     def write_training_graph_percentages(self, dir=None, msc_segmentation=None, graph_orders=None,
@@ -704,7 +726,7 @@ class MLGraph(GeToFeatureGraph):
         pred_file = open(msc_pred_file,"w+")
         pred_file.write("num_lines "+str( self.image.shape[0] * self.image.shape[1])+"\n")
         pred_file.write("num_lines_training " + str( graph_orders[1])+"\n")
-        pred_file.write(tp+"_percent " + str( 100.0 * graph_orders[1]/float(graph_orders[0])))
+        pred_file.write(tp+"_percent " + str( 100.0 * (graph_orders[1]/float(graph_orders[0]))))
         pred_file.close()
     # write to file per line 'gid partition'
     # where partition = {train:0, test:1, val:2}

@@ -11,8 +11,7 @@ from ml.UNet import UNetwork
 from ml.utils import get_train_test_val_partitions
 from ml.utils import get_partition_feature_label_pairs
 from proc_manager.run_manager import *
-from metrics.model_metrics import compute_getognn_metrics
-from metrics.model_metrics import compute_prediction_metrics
+from metrics.model_metrics import compute_getognn_metrics, compute_prediction_metrics,compute_opt_F1_and_threshold
 from data_ops.set_params import set_parameters
 from compute_multirun_metrics import multi_run_metrics, multi_model_metrics
 from ml.features import get_points_from_vertices
@@ -25,7 +24,8 @@ LocalSetup = LocalSetup()
 #__all__ = ['run_experiment', 'experiment_logger']
 
 class runner:
-    def __init__(self, experiment_name, window_file_base = None, clear_runs=False, percent_train_thresh = 0,
+    def __init__(self, experiment_name, window_file_base = None, clear_runs=False,
+                 percent_train_thresh = 0, break_training_size=50,
                  sample_idx=2, multi_run = True, parameter_file_number = 1):
 
         # base attributes shared between models
@@ -121,6 +121,8 @@ class runner:
 
         self.percent_train_thresh = percent_train_thresh
 
+        self.break_training_size = break_training_size
+
 
 
 
@@ -133,7 +135,7 @@ class runner:
             elif learning == 'unsupervised':
                 self.run_unsupervised_getognn(self.multi_run)
         if model == 'mlp':
-            self.run_mlp(self.multi_run)
+            self.run_mlp( boxes=boxes, dims=dims, learning=learning )
         if model == 'random_forest':
             self.run_random_forest(self.multi_run, boxes=boxes, dims=dims, learning=learning)
         if model == 'unet':
@@ -161,15 +163,36 @@ class runner:
         for i in range(0, len(lst), 2):
             yield tuple(lst[i : i + 2])
 
-    def graph_statistics(self, node_gid_dict, gid_edge_dict, gid_split_dict):
+    def graph_statistics(self, node_gid_dict, gid_edge_dict, gid_split_dict, gid_to_label_dict = None):
 
         total_number_nodes = len(node_gid_dict.keys())
-        total_training_nodes = len(node_gid_dict.keys())
+        total_training_nodes = 0#len(node_gid_dict.keys())
+        total_test_nodes = 0
+        total_length_positive_training_nodes = 0
+        total_length_positive_nodes = 0
+        total_length_training_nodes = 0
+        total_length_test_nodes = 0
+        total_length_nodes = 0
         total_number_edges = len(gid_edge_dict.keys())
-        for gid in gid_split_dict.keys():
-            if gid_split_dict[gid] == 'test':
-                total_training_nodes -= 1
-        return total_number_nodes, total_training_nodes, total_number_edges
+        for gid in node_gid_dict.keys():#gid_split_dict.keys():
+            label = gid_to_label_dict[gid]
+            node = node_gid_dict[gid]
+            if gid_split_dict[gid] == 'test' or gid_split_dict[gid] == 'val':
+                total_test_nodes += 1
+                total_length_test_nodes += len(node.points)
+            else:
+                total_training_nodes += 1
+                if not label[1] < 1:
+                    total_length_positive_training_nodes += len(node.points)
+                total_length_training_nodes += len(node.points)
+
+            total_length_nodes += len(node.points)
+            if not label[1] < 1:
+                total_length_positive_nodes += len(node.points)
+
+        return total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,\
+               total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes,\
+               total_length_test_nodes, total_length_nodes
 
 
     def grow_box(self, dims, boxes):
@@ -308,7 +331,7 @@ class runner:
             percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
             percent_float = percent *100
             print("    * percent", percent)
-            if percent_float > 50:
+            if percent_float > self.break_training_size:
                 break
             #if gr > 1 and percent_float < 1:
             #    continue
@@ -413,26 +436,12 @@ class runner:
                                    type='pred')
             G = getognn.get_graph()
             getognn.equate_graph(G)
+            # For computing the line graph for visualisation
+            # getognn.draw_priors_graph(G)
 
 
 
-            # get inference metrics
-            # predictions = []
-            # labels = []
-            # for gid in getognn.node_gid_to_prediction.keys():
-            #     if isinstance(getognn.node_gid_to_prediction[gid], list):
-            #         # continue
-            #         print("Empty pred, gid:", gid, 'pred', getognn.node_gid_to_prediction[gid])
-            #         predictions.append(-1)  # gid_to_prediction[gid][1])
-            #     else:
-            #
-            #         predictions.append(getognn.node_gid_to_prediction[gid])
-            #     labels.append(getognn.node_gid_to_label[gid][1])
-            # predictions = np.array(predictions)
-            # labels = np.array(labels)
 
-            # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
-            #                out_folder=self.model.pred_session_run_path)
 
             predictions, labels, opt_thresh = compute_getognn_metrics(getognn=getognn)
 
@@ -446,18 +455,32 @@ class runner:
             G = getognn.get_graph()
             getognn.equate_graph(G)
 
-            total_number_nodes, total_training_nodes, total_number_edges = self.graph_statistics(getognn.gid_gnode_dict,
-                                                                                                 getognn.gid_edge_dict,
-                                                                                                 getognn.node_gid_to_partition)
-            getognn.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges)
+            total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes, total_length_training_nodes,\
+            total_length_positive_training_nodes,  total_length_positive_nodes,\
+            total_length_test_nodes, total_length_nodes = self.graph_statistics( getognn.gid_gnode_dict,
+                                                                                 getognn.gid_edge_dict,
+                                                                                 getognn.node_gid_to_partition,
+                                                                                 getognn.node_gid_to_label)
+            getognn.write_graph_statistics(total_number_nodes,
+                                           total_training_nodes,
+                                           total_number_edges,
+                                           total_test_nodes,
+                                           total_length_training_nodes,
+                                           total_length_positive_training_nodes,
+                                           total_length_positive_nodes,
+                                           total_length_test_nodes,
+                                           total_length_nodes,
+                                           fname='region_percents')
 
-            getognn.write_training_graph_percentages(dir=getognn.pred_session_run_path, graph_orders=(total_number_nodes,total_training_nodes))
+            # getognn.write_training_graph_percentages(dir=getognn.pred_session_run_path,
+            #                                          graph_orders=(total_number_nodes,
+            #                                                        total_training_nodes))
 
             pred_labels_conf_matrix = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(0.25,opt_thresh/2.) # dtype=np.uint8)
             pred_labels_msc = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(0.25, opt_thresh/2.)
             gt_labels_msc = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(.25,opt_thresh/2.)
             pred_prob_im = np.zeros(getognn.image.shape[:2], dtype=np.float32)
-
+            gt_msc = np.zeros(getognn.image.shape[:2], dtype = np.float32)
             predictions_topo_bool = []
             labels_topo_bool = []
             check = 30
@@ -494,19 +517,21 @@ class runner:
 
                 t = 0
                 if infval >= opt_thresh:
-                    if label == 1:
-                        t = 4  # 1
-                    else:
-                        t = 2  # 3
+                    if label == 1:  # true positive
+                        t = 4  # red
+                        ## ["lightgray", "blue", "yellow", "cyan", "red", 'mediumspringgreen'])
+                    else:  # . False positive
+                        t = 2  # yellow
                 else:
-                    if label == 1:
-                        t = 3  # 2
-                    else:
-                        t = 1  # 4
+                    if label == 1:  # false negative
+                        t = 5  # mediumspringgreen
+                    else:  # True Negatuve
+                        t = 1  # blue
 
                 for point in line:
                     ly = int(point[0])
                     lx = int(point[1])
+                    gt_msc[lx, ly] = 4 if label == 1 else 1
                     pred_labels_conf_matrix[lx, ly] = t
                     pred_labels_msc[lx, ly] = 1 if infval >= opt_thresh else 0
                     gt_labels_msc[lx,ly] = label
@@ -520,51 +545,7 @@ class runner:
 
             out_folder = getognn.pred_session_run_path
 
-            # num_fig = 5
-            # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-            # ax[0].imshow(getognn.image)
-            # ax[0].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            # ax[0].set_title('Image')
-            # ax[1].imshow(gt_labels_msc)
-            # ax[1].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            # ax[1].set_title('Polyline Ground Truth Labeling')
-            # ax[2].imshow(pred_labels_conf_matrix)
-            # ax[2].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            # ax[2].set_title('MSC TF TP TN FN')
-            # ax[3].imshow(pred_prob_im)
-            # ax[3].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            # ax[3].set_title('MSC Pixel Inference Confidence')
-            # ax[4].imshow(pred_labels_msc)
-            # ax[4].contour(training_reg_bg, [0.0, 0.15], linewidths=0.5)
-            # ax[4].set_title('MSC Binary Prediction')
-            # # fig.tight_layout()
-            #
-            #
-            # # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
-            # # if not os.path.exists(batch_folder):
-            # #    os.makedirs(batch_folder)
-            # plt.savefig(os.path.join(out_folder, "gnn_pix_imgs.pdf"))
-            #
-            # num_fig = 5
-            # fig, ax = plt.subplots(1, num_fig, sharex=True, sharey=True, figsize=(num_fig * 4, num_fig - 1))
-            # ax[0].imshow(getognn.image)
-            # # ax[0].contour(region_contour[400:464,400:464], [0.0, 0.15], linewidths=0.5)
-            # ax[0].set_title('Image')
-            # ax[1].imshow(gt_labels_msc[300:464, 300:464])
-            # ax[1].set_title('MSC Ground Segmentation')
-            #
-            # ax[2].imshow(pred_labels_conf_matrix[300:464, 300:464])
-            # # ax[3].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-            # ax[2].set_title('MSC TF TP TN FN')
-            #
-            # ax[3].imshow(pred_prob_im[300:464, 300:464])
-            # #x[4.contour(region_contour, [0.0, 0.15], linewidths=0.5)
-            # ax[3].set_title('MSC Pixel Inference Confidence')
-            # ax[4].imshow(pred_labels_msc[300:464, 300:464])
-            # # ax[5].contour(region_contour, [0.0, 0.15], linewidths=0.5)
-            # ax[4].set_title('MSC Binary Prediction')
-            #
-            # plt.savefig(os.path.join(out_folder, "gnn_pix_zoom_imgs.pdf"))
+
 
 
 
@@ -580,6 +561,14 @@ class runner:
                  type='confidence', write_path=out_folder)
 
             plot(image_set, name="TP FP TF TN Line Prediction",
+                 type='zoom', write_path=out_folder)
+
+
+            image_set = [getognn.image, training_reg_bg, gt_msc]
+            plot(image_set, name="Ground Truth MSC",
+                 type='confidence', write_path=out_folder)
+
+            plot(image_set, name="Ground Truth MSC",
                  type='zoom', write_path=out_folder)
 
             for image, name in zip(images, names):
@@ -638,7 +627,7 @@ class runner:
             percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
             percent_float=percent *100
 
-            if percent_float > 50:
+            if percent_float > self.break_training_size:
                 break
             #if gr > 1 and percent_float < 1:
             #    continue
@@ -701,6 +690,23 @@ class runner:
             preds = UNet.infer(model=trained_model, training_window_file=self.window_file, load_pretrained=False,
                         pred_thresh=pred_thresh, test=debug, INTERACTIVE=INTERACTIVE)
 
+            train_region_labeling = np.multiply(np.array(UNet.training_reg_bg), np.array(UNet.training_labels))
+            total_positive_training_pixels = np.sum(train_region_labeling)
+            total_positive_pixels = np.sum(UNet.training_labels)
+            UNet.write_training_percentages(dir=UNet.pred_session_run_path,
+                                          train_regions=UNet.training_reg_bg,
+                                          total_positive_training_pixels=total_positive_training_pixels,
+                                          total_positive_pixels=total_positive_pixels)
+
+            total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes, \
+            total_length_training_nodes, total_length_positive_training_nodes,  total_length_positive_nodes,\
+            total_length_test_nodes, total_length_nodes = self.graph_statistics(UNet.gid_gnode_dict,
+                                                                                UNet.gid_edge_dict,
+                                                                                UNet.node_gid_to_partition,
+                                                                                UNet.node_gid_to_label)
+            UNet.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,
+                                      total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes,
+                                      total_length_test_nodes, total_length_nodes)
 
             UNet.compute_metrics( pred_images=preds, # scores=scores, pred_labels=pred_labels, pred_thresh = pred_thresh,
                                  # predictions_topo=predictions_topo, labels_topo=labels_topo,
@@ -756,7 +762,7 @@ class runner:
                     num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
                 percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
                 percent_float = percent * 100
-                if percent_float > 50:
+                if percent_float > self.break_training_size:
                     break
                 #if gr > 1 and percent_float < 1:
                 #    continue
@@ -847,29 +853,15 @@ class runner:
                     ###
 
 
-                    # get inference metrics
-                    # predictions = []
-                    # labels = []
-                    # for gid in RF.node_gid_to_prediction.keys():
-                    #
-                    #     if isinstance(RF.node_gid_to_prediction[gid], list):
-                    #         # continue
-                    #         print("Empty pred, gid:", gid, 'pred', RF.node_gid_to_prediction[gid])
-                    #         if RF.node_gid_to_partition[gid] != 'train':
-                    #             print('empty')
-                    #             predictions.append(RF.node_gid_to_prediction[gid][1])  # gid_to_prediction[gid][1])
-                    #     else:
-                    #         if RF.node_gid_to_partition[gid] != 'train':
-                    #             predictions.append(RF.node_gid_to_prediction[gid])
-                    #             labels.append(RF.node_gid_to_label[gid])#[1])
+
 
                     predictions = np.array(predictions)
                     labels = np.array(labels)
 
                     # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
-                    #                out_folder=self.model.pred_session_run_path)
+                     #               out_folder=self.model.pred_session_run_path)
 
-                    #predictions, labels, opt_thresh = compute_getognn_metrics(getognn=RF)
+                    predictions, labels, opt_thresh = compute_getognn_metrics(getognn=RF)
 
                     RF.write_arc_predictions(dir=RF.pred_session_run_path)
                     RF.draw_segmentation(dirpath=RF.pred_session_run_path)
@@ -881,6 +873,7 @@ class runner:
                     pred_labels_msc = np.zeros(RF.image.shape[:2], dtype=np.float32)# * min(0.25, opt_thresh/2.)
                     gt_labels_msc = np.zeros(RF.image.shape[:2], dtype=np.float32) #* min(0.25, opt_thresh/2.)
                     pred_prob_im = np.zeros(RF.image.shape[:2], dtype=np.float32)
+                    gt_msc = np.zeros(RF.image.shape[:2], dtype=np.float32)
                     training_reg_bg = np.zeros(RF.image.shape[:2], dtype=np.uint8)
                     for x_b, y_b in zip(RF.x_box, RF.y_box):  # RF.x_box, RF.y_box):
                         x_box = x_b
@@ -918,19 +911,21 @@ class runner:
 
                         t = 0
                         if infval >= RF.opt_thresh:
-                            if label == 1:
-                                t = 4  # 0.25  # 1
-                            else:
-                                t = 2  # .75  # 3
+                            if label == 1:  # true positive
+                                t = 4  # red
+                                ## ["lightgray", "blue", "yellow", "cyan", "red", 'mediumspringgreen'])
+                            else:  # . False positive
+                                t = 2  # yellow
                         else:
-                            if label == 1:
-                                t = 3  # .5  # 2
-                            else:
-                                t = 1  # 4
+                            if label == 1:  # false negative
+                                t = 5  # mediumspringgreen
+                            else:  # True Negatuve
+                                t = 1  # blue
 
                         for point in line:
                             ly = int(point[0])
                             lx = int(point[1])
+                            gt_msc[lx, ly] = 4 if label == 1 else 1
                             pred_labels_conf_matrix[lx, ly] = t
                             pred_labels_msc[lx, ly] = 1 if infval >= RF.opt_thresh else 0
                             gt_labels_msc[lx, ly] = label
@@ -940,6 +935,8 @@ class runner:
                                 # predictions_topo_bool.append(infval >= cutoff)
                                 # gt_label = seg_whole[lx, ly]
                                 labels_topo_bool.append(label >= cutoff)
+                            else:
+                                RF.node_gid_to_partition[gid] = 'train'
 
                     out_folder = RF.pred_session_run_path
 
@@ -959,6 +956,13 @@ class runner:
                          type='confidence', write_path=out_folder)
 
                     plot(image_set, name="TP FP TF TN Line Prediction",
+                         type='zoom', write_path=out_folder)
+
+                    image_set = [RF.image, training_reg_bg, gt_msc]
+                    plot(image_set, name="Ground Truth MSC",
+                         type='confidence', write_path=out_folder)
+
+                    plot(image_set, name="Ground Truth MSC",
                          type='zoom', write_path=out_folder)
 
                     for image, name in zip(images, names):
@@ -988,17 +992,29 @@ class runner:
                 # training_reg_bg = np.zeros(RF.image.shape[:2], dtype=np.uint8)
                 # for region in RF.box_regions:
                 #     training_reg_bg[region[0]:region[1], region[2]:region[3]] = 1
-                total_number_nodes, total_training_nodes, total_number_edges = self.graph_statistics(RF.gid_gnode_dict,
-                                                                                                     RF.gid_edge_dict,
-                                                                                                     RF.node_gid_to_partition)
-                RF.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges)
+                total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,\
+                total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes,\
+                total_length_test_nodes, total_length_nodes = self.graph_statistics(RF.gid_gnode_dict,
+                                                                                    RF.gid_edge_dict,
+                                                                                    RF.node_gid_to_partition,
+                                                                                    RF.node_gid_to_label)
+                fname = 'graph_statistics' if learning == 'pixel' else 'region_percents'
+                RF.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,
+                                          total_length_training_nodes, total_length_positive_training_nodes,
+                                          total_length_positive_nodes,
+                                          total_length_test_nodes, total_length_nodes,
+                                          fname=fname)
 
                 if learning=='pixel':
+                    train_region_labeling = np.multiply(np.array(RF.training_reg_bg), np.array(RF.ground_seg))
+                    total_positive_training_pixels = np.sum(RF.train_region_only)
+                    total_positive_pixels = np.sum(RF.ground_seg)
                     RF.write_training_percentages(dir=RF.pred_session_run_path,
-                                                  train_regions=RF.training_reg_bg)
-                else:
-                    RF.write_training_graph_percentages(dir=RF.pred_session_run_path,
-                                                     graph_orders=(total_number_nodes, total_training_nodes))
+                                                  train_regions=RF.training_reg_bg,
+                                                  total_positive_training_pixels=total_positive_training_pixels,
+                                                  total_positive_pixels=total_positive_pixels)
+
+
                 #if RF.params['load_feature_names']:
                 #    RF.load_feature_names()
                 if RF.params['feature_importance']:
@@ -1088,93 +1104,242 @@ class runner:
         if multi_run:
             run_manager.perform_runs()
 
-    def run_mlp(self, multi_run ):
-        run_params = set_parameters(read_params_from=self.parameter_file_number,
-                                    experiment_folder=self.write_path)
-        train_set, test_set, val_set = get_train_test_val_partitions(self.attributes.node_gid_to_partition,
-                                                                     self.attributes.gid_gnode_dict,
-                                                                     test_all=True)
-        partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(self.attributes.node_gid_to_partition,
-                                                                                      self.attributes.node_gid_to_feature,
-                                                                                      self.attributes.node_gid_to_label,
-                                                                                      test_all=True)
+    def run_mlp(self, flavor='msc' , boxes=None, dims=None):
+        # run_params = set_parameters(read_params_from=self.parameter_file_number,
+        #                             experiment_folder=self.write_path)
+        # train_set, test_set, val_set = get_train_test_val_partitions(self.attributes.node_gid_to_partition,
+        #                                                              self.attributes.gid_gnode_dict,
+        #                                                              test_all=True)
+
+        IMG_WIDTH = dims[0]
+        IMG_HEIGHT = dims[1]
+
+        growth_regions = self.grow_box(dims=dims, boxes=boxes)
+
+        start_exp = 1
+
+        for gr in range(len(growth_regions)):
+
+            BEGIN_LOADING_FEATURES = True
+
+            regions = growth_regions[gr]
+
+            BOXES = self.get_box_regions(regions)
+            X_BOX = [b[0] for b in BOXES]
+            Y_BOX = [b[1] for b in BOXES]
+
+            num_percent = 0
+            for box in regions:
+                num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
+            percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
+            percent_float = percent * 100
+            if percent_float > self.break_training_size:
+                break
+            # if gr > 1 and percent_float < 1:
+            #    continue
+            if percent_float < self.percent_train_thresh:
+                continue
+            percent = int(round(percent_float, 2))
 
 
-        run_params = self.attributes.params
-        gid_features_dict = partition_feat_dict['all']
-        gid_label_dict = partition_label_dict['all']
-        train_gid_label_dict = partition_label_dict['train']
-        train_gid_feat_dict = partition_feat_dict['train']
 
-        MLP = mlp(features=gid_features_dict, labels=gid_label_dict,
-                  train_labels=train_gid_label_dict,
-                  train_features=train_gid_feat_dict,
-                  test_labels=np.array(gid_label_dict),
-                  test_features=np.array(gid_features_dict),
-                  learning_rate=run_params['mlp_lr'],
-                  epochs=run_params['mlp_epochs'],
-                  batch_size=run_params['mlp_batch_size'],
-                  dim_hidden_1=run_params['mlp_out_dim_1'],
-                  dim_hidden_2=run_params['mlp_out_dim_2'],
-                  dim_hidden_3=run_params['mlp_out_dim_3'],
-                  feature_map=False)
-
-        preds, labels, accuracy = MLP.train()
-
-        out_folder = self.attributes.pred_session_run_path
-
-        MLP.write_arc_predictions(MLP.session_name)
-        MLP.draw_segmentation(dirpath=MLP.pred_session_run_path)
-
-        compute_prediction_metrics('mlp', preds, labels, out_folder)
-
-        MLP.load_feature_names()
-        MLP.feature_importance(feature_names=MLP.feature_names,
-                              features=gid_features_dict,
-                              labels=gid_label_dict)
-        MLP.write_feature_importance()
-
-        #
-        # Perform remainder of runs and don't need to read feats again
-        #
-        if not MLP.params['load_features']:
-            MLP.params['write_features'] = False
-            MLP.params['load_features'] = True
-            MLP.params['write_feature_names'] = False
-            MLP.params['save_filtered_images'] = False
-            MLP.params['collect_features'] = False
-            MLP.params['load_preprocessed'] = True
-            MLP.params['load_geto_attr'] = True
-            MLP.params['load_feature_names'] = True
+            partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(self.attributes.node_gid_to_partition,
+                                                                                          self.attributes.node_gid_to_feature,
+                                                                                          self.attributes.node_gid_to_label,
+                                                                                          test_all=True)
 
 
-        run_manager = Run_Manager(model=MLP,
-                                  training_window_file=self.window_file,
-                                  features_file=self.feature_file,
-                                  sample_idx=self.sample_idx,
-                                  model_name=self.model_name,
-                                  format=format,
-                                  expanding_boxes=True,
-                                  parameter_file_number=self.parameter_file_number)
-        if multi_run:
-            run_manager.perform_runs()
+            # run_params = self.attributes.params
 
-        '''mlp_accuracy, mlp_p, mlp_r, mlp_fs = mlp(features=gid_features_dict, labels=gid_label_dict,
-                                                 train_labels=train_gid_label_dict,
-                                                 train_features=train_gid_feat_dict,
-                                                 test_labels=np.array(gid_label_dict),
-                                                 test_features=np.array(gid_features_dict),
-                                                 learning_rate=run_params['mlp_lr'],
-                                                 epochs=run_params['mlp_epochs'],
-                                                 batch_size=run_params['mlp_batch_size'],
-                                                 dim_hidden_1=run_params['mlp_out_dim_1'],
-                                                 dim_hidden_2=run_params['mlp_out_dim_2'],
-                                                 dim_hidden_3=run_params['mlp_out_dim_3'],
-                                                 feature_map=False)
-        manp_mlp = mlp_accuracy[1]
-        manr_mlp = mlp_accuracy[2]
-        mlp_accuracy = mlp_accuracy[0]'''
+            train_gid_label_dict = partition_label_dict['train']
+            train_gid_feat_dict = partition_feat_dict['train']
 
+            MLP = mlp(flavor=flavor,
+                      feature_map=False,
+                      # added from rf
+                      training_selection_type='box',
+                      classifier=flavor,
+                      run_num=percent,
+                      parameter_file_number=self.parameter_file_number,
+                      name=self.name,
+                      image=self.image,
+                      feature_file=self.feature_file,
+                      geomsc_fname_base=self.msc_file,
+                      label_file=self.ground_truth_label_file,
+                      write_folder=self.write_path,
+                      model_name=self.model_name,
+                      load_feature_graph_name=None,
+                      write_json_graph=False,
+                      X_BOX=X_BOX,
+                      Y_BOX=Y_BOX,
+                      boxes=regions,
+                      BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                      type=flavor,
+                      ground_truth_label_file=self.ground_truth_label_file
+                      )
+
+            predictions, labels, accuracy = MLP.train()
+
+
+            ###############################################################################
+
+            predictions = np.array(predictions)
+            labels = np.array(labels)
+
+            # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
+            #               out_folder=self.model.pred_session_run_path)
+
+            predictions, labels, f1_score, opt_thresh = compute_opt_F1_and_threshold(MLP)
+            # compute_getognn_metrics(getognn=MLP)
+
+            # update newly partitioned/infered graoh
+            # RF.equate_graph(G)
+
+            pred_labels_conf_matrix = np.zeros(MLP.image.shape[:2],
+                                               dtype=np.float32)  # * min(0.25, opt_thresh/2.) # dtype=np.uint8)
+            pred_labels_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)  # * min(0.25, opt_thresh/2.)
+            gt_labels_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)  # * min(0.25, opt_thresh/2.)
+            pred_prob_im = np.zeros(MLP.image.shape[:2], dtype=np.float32)
+            gt_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)
+            training_reg_bg = np.zeros(MLP.image.shape[:2], dtype=np.uint8)
+            for x_b, y_b in zip(MLP.x_box, MLP.y_box):  # RF.x_box, RF.y_box):
+                x_box = x_b
+                y_box = y_b
+                training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+            predictions_topo_bool = []
+            labels_topo_bool = []
+            check = 30
+            for gid in MLP.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
+
+                gnode = MLP.gid_gnode_dict[gid]
+                label = MLP.node_gid_to_label[gid]
+                label = label if type(label) != list else label[1]
+                line = get_points_from_vertices([gnode])
+                # else is fg
+                cutoff = opt_thresh
+
+                vals = []
+
+                for point in line:
+                    ly = int(point[0])
+                    lx = int(point[1])
+                    pred = MLP.node_gid_to_prediction[gid]
+                    vals.append(pred)
+
+                inferred = np.array(vals, dtype="float32")
+                infval = np.average(inferred)
+                pred_mode = infval
+
+                MLP.node_gid_to_prediction[gid] = [1. - infval, infval]
+
+                MLP.node_gid_to_prediction[gid] = [1. - infval, infval]
+                if check >= 0:
+                    check -= 1
+
+                t = 0
+                if infval >= opt_thresh:
+                    if label == 1:  # true positive
+                        t = 4  # red
+                        ## ["lightgray", "blue", "yellow", "cyan", "red", 'mediumspringgreen'])
+                    else:  # . False positive
+                        t = 2  # yellow
+                else:
+                    if label == 1:  # false negative
+                        t = 5  # mediumspringgreen
+                    else:  # True Negatuve
+                        t = 1  # blue
+
+                for point in line:
+                    ly = int(point[0])
+                    lx = int(point[1])
+                    gt_msc[lx, ly] = 4 if label == 1 else 1
+                    pred_labels_conf_matrix[lx, ly] = t
+                    pred_labels_msc[lx, ly] = 1 if infval >= opt_thresh else 0
+                    gt_labels_msc[lx, ly] = label
+                    pred_prob_im[lx, ly] = infval
+                    if training_reg_bg[lx, ly] != 1:
+                        MLP.node_gid_to_partition[gid] = 'test'
+                        # predictions_topo_bool.append(infval >= cutoff)
+                        # gt_label = seg_whole[lx, ly]
+                        labels_topo_bool.append(label >= cutoff)
+                    else:
+                        MLP.node_gid_to_partition[gid] = 'train'
+
+            out_folder = MLP.pred_session_run_path
+
+            ###############
+            images = [MLP.image, gt_labels_msc, pred_labels_msc,
+                      pred_prob_im]
+            names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
+                     "Line Foreground Probability"]
+            for image, name in zip(images, names):
+                plot(image_set=[image, training_reg_bg], name=name, type='contour', write_path=out_folder)
+
+            image_set = [pred_labels_msc, training_reg_bg, pred_labels_conf_matrix]
+            plot(image_set, name="TP FP TF TN Line Prediction",
+                 type='confidence', write_path=out_folder)
+
+            plot(image_set, name="TP FP TF TN Line Prediction",
+                 type='zoom', write_path=out_folder)
+
+            image_set = [MLP.image, training_reg_bg, gt_msc]
+            plot(image_set, name="Ground Truth MSC",
+                 type='confidence', write_path=out_folder)
+
+            plot(image_set, name="Ground Truth MSC",
+                 type='zoom', write_path=out_folder)
+
+            for image, name in zip(images, names):
+                plot(image_set=[image, training_reg_bg], name=name, type='zoom', write_path=out_folder)
+
+            np.savez_compressed(os.path.join(out_folder, 'pred_matrix.npz'), pred_prob_im)
+            np.savez_compressed(os.path.join(out_folder, 'training_matrix.npz'), training_reg_bg)
+
+            ####################################################################################
+
+
+            MLP.write_arc_predictions(MLP.pred_session_run_path)
+            MLP.draw_segmentation(dirpath=MLP.pred_session_run_path)
+
+            # compute_prediction_metrics('mlp', predictions, labels, out_folder)
+
+            total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes, \
+            total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes, \
+            total_length_test_nodes, total_length_nodes = self.graph_statistics(MLP.gid_gnode_dict,
+                                                                                MLP.gid_edge_dict,
+                                                                                MLP.node_gid_to_partition,
+                                                                                MLP.node_gid_to_label)
+            fname = 'graph_statistics' if flavor == 'pixel' else 'region_percents'
+            MLP.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,
+                                      total_length_training_nodes, total_length_positive_training_nodes,
+                                      total_length_positive_nodes,
+                                      total_length_test_nodes, total_length_nodes,
+                                      fname=fname)
+
+            #
+            #  Not Implemented !
+            #
+            if flavor == 'pixel':
+                train_region_labeling = np.multiply(np.array(MLP.training_reg_bg), np.array(MLP.ground_seg))
+                total_positive_training_pixels = np.sum(MLP.train_region_only)
+                total_positive_pixels = np.sum(MLP.ground_seg)
+                MLP.write_training_percentages(dir=MLP.pred_session_run_path,
+                                              train_regions=MLP.training_reg_bg,
+                                              total_positive_training_pixels=total_positive_training_pixels,
+                                              total_positive_pixels=total_positive_pixels)
+
+            # if RF.params['load_feature_names']:
+            #    RF.load_feature_names()
+            if MLP.params['feature_importance']:
+                gid_features_dict = partition_feat_dict['all']
+                gid_label_dict = partition_label_dict['all']
+                MLP.feature_importance(feature_names=MLP.feature_names,
+                                      features=gid_features_dict,
+                                      labels=gid_label_dict,
+                                      plot=False)
+                MLP.write_feature_importance()
+
+            del MLP
 
 
 

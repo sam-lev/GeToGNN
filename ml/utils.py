@@ -342,6 +342,59 @@ def get_partition_feature_label_pairs(node_gid_to_partition, node_gid_to_feature
 
     return partition_label_dict, partition_feature_dict
 
+# Dataset class for the retina dataset
+# each item of the dataset is a tuple with three items:
+# - the first element is the input image to be segmented
+# - the second element is the segmentation ground truth image
+# - the third element is a mask to know what parts of the input image should be used (for training and for scoring)
+class dataset():
+    def transpose_first_index(self, x, with_hand_seg=False, with_range=True):
+        if with_range:
+            x2 =(x[0], x[1], x[2])#(np.transpose(x[0], [1, 0]), x[1])
+            #, np.transpose(x[2], [2, 0, 1]))
+        else:
+            x2 =(x[0], x[1])#(np.transpose(x[0], [1, 0]), x[1])#(np.transpose(x[0], [2, 0, 1]), np.transpose(x[1], [2, 0, 1]), np.transpose(x[2], [2, 0, 1]),
+            #      np.transpose(x[3], [2, 0, 1]))
+        return x2
+
+    def __init__(self, data_array, split='train', do_transform=False,
+                 with_hand_seg=False, with_range=False):
+
+        self.with_hand_seg = with_hand_seg
+        self.with_range = with_range
+
+        indexes_this_split = np.arange(len(data_array))#get_split(np.arange(len(retina_array), dtype=np.int), split)
+        self.data_array = [self.transpose_first_index(data_array[i],
+                                                      self.with_hand_seg,
+                                                      with_range=self.with_range) for i in
+                             indexes_this_split]
+
+
+
+        self.split = split
+        self.do_transform = do_transform
+
+    def __getitem__(self, index):
+        if self.with_range:
+            sample = [self.data_array[index][0],
+                      self.data_array[index][1],
+                      self.data_array[index][2]]
+        else:
+            sample = [self.data_array[index][0],
+                      self.data_array[index][1]]
+
+
+        return sample
+
+    def __len__(self):
+        return len(self.data_array)
+
+    def get_images(self):
+        return np.array([np.array(samp[0],dtype=np.float32) for samp in self.data_array ], dtype=np.float32)
+
+    def get_segmentations(self):
+        return np.array([np.array(samp[1],dtype=np.uint8) for samp in self.data_array], dtype=np.uint8)
+
 if __name__ == "__main__":
     """ Run random walks """
     #example run: python3 topoml/graphsage/utils.py ./data/json_graphs/test_ridge_arcs-G.json ./data/random_walks/full_msc_n-1_k-40

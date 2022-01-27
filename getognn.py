@@ -338,6 +338,8 @@ class GeToGNN(MLGraph):
     def get_graph(self):
         return self.gnn.get_graph()
 
+
+
     def write_json_graph_data(self, folder_path, name):
         print('.writing graph family data')
         s = time.time()
