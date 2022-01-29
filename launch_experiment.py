@@ -59,15 +59,15 @@ batch         = 0
 plot_only     = 0
 overide_plots = 0
 region_thresh = 0
-break_training_thresh = 20 #60
+break_training_thresh = 60
 clear_runs = True if not plot_only else False
 
-experiments = [ 'MLP_MSC'] #  # ["Random_Forest_Pixel", "Random_Forest_MSC",'GNN'] #
-models =      [ 'mlp' ] # ['random_forest', 'random_forest', 'getognn']      #
+experiments = [ 'MLP_MSC', 'MLP_Pixel'] #  # ["Random_Forest_Pixel", "Random_Forest_MSC",'GNN'] #
+models =      [ 'mlp', 'mlp' ] # ['random_forest', 'random_forest', 'getognn']      #
 
 def unit_run():
     exp_runner = None
-    for dataset_idx in [0]: # [9,2,8,10,0]:
+    for dataset_idx in [9,2,8,10,0]:
         current_exp = False
         for exp,model in zip(experiments,
                               models):
@@ -96,11 +96,11 @@ def unit_run():
 
         plot_models = current_exp == experiments[-1] if not overide_plots else 0
         if plot_models:
-            exp_runner.multi_model_metrics( [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN', 'MLP_MSC'],
-                                           [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC'], None,
+            exp_runner.multi_model_metrics( [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN', 'MLP_MSC','MLP_Pixel'],
+                                           [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC','MLP_Pixel'], None,
                                             metric='time')
-            exp_runner.multi_model_metrics(["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC'],
-                                           ["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC'], None)
+            exp_runner.multi_model_metrics(["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC','MLP_Pixel'],
+                                           ["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC','MLP_Pixel'], None)
 
 
 

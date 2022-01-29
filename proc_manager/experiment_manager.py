@@ -135,7 +135,7 @@ class runner:
             elif learning == 'unsupervised':
                 self.run_unsupervised_getognn(self.multi_run)
         if model == 'mlp':
-            self.run_mlp( boxes=boxes, dims=dims, learning=learning )
+            self.run_mlp( boxes=boxes, dims=dims, flavor=learning )
         if model == 'random_forest':
             self.run_random_forest(self.multi_run, boxes=boxes, dims=dims, learning=learning)
         if model == 'unet':
@@ -1180,122 +1180,132 @@ class runner:
 
             predictions, labels, accuracy = MLP.train()
 
+            if flavor == 'pixel':
+                MLP.compute_metrics(predictions)
+                # predictions, labels, f1_score, opt_thresh = compute_opt_F1_and_threshold(MLP)
+                #exp_folder = os.path.join(MLP.params['experiment_folder'])  # , 'runs')
+                #multi_run_metrics(model='mlp', exp_folder=exp_folder,
+                #                  batch_multi_run=True,
+                #                  bins=7, runs='runs',  # str(self.training_size),
+                #                  plt_title=exp_folder.split('/')[-1])
+            else:
 
-            ###############################################################################
 
-            predictions = np.array(predictions)
-            labels = np.array(labels)
+                ###############################################################################
 
-            # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
-            #               out_folder=self.model.pred_session_run_path)
+                predictions = np.array(predictions)
+                labels = np.array(labels)
 
-            predictions, labels, f1_score, opt_thresh = compute_opt_F1_and_threshold(MLP)
-            # compute_getognn_metrics(getognn=MLP)
+                # compute_opt_f1(self.model.type, predictions=predictions, labels=labels,
+                #               out_folder=self.model.pred_session_run_path)
 
-            # update newly partitioned/infered graoh
-            # RF.equate_graph(G)
+                predictions, labels, f1_score, opt_thresh = compute_opt_F1_and_threshold(MLP)
+                # compute_getognn_metrics(getognn=MLP)
 
-            pred_labels_conf_matrix = np.zeros(MLP.image.shape[:2],
-                                               dtype=np.float32)  # * min(0.25, opt_thresh/2.) # dtype=np.uint8)
-            pred_labels_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)  # * min(0.25, opt_thresh/2.)
-            gt_labels_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)  # * min(0.25, opt_thresh/2.)
-            pred_prob_im = np.zeros(MLP.image.shape[:2], dtype=np.float32)
-            gt_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)
-            training_reg_bg = np.zeros(MLP.image.shape[:2], dtype=np.uint8)
-            for x_b, y_b in zip(MLP.x_box, MLP.y_box):  # RF.x_box, RF.y_box):
-                x_box = x_b
-                y_box = y_b
-                training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
-            predictions_topo_bool = []
-            labels_topo_bool = []
-            check = 30
-            for gid in MLP.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
+                # update newly partitioned/infered graoh
+                # RF.equate_graph(G)
 
-                gnode = MLP.gid_gnode_dict[gid]
-                label = MLP.node_gid_to_label[gid]
-                label = label if type(label) != list else label[1]
-                line = get_points_from_vertices([gnode])
-                # else is fg
-                cutoff = opt_thresh
+                pred_labels_conf_matrix = np.zeros(MLP.image.shape[:2],
+                                                   dtype=np.float32)  # * min(0.25, opt_thresh/2.) # dtype=np.uint8)
+                pred_labels_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)  # * min(0.25, opt_thresh/2.)
+                gt_labels_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)  # * min(0.25, opt_thresh/2.)
+                pred_prob_im = np.zeros(MLP.image.shape[:2], dtype=np.float32)
+                gt_msc = np.zeros(MLP.image.shape[:2], dtype=np.float32)
+                training_reg_bg = np.zeros(MLP.image.shape[:2], dtype=np.uint8)
+                for x_b, y_b in zip(MLP.x_box, MLP.y_box):  # RF.x_box, RF.y_box):
+                    x_box = x_b
+                    y_box = y_b
+                    training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+                predictions_topo_bool = []
+                labels_topo_bool = []
+                check = 30
+                for gid in MLP.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
 
-                vals = []
+                    gnode = MLP.gid_gnode_dict[gid]
+                    label = MLP.node_gid_to_label[gid]
+                    label = label if type(label) != list else label[1]
+                    line = get_points_from_vertices([gnode])
+                    # else is fg
+                    cutoff = opt_thresh
 
-                for point in line:
-                    ly = int(point[0])
-                    lx = int(point[1])
-                    pred = MLP.node_gid_to_prediction[gid]
-                    vals.append(pred)
+                    vals = []
 
-                inferred = np.array(vals, dtype="float32")
-                infval = np.average(inferred)
-                pred_mode = infval
+                    for point in line:
+                        ly = int(point[0])
+                        lx = int(point[1])
+                        pred = MLP.node_gid_to_prediction[gid]
+                        vals.append(pred)
 
-                MLP.node_gid_to_prediction[gid] = [1. - infval, infval]
+                    inferred = np.array(vals, dtype="float32")
+                    infval = np.average(inferred)
+                    pred_mode = infval
 
-                MLP.node_gid_to_prediction[gid] = [1. - infval, infval]
-                if check >= 0:
-                    check -= 1
+                    MLP.node_gid_to_prediction[gid] = [1. - infval, infval]
 
-                t = 0
-                if infval >= opt_thresh:
-                    if label == 1:  # true positive
-                        t = 4  # red
-                        ## ["lightgray", "blue", "yellow", "cyan", "red", 'mediumspringgreen'])
-                    else:  # . False positive
-                        t = 2  # yellow
-                else:
-                    if label == 1:  # false negative
-                        t = 5  # mediumspringgreen
-                    else:  # True Negatuve
-                        t = 1  # blue
+                    MLP.node_gid_to_prediction[gid] = [1. - infval, infval]
+                    if check >= 0:
+                        check -= 1
 
-                for point in line:
-                    ly = int(point[0])
-                    lx = int(point[1])
-                    gt_msc[lx, ly] = 4 if label == 1 else 1
-                    pred_labels_conf_matrix[lx, ly] = t
-                    pred_labels_msc[lx, ly] = 1 if infval >= opt_thresh else 0
-                    gt_labels_msc[lx, ly] = label
-                    pred_prob_im[lx, ly] = infval
-                    if training_reg_bg[lx, ly] != 1:
-                        MLP.node_gid_to_partition[gid] = 'test'
-                        # predictions_topo_bool.append(infval >= cutoff)
-                        # gt_label = seg_whole[lx, ly]
-                        labels_topo_bool.append(label >= cutoff)
+                    t = 0
+                    if infval >= opt_thresh:
+                        if label == 1:  # true positive
+                            t = 4  # red
+                            ## ["lightgray", "blue", "yellow", "cyan", "red", 'mediumspringgreen'])
+                        else:  # . False positive
+                            t = 2  # yellow
                     else:
-                        MLP.node_gid_to_partition[gid] = 'train'
+                        if label == 1:  # false negative
+                            t = 5  # mediumspringgreen
+                        else:  # True Negatuve
+                            t = 1  # blue
 
-            out_folder = MLP.pred_session_run_path
+                    for point in line:
+                        ly = int(point[0])
+                        lx = int(point[1])
+                        gt_msc[lx, ly] = 4 if label == 1 else 1
+                        pred_labels_conf_matrix[lx, ly] = t
+                        pred_labels_msc[lx, ly] = 1 if infval >= opt_thresh else 0
+                        gt_labels_msc[lx, ly] = label
+                        pred_prob_im[lx, ly] = infval
+                        if training_reg_bg[lx, ly] != 1:
+                            MLP.node_gid_to_partition[gid] = 'test'
+                            # predictions_topo_bool.append(infval >= cutoff)
+                            # gt_label = seg_whole[lx, ly]
+                            labels_topo_bool.append(label >= cutoff)
+                        else:
+                            MLP.node_gid_to_partition[gid] = 'train'
 
-            ###############
-            images = [MLP.image, gt_labels_msc, pred_labels_msc,
-                      pred_prob_im]
-            names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
-                     "Line Foreground Probability"]
-            for image, name in zip(images, names):
-                plot(image_set=[image, training_reg_bg], name=name, type='contour', write_path=out_folder)
+                out_folder = MLP.pred_session_run_path
 
-            image_set = [pred_labels_msc, training_reg_bg, pred_labels_conf_matrix]
-            plot(image_set, name="TP FP TF TN Line Prediction",
-                 type='confidence', write_path=out_folder)
+                ###############
+                images = [MLP.image, gt_labels_msc, pred_labels_msc,
+                          pred_prob_im]
+                names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
+                         "Line Foreground Probability"]
+                for image, name in zip(images, names):
+                    plot(image_set=[image, training_reg_bg], name=name, type='contour', write_path=out_folder)
 
-            plot(image_set, name="TP FP TF TN Line Prediction",
-                 type='zoom', write_path=out_folder)
+                image_set = [pred_labels_msc, training_reg_bg, pred_labels_conf_matrix]
+                plot(image_set, name="TP FP TF TN Line Prediction",
+                     type='confidence', write_path=out_folder)
 
-            image_set = [MLP.image, training_reg_bg, gt_msc]
-            plot(image_set, name="Ground Truth MSC",
-                 type='confidence', write_path=out_folder)
+                plot(image_set, name="TP FP TF TN Line Prediction",
+                     type='zoom', write_path=out_folder)
 
-            plot(image_set, name="Ground Truth MSC",
-                 type='zoom', write_path=out_folder)
+                image_set = [MLP.image, training_reg_bg, gt_msc]
+                plot(image_set, name="Ground Truth MSC",
+                     type='confidence', write_path=out_folder)
 
-            for image, name in zip(images, names):
-                plot(image_set=[image, training_reg_bg], name=name, type='zoom', write_path=out_folder)
+                plot(image_set, name="Ground Truth MSC",
+                     type='zoom', write_path=out_folder)
 
-            np.savez_compressed(os.path.join(out_folder, 'pred_matrix.npz'), pred_prob_im)
-            np.savez_compressed(os.path.join(out_folder, 'training_matrix.npz'), training_reg_bg)
+                for image, name in zip(images, names):
+                    plot(image_set=[image, training_reg_bg], name=name, type='zoom', write_path=out_folder)
 
-            ####################################################################################
+                np.savez_compressed(os.path.join(out_folder, 'pred_matrix.npz'), pred_prob_im)
+                np.savez_compressed(os.path.join(out_folder, 'training_matrix.npz'), training_reg_bg)
+
+                ####################################################################################
 
 
             MLP.write_arc_predictions(MLP.pred_session_run_path)
@@ -1320,9 +1330,9 @@ class runner:
             #  Not Implemented !
             #
             if flavor == 'pixel':
-                train_region_labeling = np.multiply(np.array(MLP.training_reg_bg), np.array(MLP.ground_seg))
-                total_positive_training_pixels = np.sum(MLP.train_region_only)
-                total_positive_pixels = np.sum(MLP.ground_seg)
+                train_region_labeling = np.multiply(np.array(MLP.training_reg_bg), np.array(MLP.full_seg))
+                total_positive_training_pixels = np.sum(train_region_labeling)
+                total_positive_pixels = np.sum(MLP.full_seg)
                 MLP.write_training_percentages(dir=MLP.pred_session_run_path,
                                               train_regions=MLP.training_reg_bg,
                                               total_positive_training_pixels=total_positive_training_pixels,

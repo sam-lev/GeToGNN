@@ -876,11 +876,13 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             lstyle = (0, (1, 1)) # densely dotted 'solid' #(0, (5, 1))#'densely dashed'
             lw = 2.0
         if 'Pixel' in model_name and 'Forest' in model_name:
+            model_name = 'Random Forest Pixel'
             c = 'orange'
             lstyle =  (0, (3, 1, 1, 1, 1, 1)) # densely daddotted
             ## (0, (1, 1)) # densely dotted(0, (5, 1)) # dashed (0, (1, 1))# 'densely dotted'
             lw = 1.5
         if 'Pixel' in model_name and 'MLP' in model_name:
+            model_name = 'MLP Pixel'
             c = 'palegreen'
             lstyle =  (0, (3, 1, 1, 1, 1, 1)) # densely daddotted
             ## (0, (1, 1)) # densely dotted(0, (5, 1)) # dashed (0, (1, 1))# 'densely dotted'

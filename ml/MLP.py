@@ -156,43 +156,29 @@ class mlp(MLGraph):
         # OG #####################################################
         #
 
-        learning_rate = self.params['mlp_lr']
+        learning_rate = self.params['learning_rate']
         epochs = self.params['epochs']
         batch_size = self.params['batch_size']
-        self.dim_hidden_1 = self.params['mlp_out_dim_1']
-        self.dim_hidden_2 = self.params['mlp_out_dim_2']
+        self.dim_hidden_1 = self.params['out_dim_1']
+        self.dim_hidden_2 = self.params['out_dim_2']
         self.dim_hidden_3 = self.params['mlp_out_dim_3']
 
         # Parameters
         self.learning_rate = learning_rate #= 0.001
         self.training_epochs = epochs #= 15
         self.batch_size = batch_size #= 100
-        self.display_step = epochs//2
-        self.n_classes = n_classes
+        self.display_step = epochs//4
 
         ###
         self.model_flavor = flavor
         self.growth_radius = growth_radius
+
+        self.update_run_info(batch_multi_run=self.run_num)
+
         self.build_inputs(flavor=flavor, growth_radius=growth_radius)
 
+        self.build_weights(flavor=flavor)
 
-        # Store layers weight & bias
-        self.weights = {
-            'h1': tf.Variable(tf.random_normal([self.dim_input, self.dim_hidden_1])),
-            'h2': tf.Variable(tf.random_normal([self.dim_hidden_1, self.dim_hidden_2])),
-            #'h3': tf.Variable(tf.random_normal([dim_hidden_2, dim_hidden_3])),
-            #'h4': tf.Variable(tf.random_normal([dim_hidden_3, dim_hidden_2])),
-            #'h5': tf.Variable(tf.random_normal([dim_hidden_2, dim_hidden_1])),
-            'out': tf.Variable(tf.random_normal([self.dim_hidden_2, self.n_classes]))
-        }
-        self.biases = {
-            'b1': tf.Variable(tf.random_normal([self.dim_hidden_1])),
-            'b2': tf.Variable(tf.random_normal([self.dim_hidden_2])),
-            #'b3': tf.Variable(tf.random_normal([dim_hidden_3])),
-            #'b4': tf.Variable(tf.random_normal([dim_hidden_2])),
-            #'b5': tf.Variable(tf.random_normal([dim_hidden_1])),
-            'out': tf.Variable(tf.random_normal([self.n_classes]))
-        }
         self.build()
 
     def train(self):
@@ -201,7 +187,62 @@ class mlp(MLGraph):
         else:
             return self._train_pixel()
 
+    def next_batch(self, num, data, labels, shuffle=True):
+        '''
+        Return a total of `num` random samples and labels.
+        '''
+        idx = np.arange(0, len(data))
+        if shuffle:
+            np.random.shuffle(idx)
+        idx = idx[:num]
+        data_shuffle = [data[i] for i in idx]
+        labels_shuffle = [labels[i] for i in idx]
 
+        return np.asarray(data_shuffle), np.asarray(labels_shuffle)
+
+    def model(self):
+        X , Y = self.X_IN, self.Y_OUT
+        # Construct model
+        self.logits = self.multilayer_perceptron(X)
+
+        if self.model_flavor == 'pixel':
+            a = 1
+            self.loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+                logits=self.logits, labels=Y))#,
+            #    self.kl_loss(self.logit_embedding, Y))
+        # Define loss and optimizer
+        if self.model_flavor == 'msc':
+            self.loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+                logits=self.logits, labels=Y))
+
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+        self.train_op = self.optimizer.minimize(self.loss_op)
+        # Initializing the variables
+        self.init = tf.global_variables_initializer()
+
+    def kl_loss(self, true_p, q):
+        # #plogp-plogq
+        # true_prob = tf.nn.softmax(true_p, axis = 1)
+        # loss_1 = -tf.nn.softmax_cross_entropy_with_logits(logits=true_p, labels = true_prob)
+        # loss_2 = tf.nn.softmax_cross_entropy_with_logits(logits=q, labels = true_prob)
+        # loss = loss_1 + loss_2
+        def fixprob(att):
+            att = att + 1e-9
+            _sum = tf.reduce_sum(att, reduction_indices=1, keep_dims=True)
+            att = att / _sum
+            att = tf.clip_by_value(att, 1e-9, 1.0, name=None)
+            return att
+
+        def kl(x, y):
+            x = fixprob(x)
+            y = fixprob(y)
+            X = tf.distributions.Categorical(probs=x)
+            Y = tf.distributions.Categorical(probs=y)
+            return tf.distributions.kl_divergence(X, Y)
+        return kl(true_p,q)
+
+    def build(self):
+        self.model()
 
     # Create model
     def multilayer_perceptron(self, x):
@@ -209,13 +250,56 @@ class mlp(MLGraph):
         layer_1 = tf.add(tf.matmul(x, self.weights['h1']), self.biases['b1'])
         # Hidden fully connected layer with 256 neurons
         layer_2 = tf.add(tf.matmul(layer_1, self.weights['h2']), self.biases['b2'])
-        # l3
-        '''layer_3 = tf.add(tf.matmul(layer_2, self.weights['h3']), self.biases['b3'])
-        layer_4 = tf.add(tf.matmul(layer_3, self.weights['h4']), self.biases['b4'])
-        layer_5 = tf.add(tf.matmul(layer_4, self.weights['h5']), self.biases['b5'])'''
-        # Output fully connected layer with a neuron for each class
-        out_layer = tf.matmul(layer_2, self.weights['out']) + self.biases['out']
-        return out_layer
+        if False:#self.model_flavor == 'pixel':
+            # l3
+            layer_3 = tf.add(tf.matmul(layer_2, self.weights['h3']), self.biases['b3'])
+            layer_4 = tf.add(tf.matmul(layer_3, self.weights['h4']), self.biases['b4'])
+            # fully connected layer
+            # layer_5 = tf.add(tf.matmul(layer_4, self.weights['h5']), self.biases['b5'])
+            # Output fully connected layer with a neuron for each class
+            out_encoding = tf.matmul(layer_4, self.weights['out']) + self.biases['out']
+        else:
+            # Output fully connected layer with a neuron for each class
+            out_encoding = tf.matmul(layer_2, self.weights['out']) + self.biases['out']
+        # softmax with output R^(number classes X 1)
+        return out_encoding
+
+    def build_weights(self, flavor= 'msc'):
+        # Store layers weight & bias
+        if True:#flavor == 'msc':
+            self.weights = {
+                'h1': tf.Variable(tf.random_normal([self.dim_input, self.dim_hidden_1])),
+                'h2': tf.Variable(tf.random_normal([self.dim_hidden_1, self.dim_hidden_2])),
+                # 'h3': tf.Variable(tf.random_normal([dim_hidden_2, dim_hidden_3])),
+                # 'h4': tf.Variable(tf.random_normal([dim_hidden_3, dim_hidden_2])),
+                # 'h5': tf.Variable(tf.random_normal([dim_hidden_2, dim_hidden_1])),
+                'out': tf.Variable(tf.random_normal([self.dim_hidden_2, self.n_classes]))
+            }
+            self.biases = {
+                'b1': tf.Variable(tf.random_normal([self.dim_hidden_1])),
+                'b2': tf.Variable(tf.random_normal([self.dim_hidden_2])),
+                # 'b3': tf.Variable(tf.random_normal([dim_hidden_3])),
+                # 'b4': tf.Variable(tf.random_normal([dim_hidden_2])),
+                # 'b5': tf.Variable(tf.random_normal([dim_hidden_1])),
+                'out': tf.Variable(tf.random_normal([self.n_classes]))
+            }
+        else:
+            self.weights = {
+                'h1': tf.Variable(tf.random_normal([self.dim_input, self.encode1])),
+                'h2': tf.Variable(tf.random_normal([self.encode1, self.encode1])),
+                'h3': tf.Variable(tf.random_normal([self.encode1, self.decode1])),
+                'h4': tf.Variable(tf.random_normal([self.decode1, self.decode1])),
+                # 'h5': tf.Variable(tf.random_normal([self.decode1, self.n_classes])),
+                'out': tf.Variable(tf.random_normal([self.decode1, self.n_classes])),
+            }
+            self.biases = {
+                'b1': tf.Variable(tf.random_normal([self.encode1])),
+                'b2': tf.Variable(tf.random_normal([self.encode1])),
+                'b3': tf.Variable(tf.random_normal([self.decode1])),
+                'b4': tf.Variable(tf.random_normal([self.decode1])),
+                #'b5': tf.Variable(tf.random_normal([self.n_classes])),
+                'out': tf.Variable(tf.random_normal([self.n_classes]))
+            }
 
     def build_inputs(self, flavor='msc', growth_radius = 2):
         if flavor == 'msc':
@@ -294,12 +378,8 @@ class mlp(MLGraph):
             self.total_batch = self.num_examples // self.batch_size
 
             self.dim_input = int(self.train_features[0].shape[0])
-            dim_input_test = int(self.test_features[0].shape[0])
+            self.n_classes = 2
             # Network Parameters
-            self.dim_hidden_1 = self.dim_hidden_1  # = 256 # 1st layer number of neurons
-            self.dim_hidden_ = self.dim_hidden_2  # = 256 # 2nd layer number of neurons
-            self.dim_input = self.dim_input  # = 784 # MNIST data input (img shape: 28*28)
-            self.n_classes = self.n_classes  # = 10 # MNIST total classes (0-9 digits)
 
             # tf Graph input
             self.X_IN = tf.placeholder("float", [None, self.dim_input])
@@ -307,6 +387,7 @@ class mlp(MLGraph):
             self.X_TEST = self.X_IN  # tf.placeholder("float", [None, dim_input_test])
             self.Y_TEST = self.Y_OUT  # tf.placeholder("float", [None, n_classes])
         else:
+            self.n_classes = 2
             self.box_regions = self.boxes
             X_BOX = []
             Y_BOX = []
@@ -348,15 +429,7 @@ class mlp(MLGraph):
             min_val = np.min(self.image)
             self.image = (self.image - min_val) / (max_val - min_val)
 
-            # train_im_crop, segmentation, region_contour, \
-            # seg_whole = self.get_train_labels(y_range=self.Y_BOX,  # [self.params['x_box']],
-            #                                   growth_radius=growth_radius,
-            #                                   x_range=self.X_BOX)
-            # self.ground_seg = seg_whole
-
-            out_folder = os.path.join(self.pred_session_run_path)  # ,
-            #                          str(self.training_size))
-            print("    XBOXXXXXX", self.X_BOX)
+            out_folder = os.path.join(self.pred_session_run_path)
             if not os.path.exists(out_folder):
                 os.makedirs(out_folder)
             self.write_selection_bounds(dir=out_folder,
@@ -371,24 +444,37 @@ class mlp(MLGraph):
                 training_set=False)
 
 
-            self.num_examples = self.train_labels.shape[0]
+            self.num_examples = self.train_labels[0].shape[0]
             self.total_batch = self.num_examples // self.batch_size
+            self.num_test_examples = self.test_labels[0].shape[0]
+            self.total_test_batch = self.num_test_examples // self.batch_size
 
-            self.dim_input = int(self.train_features[0].shape[0])
-            dim_input_test = int(self.test_features[0].shape[0])
-            # Network Parameters
+            dim_input = list(map(int,self.train_features[0].shape))#[0])
+
+            print("    * dim mlp train features: ", dim_input)
+
+            #
+            #                          Network Parameters
+            #
+
+            self.encode1 = self.dim_hidden_1
+            # self.encode2 = self.encode1#int(self.encode1 / 2)
+            self.decode1 = self.dim_hidden_1
+            dim_im = int(dim_input[0])
+
             self.dim_hidden_1 = self.dim_hidden_1  # = 256 # 1st layer number of neurons
             self.dim_hidden_ = self.dim_hidden_2  # = 256 # 2nd layer number of neurons
-            self.dim_input = self.dim_input  # = 784 # MNIST data input (img shape: 28*28)
-            self.n_classes = self.train_labels[0].shape
-            #self.n_classes  # = 10 # MNIST total classes (0-9 digits)
+            #list(map(int,self.train_labels[0].shape))
+
+            print("    * label shape: ", len(self.train_labels))
 
             # tf Graph input
-            self.X_IN = tf.placeholder("float", [None, self.dim_input])
-            self.Y_OUT = tf.placeholder("float", [None, self.n_classes])
-            self.X_TEST = self.X_IN  # tf.placeholder("float", [None, dim_input_test])
-            self.Y_TEST = self.Y_OUT  # tf.placeholder("float", [None, n_classes])
-            ####################################
+            feat_x , feat_y, in_channels = dim_input[0], dim_input[1], dim_input[-1]
+
+            self.dim_input = in_channels
+            self.X_IN = tf.placeholder("float", shape=(None,feat_x , feat_y, in_channels))#[None, in_channels])
+            self.Y_OUT = tf.placeholder("float", shape=(None,dim_im , dim_im, self.n_classes))
+            self.batch_size_ph = tf.placeholder(tf.int32,shape=(None))
             # aug_ims = []
             # filtered_im_folder = os.path.join(self.experiment_folder, 'filtered_images')
             # df = dataflow()
@@ -432,11 +518,17 @@ class mlp(MLGraph):
 
             if with_range:
                 feature_set.append(features)
-                labels.append(seg_crop)
+                pos_labels = seg_crop.reshape((seg_crop.shape[0] * seg_crop.shape[1]))
+                label = np.array([[1.0 - p, p] for p in pos_labels])
+                label = label.reshape((seg_crop.shape[0], seg_crop.shape[1], self.n_classes))
+                labels.append(label)
                 #dataset.append((features, seg_crop, (x_rng, y_rng)))
             else:
                 feature_set.append(features)
-                labels.append(seg_crop)
+                pos_labels = seg_crop.reshape((seg_crop.shape[0]*seg_crop.shape[1]))
+                label = np.array([[1.0-p, p] for p in pos_labels])
+                label = label.reshape((seg_crop.shape[0], seg_crop.shape[1], self.n_classes))
+                labels.append(label)
         if full_img:
             return seg, feature_set, labels
         return feature_set, labels
@@ -500,6 +592,7 @@ class mlp(MLGraph):
         if training_set:
             train_features, train_labels = self.get_data_crops(self.image, x_range=self.X_BOX,
                                                with_range = not training_set,
+                                                               full_img=False,
                                                     y_range=self.Y_BOX,
                                                growth_radius = self.growth_radius,
                                                train_set=training_set)
@@ -520,38 +613,12 @@ class mlp(MLGraph):
             #                                with_hand_seg=False)
             return test_features, test_labels, full_seg
 
-    def next_batch(self, num, data, labels):
-        '''
-        Return a total of `num` random samples and labels.
-        '''
-        idx = np.arange(0, len(data))
-        np.random.shuffle(idx)
-        idx = idx[:num]
-        data_shuffle = [data[i] for i in idx]
-        labels_shuffle = [labels[i] for i in idx]
 
-        return np.asarray(data_shuffle), np.asarray(labels_shuffle)
-
-    def model(self):
-        X , Y = self.X_IN, self.Y_OUT
-        # Construct model
-        self.logits = self.multilayer_perceptron(X)
-
-        # Define loss and optimizer
-        self.loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-            logits=self.logits, labels=Y))
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-        self.train_op = self.optimizer.minimize(self.loss_op)
-        # Initializing the variables
-        self.init = tf.global_variables_initializer()
-
-    def build(self):
-        self.model()
 
 
     def _train_priors(self):
 
-        self.update_run_info(batch_multi_run=self.run_num)
+
 
         self.write_gnode_partitions(self.pred_session_run_path)
         self.write_selection_bounds(self.pred_session_run_path)
@@ -604,12 +671,7 @@ class mlp(MLGraph):
             self.accuracy=ac
             class_preds = []
             true_labels = []
-            sanity = 10
             for gid, pred in zip(self.test_gid_features_dict.keys(), preds):
-
-                if sanity > 0:
-                    print("mlp pred: ", pred)
-                    sanity -= 1
                 self.node_gid_to_prediction[gid] = float(pred[1])
                 if self.node_gid_to_partition[gid] != 'train':
                     class_preds.append(pred[1])
@@ -625,7 +687,7 @@ class mlp(MLGraph):
         self.write_selection_bounds(self.pred_session_run_path)
 
         X, Y = self.X_IN, self.Y_OUT
-        X_TEST, Y_TEST = self.X_TEST, self.Y_TEST
+        #X_TEST, Y_TEST = self.X_TEST, self.Y_TEST
 
         s = time.time()
 
@@ -637,7 +699,9 @@ class mlp(MLGraph):
                 avg_cost = 0.
                 # Loop over all batches
                 for i in range(self.total_batch):
-                    batch_x, batch_y = self.next_batch(self.batch_size, self.train_features, self.train_labels)
+                    batch_x, batch_y = self.next_batch(self.batch_size,
+                                                       self.train_features,
+                                                       self.train_labels)
                     # Run optimization op (backprop) and cost op (to get loss value)
                     _, c = sess.run([self.train_op, self.loss_op], feed_dict={X: batch_x,
                                                                               Y: batch_y})
@@ -653,37 +717,30 @@ class mlp(MLGraph):
             print("Optimization Finished!")
 
             # Test model
-
-            s = time.time()
-
-            pred = tf.nn.softmax(self.logits)  # Apply softmax to logits
-            correct_prediction = tf.equal(tf.argmax(pred, 1), tf.argmax(Y, 1))
+            prediction = tf.nn.softmax(self.logits)  # Apply softmax to logits
+            correct_prediction = tf.equal(tf.argmax(prediction, 1), tf.argmax(Y, 1))
             # Calculate accuracy
             accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
-            ac = accuracy.eval({X_TEST: self.test_features, Y_TEST: self.test_labels})
+            accuracies = []
+            all_preds = []
 
-            preds =pred.eval({X_TEST: self.test_features, Y_TEST: self.test_labels})
+            s = time.time()
+            for im_slice, slice_label in zip(self.test_features,self.test_labels):
+                ac = accuracy.eval({X: im_slice[None],
+                                    Y: slice_label[None]})#/self.total_test_batch
+                accuracies.append(ac)
+                pred = prediction.eval({X: im_slice[None],
+                                   Y: slice_label[None]})
+                pred = pred[:,:,:,1]#
+                all_preds.append(pred)
 
             f = time.time()
             self.record_time(round(f - s, 4), dir=self.pred_session_run_path, type='pred')
 
-            print("Accuracy:", ac)
-            pred_train = pred.eval({X: self.train_features, Y: self.train_labels})
+            print("Accuracy:", np.mean(accuracies))
             self.accuracy=ac
-            class_preds = []
-            true_labels = []
-            sanity = 10
-            for gid, pred in zip(self.test_gid_features_dict.keys(), preds):
 
-                if sanity > 0:
-                    print("mlp pred: ", pred)
-                    sanity -= 1
-                self.node_gid_to_prediction[gid] = float(pred[1])
-                if self.node_gid_to_partition[gid] != 'train':
-                    class_preds.append(pred[1])
-                    label = self.node_gid_to_label[gid]
-                    true_labels.append(label[1])
-            return preds, true_labels, ac #[pred_test, pred_train] , [self.test_labels , self.train_labels] , ac
+            return all_preds, [], ac #[pred_test, pred_train] , [self.test_labels , self.train_labels] , ac
 
     def compute_metrics(self, pred_images,# scores, pred_labels, pred_thresh,
                         INTERACTIVE=False):#predictions_topo, labels_topo,
@@ -722,7 +779,7 @@ class mlp(MLGraph):
             pad_xh = border_xh
             pad_yh = border_yh
 
-            pred_tile = np.squeeze(pred_images[idx], axis=2)
+            pred_tile = np.squeeze(pred_images[idx], axis=0)
             self.pred_val_im[x_box[0] + pad_xl: x_box[1] - pad_xh,
             y_box[0] + pad_yl: y_box[1] - pad_yh] = pred_tile[pad_xl:pred_tile.shape[0] - pad_xh,
                                                     pad_yl:pred_tile.shape[1] - pad_yh]
@@ -898,24 +955,25 @@ class mlp(MLGraph):
         if not os.path.exists(batch_metric_folder):
             os.makedirs(batch_metric_folder)
 
-        #self.draw_segmentation(dirpath=out_folder)
-        #compute_prediction_metrics('unet', predictions_topo_bool,
-        #                           labels_topo_bool,
-        #                           out_folder)
-        #self.write_arc_predictions(dir=out_folder)
-        #self.write_training_percentages(dir=out_folder,msc_segmentation=self.full_seg)
-        #self.write_training_percentages(dir=out_folder,train_regions=self.training_reg_bg)
-        #self.draw_segmentation(dirpath=out_folder)
+        self.draw_segmentation(dirpath=out_folder)
+        compute_prediction_metrics('unet', predictions_topo_bool,
+                                   labels_topo_bool,
+                                   out_folder)
+        self.write_arc_predictions(dir=out_folder)
+        self.write_training_percentages(dir=out_folder,msc_segmentation=self.full_seg)
+        self.write_training_percentages(dir=out_folder,train_regions=self.training_reg_bg)
+        self.draw_segmentation(dirpath=out_folder)
         self.write_gnode_partitions(dir=out_folder)
 
         multi_run_metrics(model='mlp', exp_folder=exp_folder,
-                          batch_multi_run=True,
-                          bins=7, runs='runs',#str(self.training_size),
-                          plt_title=exp_folder.split('/')[-1])
+                           batch_multi_run=True,
+                           bins=7, runs='runs',#str(self.training_size),
+                           plt_title=exp_folder.split('/')[-1])
 
         print("MLP_MAX_F1:", self.max_f1)
         print("pthresh:", self.F1_log[self.max_f1], 'opt', self.opt_thresh)#cutoffs[F1_MAX_ID])
-        print("Num Pixels:", self.image.shape[0] * self.image.shape[1], "Num Pixels training:", np.sum(self.training_labels), "Percent:",
+        print("Num Pixels:", self.image.shape[0] * self.image.shape[1], "Num Pixels training:",
+              np.sum(self.full_seg), "Percent:",
               100.0 * np.sum(self.full_seg) / (self.image.shape[0] * self.image.shape[1]))
 
 
