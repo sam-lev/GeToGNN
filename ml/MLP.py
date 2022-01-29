@@ -162,6 +162,8 @@ class mlp(MLGraph):
         self.dim_hidden_1 = self.params['out_dim_1']
         self.dim_hidden_2 = self.params['out_dim_2']
         self.dim_hidden_3 = self.params['mlp_out_dim_3']
+        self.kl_weight = 0.5
+        self.xentropy_weight = 0.5
 
         # Parameters
         self.learning_rate = learning_rate #= 0.001
@@ -205,13 +207,16 @@ class mlp(MLGraph):
         # Construct model
         self.logits = self.multilayer_perceptron(X)
 
-        if self.model_flavor == 'pixel':
+        if True:# self.model_flavor == 'pixel':
             a = 1
-            self.loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-                logits=self.logits, labels=Y))#,
-            #    self.kl_loss(self.logit_embedding, Y))
+            self.loss_xentropy = tf.multiply(self.xentropy_weight,
+                            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+                logits=self.logits, labels=Y)))
+            self.loss_kl = tf.multiply(self.kl_weight,
+                            tf.reduce_mean(self.kl_loss(self.logits, Y)))
+            self.loss_op = self.loss_xentropy + self.loss_kl
         # Define loss and optimizer
-        if self.model_flavor == 'msc':
+        if False:#self.model_flavor == 'msc':
             self.loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
                 logits=self.logits, labels=Y))
 
@@ -247,9 +252,13 @@ class mlp(MLGraph):
     # Create model
     def multilayer_perceptron(self, x):
         # Hidden fully connected layer with 256 neurons
-        layer_1 = tf.add(tf.matmul(x, self.weights['h1']), self.biases['b1'])
+        layer_1 = tf.nn.elu(
+            tf.add(tf.matmul(x, self.weights['h1']), self.biases['b1'])
+        )
         # Hidden fully connected layer with 256 neurons
-        layer_2 = tf.add(tf.matmul(layer_1, self.weights['h2']), self.biases['b2'])
+        layer_2 = tf.nn.elu(
+            tf.add(tf.matmul(layer_1, self.weights['h2']), self.biases['b2'])
+        )
         if False:#self.model_flavor == 'pixel':
             # l3
             layer_3 = tf.add(tf.matmul(layer_2, self.weights['h3']), self.biases['b3'])
@@ -373,6 +382,9 @@ class mlp(MLGraph):
 
             self.features = list(gid_features_dict)  # np.array(features)
             self.labels = np.array(list(gid_label_dict.values()))
+            print("")
+            print("    * SAMPLE LABEL")
+            print(self.train_labels[0])
 
             self.num_examples = self.train_labels.shape[0]
             self.total_batch = self.num_examples // self.batch_size
@@ -449,6 +461,18 @@ class mlp(MLGraph):
             self.num_test_examples = self.test_labels[0].shape[0]
             self.total_test_batch = self.num_test_examples // self.batch_size
 
+            # aug_ims = []
+            # filtered_im_folder = os.path.join(self.experiment_folder, 'filtered_images')
+            # df = dataflow()
+            # filtered_imgs = df.read_images(filetype='.png', screen='feat-func_', dest_folder=filtered_im_folder)
+            # for im in filtered_imgs:
+            #     np.max(im)
+            #     min_val = np.min(im)
+            #     im = (im - min_val) / (max_val - min_val)
+            #     im = np.mean(im, axis=2)
+            #     im = np.expand_dims(im, axis=-1)
+            #     features = np.concatenate((im, features), axis=2)
+
             dim_input = list(map(int,self.train_features[0].shape))#[0])
 
             print("    * dim mlp train features: ", dim_input)
@@ -475,17 +499,7 @@ class mlp(MLGraph):
             self.X_IN = tf.placeholder("float", shape=(None,feat_x , feat_y, in_channels))#[None, in_channels])
             self.Y_OUT = tf.placeholder("float", shape=(None,dim_im , dim_im, self.n_classes))
             self.batch_size_ph = tf.placeholder(tf.int32,shape=(None))
-            # aug_ims = []
-            # filtered_im_folder = os.path.join(self.experiment_folder, 'filtered_images')
-            # df = dataflow()
-            # filtered_imgs = df.read_images(filetype='.png', screen='feat-func_', dest_folder=filtered_im_folder)
-            # for im in filtered_imgs:
-            #     np.max(im)
-            #     min_val = np.min(im)
-            #     im = (im - min_val) / (max_val - min_val)
-            #     im = np.mean(im, axis=2)
-            #     im = np.expand_dims(im, axis=-1)
-            #     features = np.concatenate((im, features), axis=2)
+
 
     def get_data_crops(self, image=None, x_range=None,y_range=None, with_range=False,
                        train_set=True,full_img=False,growth_radius = 1):
