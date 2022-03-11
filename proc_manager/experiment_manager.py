@@ -25,7 +25,7 @@ LocalSetup = LocalSetup()
 
 class runner:
     def __init__(self, experiment_name, window_file_base = None, clear_runs=False,
-                 percent_train_thresh = 0, break_training_size=50,
+                 percent_train_thresh = 0, break_training_size=50, load_features = True,
                  sample_idx=2, multi_run = True, parameter_file_number = 1):
 
         # base attributes shared between models
@@ -45,6 +45,8 @@ class runner:
         self.window_file_base = window_file_base
         self.run_num = 1
         self.model_name = 'GeToGNN'  # 'experiment'#'input_select_from_1st_inference'
+
+        self.load_features = load_features
 
         #
         # input
@@ -314,10 +316,11 @@ class runner:
 
         growth_regions = self.grow_box(dims=dims, boxes=boxes)
 
+        BEGIN_LOADING_FEATURES = self.load_features
+
         for gr in range(len(growth_regions)):
 
 
-            BEGIN_LOADING_FEATURES = True
 
             regions = growth_regions[gr]
 
@@ -362,7 +365,7 @@ class runner:
                                        Y_BOX=Y_BOX,
                                        regions=regions)
 
-            if BEGIN_LOADING_FEATURES:
+            if not BEGIN_LOADING_FEATURES:
                 sup_getognn.getognn.params['load_features'] = True
                 sup_getognn.getognn.params['write_features'] = False
                 sup_getognn.getognn.params['load_features'] = True
@@ -372,16 +375,8 @@ class runner:
                 sup_getognn.getognn.params['load_preprocessed'] = True
                 sup_getognn.getognn.params['load_geto_attr'] = True
                 sup_getognn.getognn.params['load_feature_names'] = True
-            else:
-                sup_getognn.getognn.params['load_features'] = False
-                sup_getognn.getognn.params['write_features'] = True
-                sup_getognn.getognn.params['load_features'] = False
-                sup_getognn.getognn.params['write_feature_names'] = True
-                sup_getognn.getognn.params['save_filtered_images'] = True
-                sup_getognn.getognn.params['collect_features'] = True
-                sup_getognn.getognn.params['load_preprocessed'] = False
-                sup_getognn.getognn.params['load_geto_attr'] = False
-                sup_getognn.getognn.params['load_feature_names'] = False
+
+            BEGIN_LOADING_FEATURES = True
 
             sup_getognn.compute_features()
 
@@ -414,6 +409,7 @@ class runner:
                                       labels=gid_label_dict,
                                            plot=False)
                 getognn.write_feature_importance()
+                getognn.params['feature_importance'] = False
 
             training_reg_bg = np.zeros(getognn.image.shape[:2], dtype=np.uint8)
             for x_b, y_b in zip(getognn.x_box, getognn.y_box):
@@ -740,16 +736,12 @@ class runner:
 
             growth_regions = self.grow_box(dims=dims, boxes=boxes)
 
-
-
-
-
-            start_exp = 1
+            BEGIN_LOADING_FEATURES = self.load_features
 
             for gr in  range(len(growth_regions)):
 
 
-                BEGIN_LOADING_FEATURES = True
+
 
                 regions = growth_regions[gr]
 
@@ -796,9 +788,9 @@ class runner:
 
 
                 RF.build_random_forest(
-                    BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES, type = learning,
+                                       BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
                                        ground_truth_label_file=self.ground_truth_label_file,
-                                       X_BOX=X_BOX,Y_BOX=Y_BOX, boxes=regions)
+                                       boxes=regions)
 
                 #RF.run_num = 0
 
@@ -1023,9 +1015,12 @@ class runner:
                                           labels=gid_label_dict,
                                           plot=False)
                     RF.write_feature_importance()
+                    RF.params['feature_importance'] = False
+
+                BEGIN_LOADING_FEATURES = True
 
                 del RF
-                start_exp = 0
+
 
 
 
@@ -1110,6 +1105,7 @@ class runner:
         # train_set, test_set, val_set = get_train_test_val_partitions(self.attributes.node_gid_to_partition,
         #                                                              self.attributes.gid_gnode_dict,
         #                                                              test_all=True)
+        print("    * model flavor: ", flavor)
 
         IMG_WIDTH = dims[0]
         IMG_HEIGHT = dims[1]

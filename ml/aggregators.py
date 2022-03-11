@@ -2,6 +2,7 @@ import tensorflow as tf
 
 from .layers import Layer, Dense
 from .inits import glorot, zeros
+from ml.utils import pout
 
 class MeanAggregator(Layer):
     """
@@ -804,8 +805,8 @@ class GeToMeanPoolAggregator(Layer):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.neigh_input_dim = neigh_input_dim
-        print("neighbor input dim")
-        print(neigh_input_dim)
+        #print("neighbor input dim")
+        #print(neigh_input_dim)
         self.geto_dims=geto_dims
         self.geto_dims_in = geto_dims_in
 
@@ -988,7 +989,7 @@ class MaxPoolingAggregator(Layer):
             jumping_knowledge = False, geto_dims_in= None,geto_dims_out = None, **kwargs):
         super(MaxPoolingAggregator, self).__init__(**kwargs)
 
-        print("    * : Aggregator is MaxPool")
+        #print("    * : Aggregator is MaxPool")
 
         self.dropout = dropout
         self.bias = bias
@@ -1039,6 +1040,7 @@ class MaxPoolingAggregator(Layer):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.neigh_input_dim = neigh_input_dim
+        #pout(["hidden 1 ", self.hidden_dim_1,'hidden 2', self.hidden_dim_2])
 
     def _call(self, inputs):
         self_vecs, neigh_vecs = inputs
@@ -1089,7 +1091,7 @@ class MeanPoolingAggregator(Layer):
                  name=None, concat=False, geto_dims_in= None,geto_dims_out = None, **kwargs):
         super(MeanPoolingAggregator, self).__init__(**kwargs)
 
-        print("    * : Aggregator is MeanPool")
+        #print("    * : Aggregator is MeanPool")
 
         self.dropout = dropout
         self.bias = bias
@@ -1140,6 +1142,7 @@ class MeanPoolingAggregator(Layer):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.neigh_input_dim = neigh_input_dim
+        pout(["hidden 1 ", self.hidden_dim_1,'hidden 2', self.hidden_dim_2])
 
     def _call(self, inputs):
         self_vecs, neigh_vecs = inputs

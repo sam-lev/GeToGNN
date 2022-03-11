@@ -853,7 +853,6 @@ class UNetwork( MLGraph):
         #self.update_run_info(batch_multi_run=str(self.training_size))
         out_folder = os.path.join(self.pred_session_run_path)  # ,
         #                          str(self.training_size))
-        print("    XBOXXXXXX",self.X_BOX)
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
         self.write_selection_bounds(dir=out_folder,

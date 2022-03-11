@@ -627,7 +627,7 @@ class MLGraph(GeToFeatureGraph):
         return self.feat_importance_dict
 
     def write_feature_importance(self):
-        msc_pred_file = os.path.join(self.pred_session_run_path, "feat_importance.txt")
+        msc_pred_file = os.path.join(self.experiment_folder,'features', "feat_importance.txt")
         print("&&&& writing feature importances in: ", msc_pred_file)
         pred_file = open(msc_pred_file, "w+")
         top_ten = 10

@@ -71,6 +71,11 @@ def mean_filter(image, radius=1):
     mask = ball_shape(image, radius)
     return ndimage.generic_filter(image, np.mean, footprint=mask)
 
+def cos_sim_2d(x, y):
+    norm_x = x / (np.linalg.norm(x, axis=1, keepdims=True) + 1e-9)
+    norm_y = y / (np.linalg.norm(y, axis=1, keepdims=True) + 1e-9)
+    return np.matmul(norm_x, norm_y.T)
+
 def sum_euclid(arc):
     sum = 0
     for i, p in enumerate(arc):
@@ -90,13 +95,19 @@ def end_to_end_euclid(arc):
         dist = np.sqrt(x+y)
     return dist
 
-def manhattan_distance(arc):
-    if len(arc) < 2:
-        dist = 0
+def manhattan_distance(arc, p2=None):
+    if p2 is None:
+        if len(arc) < 2:
+            dist = 0
+        else:
+            x = np.abs(arc[-1][0] - arc[0][0])
+            y = np.abs(arc[-1][1] - arc[0][1])
+            dist = x+y
+        return dist
     else:
-        x = (arc[-1][0] - arc[0][0])
-        y = (arc[-1][1] - arc[0][1])
-        dist = x+y
+        x = np.abs(arc[-1][0] - p2[-1][0])
+        y = np.abs(arc[-1][1] - p2[-1][1])
+        dist = x + y
     return dist
 
 def mahalanobis_distance_arc(point_a,point_b, centroid):
@@ -118,20 +129,20 @@ def get_points_from_vertices(vertices, sampled = False, image = None):
                 #pix1 = image[p1[:, 1], p1[:, 0]]
                 #pix2 = image[p2[:, 1], p2[:, 0]]
                 #pix3 = image[p3[:, 1], p3[:, 0]]
-                t_points = np.array([p1,p2,p3])#.flatten()
+                t_points += tuple(np.array([p1,p2,p3]))#.flatten()
             elif len(line) == 2:
                 p1 = line[0]
                 p2 = line[1]
                 p_middle = ((p1[1] + p2[1])/2.,(p1[0] + p2[0])/2.)
                 #pix1 = image[p1[:, 1], p1[:, 0]]
                 #pix2 = image[p2[:, 1], p2[:, 0]]
-                t_points = np.array([p1,p_middle,p2])#.flatten()
+                t_points += tuple(np.array([p1,p_middle,p2]))#.flatten()
             elif len(line) == 1:
                 p1 = line[0]
                 #pix1 = image[p1[:, 1], p1[:, 0]]
-                t_points = np.array([p1,p1,p1])#.flatten()
-            return t_points
-        points += tuple(np.array(np.round(line), dtype=int))
+                t_points += tuple(np.array([p1,p1,p1]))#.flatten()
+            return np.vstack(t_points)
+        points += tuple(np.array(np.round(line), dtype=float))
     points = np.vstack(points)
     return points
 
@@ -140,7 +151,8 @@ def get_pixel_values_from_vertices(vertices, image, sampled = False):
         return get_points_from_vertices(vertices, sampled=True, image=image)
     else:
         points = get_points_from_vertices(vertices,sampled = sampled, image = image)
-    return image[points[:, 1], points[:, 0]].flatten()
+    points_int = points.astype(int)
+    return image[points_int[:, 1], points_int[:, 0]].flatten()
 
 
 def translate_points_by_centroid(vertex, centroid):
@@ -152,15 +164,15 @@ def get_centroid(vertex):
     points = np.array(vertex)
     x_mean = np.mean(points[:,1])#/points.shape[0]
     y_mean = np.mean(points[:,0])#/points.shape[0]
-    centroid = np.array([x_mean, y_mean])
+    centroid = np.array([(x_mean, y_mean)])
     return centroid
 
 def cumulative_distance_from_centroid(vertex, centroid):
     self_centroid = get_centroid(vertex)
     sum = 0
     for i, p in enumerate(vertex):
-        x = (centroid[0] - p[0]) ** 2
-        y = (centroid[1] - p[1]) ** 2
+        x = (centroid[0][0] - p[0]) ** 2
+        y = (centroid[0][1] - p[1]) ** 2
         sum += np.sqrt(x + y)
     return sum
 

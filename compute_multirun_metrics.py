@@ -730,6 +730,9 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
 
     for model, exp_folder in zip(models, exp_dirs):
 
+        print("model: ", model)
+        print("exp folder: ", exp_folder)
+
         model_statistics[model] = []
 
 
@@ -845,9 +848,23 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
     # fig = plt.figure(figsize=(10, 10))
     colors = plt.cm.get_cmap('Dark2')
 
-
-
-    for model_name, stats in model_statistics.items():
+    plot_experiments = [
+                        "Random_Forest_Pixel",
+                        'MLP_Pixel',
+                        "UNet",
+                        "Random_Forest_MSC",
+                        # 'Random_Forest_MSC_Geom',
+                        'MLP_MSC',
+                        'GNN',
+                        'GNN_Geom',
+                        ]
+    legend_order = ['RF-Pixel', 'MLP-Pixel', 'U-Net' , 'RF-Priors', 'MLP-Priors', 'GNN','GNN-Geom']
+    #for model_name, stats in model_statistics.items():
+    print("    * ","plotting models")
+    print("    * ", model_statistics.keys())
+    for legend_row, model_exp in enumerate(model_statistics.keys()):
+        model_name = plot_experiments[legend_row].replace('_', ' ')
+        stats = model_statistics[model_name]
         x = stats[0]
         y = stats[1]
         #y = [float(round(i, 2)) for i in list(y)]
@@ -875,32 +892,46 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             c = 'blue'
             lstyle = (0, (1, 1)) # densely dotted 'solid' #(0, (5, 1))#'densely dashed'
             lw = 2.0
-        if 'Pixel' in model_name and 'Forest' in model_name:
+        if 'Pixel' in model_name and 'Forest' in model_name and 'Geom' not in model_name:
             model_name = 'Random Forest Pixel'
-            c = 'orange'
-            lstyle =  (0, (3, 1, 1, 1, 1, 1)) # densely daddotted
+            c = 'seagreen'# 'blueviolet'#'goldenrod'
+            lstyle =  (0, (1, 1)) #(0, (3, 1, 1, 1, 1, 1)) # densely daddotted
             ## (0, (1, 1)) # densely dotted(0, (5, 1)) # dashed (0, (1, 1))# 'densely dotted'
-            lw = 1.5
+            lw = 2.0
         if 'Pixel' in model_name and 'MLP' in model_name:
             model_name = 'MLP Pixel'
-            c = 'palegreen'
-            lstyle =  (0, (3, 1, 1, 1, 1, 1)) # densely daddotted
+            c = 'sienna'#'peru'# 'darkgoldenrod'
+            lstyle =  (0, (1, 1)) #(0, (3, 1, 1, 1, 1, 1)) # densely daddotted
             ## (0, (1, 1)) # densely dotted(0, (5, 1)) # dashed (0, (1, 1))# 'densely dotted'
-            lw = 1.5
+            lw = 2.0
         if model_name == 'GNN':
-            c = 'darkgreen'
+            c = 'red'
             lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
             lw = 2.0
-        if 'MSC' in model_name and 'Forest' in model_name:
+        if 'GNN' in model_name and 'Geom' in model_name:
+            c = 'orchid'#
+            lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
+            lw = 2.0
+        if 'MSC' in model_name and 'Forest' in model_name and 'Geom' not in model_name:
             model_name = 'Random Forest Priors'
-            c = 'gold'
+            c = 'springgreen'#'darkorange'
             lstyle = (0, (5, 1))#(0, (1, 1)) #(0, (5, 1))#'densely dashed'   #(0, (3, 5, 1, 5))#'dashdotted'
-            lw = 1.5
+            lw = 2.0
+        if 'MSC' in model_name and 'Forest' in model_name and 'Geom' in model_name:
+            model_name = 'Random Forest Geom'
+            c = 'aqua'
+            lstyle = (0, (5, 1))#(0, (1, 1)) #(0, (5, 1))#'densely dashed'   #(0, (3, 5, 1, 5))#'dashdotted'
+            lw = 2.0
+        if 'Pixel' in model_name and 'Forest' in model_name and 'Geom' in model_name:
+            model_name = 'Random Forest Pixel Geom'
+            c = 'deeppink'
+            lstyle = (0, (1, 1))#(0, (1, 1)) #(0, (5, 1))#'densely dashed'   #(0, (3, 5, 1, 5))#'dashdotted'
+            lw = 2.0
         if 'MSC' in model_name and 'MLP' in model_name:
             model_name = 'MLP Priors'
-            c = 'chartreuse' # for pixel chartreuse
+            c =  'darkorange'# for pixel chartreuse
             lstyle = (0, (5, 1))#(0, (1, 1))  #(0, (3, 5, 1, 5))#'dashdotted'
-            lw = 1.5
+            lw = 2.0
         ax.plot(x, y,color=c, label=model_name, linestyle=lstyle, linewidth=lw)
     plt.xticks(fontsize=15)
     plt.yticks(fontsize=15)

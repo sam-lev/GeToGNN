@@ -268,7 +268,7 @@ class SampleAndAggregate(GeneralizedModel):
         self.hidden_geto_agg = "hidden" in aggregator_type or "edge" in aggregator_type
 
         if hidden_dim_1_agg is not None:
-            print(">>> hidden dim 1 ", hidden_dim_1_agg,)
+            #print(">>> hidden dim 1 ", hidden_dim_1_agg,)
             self.aggregator_cls.hidden_dim_1 = hidden_dim_1_agg
         if hidden_dim_2_agg is not None:
             self.aggregator_cls.hidden_dim_2 = hidden_dim_2_agg
@@ -418,7 +418,7 @@ class SampleAndAggregate(GeneralizedModel):
                 dim_mult_geto = 2 if concat and (layer != 0) and self.hidden_geto_agg else 1
                 geto_dims_in = layer if self.hidden_geto_agg else 0
 
-                print("    * : ",dim_mult)
+                #print("    * : ",dim_mult)
                 # aggregator at current layer
                 if layer == len(num_samples) - 1:
                     aggregator = self.aggregator_cls(dim_mult*dims[layer], dims[layer+1], act=lambda x : x,
@@ -446,7 +446,7 @@ class SampleAndAggregate(GeneralizedModel):
                 dim_mult = 2 if concat and (layer != 0) else 1
                 dim_mult_geto = 2 if concat and (layer != 0) and self.hidden_geto_agg else 1
                 geto_dims_in = layer if self.hidden_geto_agg else 0
-                print("    * : ", self.hidden_geto_agg)
+                #print("    * : ", self.hidden_geto_agg)
                 neigh_dims = [batch_size * support_sizes[hop], 
                               num_samples[len(num_samples) - hop - 1], 
                               dim_mult * dims[layer]]
@@ -479,7 +479,7 @@ class SampleAndAggregate(GeneralizedModel):
         if self.jumping_knowledge and not new_agg:
             rev_hidden = next_hidden
             rev_hidden.reverse()
-            print(">>> rev hidden ", rev_hidden)
+            #print(">>> rev hidden ", rev_hidden)
             h_jump = rev_hidden[0]
             for idx, l_vec in enumerate(rev_hidden[1:]):
                 # if even jump every other so as to get to layer 1 and 2 hops
@@ -487,19 +487,20 @@ class SampleAndAggregate(GeneralizedModel):
                 skip = idx+1+(len(hidden)%2)
                 if idx +1 < len(hidden)-1:# and skip%2 != 0:
                     #h_jump = tf.concat([h_jump, hidden[idx + 1]], axis=1)
-                    if self.jump_type == 'pool':
+                    if self.jump_type == 'maxpool':
                         h_next = tf.reduce_max(hidden[idx + 1], axis=1)
-                    elif self.jump_type == 'avgpool':
+                    elif self.jump_type == 'meanpool':
                         h_next = tf.reduce_mean(hidden[idx + 1], axis=1)
                     else:
                         h_next = hidden[idx + 1]
                     from_h_next = tf.matmul(h_next, self.vars['neigh_weights'])
                     from_h = tf.matmul(h_jump, self.vars["self_weights"])
 
-                    if self.jump_type != 'cat':
-                        h_jump = tf.add_n([from_h, from_h_next])
-                    else:
+                    if 'cat' in self.jump_type:
                         h_jump = tf.concat([from_h, from_h_next], axis=1)
+                    else:
+                        h_jump = tf.add_n([from_h, from_h_next])
+
 
             hidden = [h_jump]
         if geto_elms is not None:
@@ -523,7 +524,7 @@ class SampleAndAggregate(GeneralizedModel):
 
         dim_mult = 2 if self.concat else 1
 
-        print("    * : GETO IS NONE", self.geto_elements is None)
+        #print("    * : GETO IS NONE", self.geto_elements is None)
         # perform "convolution"
         samples1, support_sizes1, getosamples1 = self.sample(self.inputs1,
                                                              self.layer_infos,

@@ -9,6 +9,8 @@ from data_ops.utils import tile_region
 from metrics.model_metrics import compute_prediction_metrics
 from compute_multirun_metrics import multi_run_metrics
 from data_ops.utils import plot
+from data_ops import dataflow
+
 
 import pandas as pd
 import tensorflow as tf
@@ -20,6 +22,7 @@ from ml.features import multiscale_basic_features
 from functools import partial
 from copy import deepcopy
 from sklearn.metrics import f1_score
+from ml.utils import pout
 
 class mlp(MLGraph):
     def __init__(self,
@@ -33,6 +36,9 @@ class mlp(MLGraph):
                  **kwargs):
 
         self.type = 'mlp'
+
+        tf.random.set_random_seed(801)
+        np.random.seed(801)
 
         self.model_name = model_name
 
@@ -157,22 +163,45 @@ class mlp(MLGraph):
         #
 
         learning_rate = self.params['learning_rate']
+        # try with increased epochs
         epochs = self.params['epochs']
         batch_size = self.params['batch_size']
-        self.dim_hidden_1 = self.params['out_dim_1']
-        self.dim_hidden_2 = self.params['out_dim_2']
+        self.dim_hidden_1 = self.params['mlp_out_dim_1']
+        self.dim_hidden_2 = self.params['mlp_out_dim_2']
         self.dim_hidden_3 = self.params['mlp_out_dim_3']
-        self.kl_weight = 0.5
-        self.xentropy_weight = 0.5
+
+        #
+        # pixel vs topo
+        #
+        self.model_flavor = flavor
+
+
+
+        pout(show=["flavor", flavor])
 
         # Parameters
-        self.learning_rate = learning_rate #= 0.001
-        self.training_epochs = epochs #= 15
         self.batch_size = batch_size #= 100
         self.display_step = epochs//4
 
+        #
+        # Testing sensitivity to lr
+        #
+        if self.model_flavor == 'msc':
+            self.kl_weight = 0.0
+            self.xentropy_weight = 1.0
+            self.learning_rate = 0.002# 0.02 * learning_rate  # .002*.001 #2e-06
+            self.training_epochs = 5#epochs
+            self.weight_decay = 0.0#01
+        if self.model_flavor == 'pixel':
+            self.kl_weight = 0.0
+            self.xentropy_weight = 1.0
+            self.learning_rate = 0.01# 0.01
+            self.training_epochs = 64# 64 epochs
+            self.weight_decay = 0.001 # 0.001
+
+        #pout(['lr', self.learning_rate,'kl',self.kl_weight,'xentropy', self.xentropy_weight])
         ###
-        self.model_flavor = flavor
+
         self.growth_radius = growth_radius
 
         self.update_run_info(batch_multi_run=self.run_num)
@@ -204,21 +233,23 @@ class mlp(MLGraph):
 
     def model(self):
         X , Y = self.X_IN, self.Y_OUT
+        # Activation
+        self.act = tf.nn.sigmoid #tf.nn.relu
         # Construct model
         self.logits = self.multilayer_perceptron(X)
 
-        if True:# self.model_flavor == 'pixel':
+        if True:#self.model_flavor == 'msc':
             a = 1
-            self.loss_xentropy = tf.multiply(self.xentropy_weight,
-                            tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+            self.loss_xentropy = tf.multiply(self.xentropy_weight, #softmax
+                            tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
                 logits=self.logits, labels=Y)))
             self.loss_kl = tf.multiply(self.kl_weight,
                             tf.reduce_mean(self.kl_loss(self.logits, Y)))
-            self.loss_op = self.loss_xentropy + self.loss_kl
-        # Define loss and optimizer
-        if False:#self.model_flavor == 'msc':
-            self.loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-                logits=self.logits, labels=Y))
+            self.loss_op = self.loss_xentropy + self.loss_kl + \
+                           self.weight_decay * tf.nn.l2_loss(self.weights['h1']) + \
+                           self.weight_decay * tf.nn.l2_loss(self.weights['h2']) + \
+                           self.weight_decay * tf.nn.l2_loss(self.weights['out'])
+
 
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.train_op = self.optimizer.minimize(self.loss_op)
@@ -247,31 +278,25 @@ class mlp(MLGraph):
         return kl(true_p,q)
 
     def build(self):
+        tf.random.set_random_seed(801)
+        np.random.seed(801)
         self.model()
 
     # Create model
     def multilayer_perceptron(self, x):
         # Hidden fully connected layer with 256 neurons
-        layer_1 = tf.nn.elu(
+        layer_1 = self.act(
             tf.add(tf.matmul(x, self.weights['h1']), self.biases['b1'])
         )
         # Hidden fully connected layer with 256 neurons
-        layer_2 = tf.nn.elu(
+        layer_2 = self.act(
             tf.add(tf.matmul(layer_1, self.weights['h2']), self.biases['b2'])
         )
-        if False:#self.model_flavor == 'pixel':
-            # l3
-            layer_3 = tf.add(tf.matmul(layer_2, self.weights['h3']), self.biases['b3'])
-            layer_4 = tf.add(tf.matmul(layer_3, self.weights['h4']), self.biases['b4'])
-            # fully connected layer
-            # layer_5 = tf.add(tf.matmul(layer_4, self.weights['h5']), self.biases['b5'])
-            # Output fully connected layer with a neuron for each class
-            out_encoding = tf.matmul(layer_4, self.weights['out']) + self.biases['out']
-        else:
-            # Output fully connected layer with a neuron for each class
-            out_encoding = tf.matmul(layer_2, self.weights['out']) + self.biases['out']
+
+        # Output fully connected layer with a neuron for each class
+        out_encoding = tf.matmul(layer_2, self.weights['out']) + self.biases['out']
         # softmax with output R^(number classes X 1)
-        return out_encoding
+        return out_encoding #self.act(out_encoding)
 
     def build_weights(self, flavor= 'msc'):
         # Store layers weight & bias
@@ -337,7 +362,7 @@ class mlp(MLGraph):
                 num_percent += float((xbox[1] - xbox[0]) * (ybox[1] - ybox[0]))
             percent = num_percent / float(self.image.shape[0] * self.image.shape[1])
             percent_f = percent * 100
-            print("    * ", percent_f)
+            #print("    * ", percent_f)
             percent = int(round(percent_f))
             self.training_size = percent
             self.run_num = percent
@@ -382,9 +407,6 @@ class mlp(MLGraph):
 
             self.features = list(gid_features_dict)  # np.array(features)
             self.labels = np.array(list(gid_label_dict.values()))
-            print("")
-            print("    * SAMPLE LABEL")
-            print(self.train_labels[0])
 
             self.num_examples = self.train_labels.shape[0]
             self.total_batch = self.num_examples // self.batch_size
@@ -419,8 +441,6 @@ class mlp(MLGraph):
 
             _, _, box_pair = self.box_select_geomsc_training(x_range=self.X_BOX, y_range=self.Y_BOX)
             self.X_BOX, self.Y_BOX = box_pair
-            print("    xboxxx", self.X_BOX)
-            print("    yboxxx* ", self.Y_BOX)
 
             X_BOX_all = []
             Y_BOX_all = []
@@ -447,6 +467,32 @@ class mlp(MLGraph):
             self.write_selection_bounds(dir=out_folder,
                                         x_box=self.X_BOX, y_box=self.Y_BOX,
                                         mode='w')
+            #
+            # collect filter feats from geto
+            #
+            aug_ims = []
+            self.feature_image = deepcopy(self.image)
+
+            # filt 1-64 r
+            sigma_min = 1
+            sigma_max = 64
+            features_func = partial(multiscale_basic_features,
+                                    intensity=True, edges=False, texture=True,
+                                    sigma_min=sigma_min, sigma_max=sigma_max,
+                                    multichannel=False)
+            # features_func.
+            self.feature_image = features_func(self.feature_image)
+
+            filtered_im_folder = os.path.join(self.experiment_folder, 'filtered_images')
+            df = dataflow()
+            filtered_imgs = df.read_images(filetype='.png', screen='feat-func_', dest_folder=filtered_im_folder)
+            for im in filtered_imgs:
+                np.max(im)
+                min_val = np.min(im)
+                im = (im - min_val) / (max_val - min_val)
+                im = np.mean(im, axis=2)
+                im = np.expand_dims(im, axis=-1)
+                self.feature_image = np.concatenate((im, self.feature_image), axis=2)
 
             self.train_features, self.train_labels, _ = self.collect_boxes(  # region_list=self.region_list,
                 # number_samples=self.training_size,
@@ -461,21 +507,12 @@ class mlp(MLGraph):
             self.num_test_examples = self.test_labels[0].shape[0]
             self.total_test_batch = self.num_test_examples // self.batch_size
 
-            # aug_ims = []
-            # filtered_im_folder = os.path.join(self.experiment_folder, 'filtered_images')
-            # df = dataflow()
-            # filtered_imgs = df.read_images(filetype='.png', screen='feat-func_', dest_folder=filtered_im_folder)
-            # for im in filtered_imgs:
-            #     np.max(im)
-            #     min_val = np.min(im)
-            #     im = (im - min_val) / (max_val - min_val)
-            #     im = np.mean(im, axis=2)
-            #     im = np.expand_dims(im, axis=-1)
-            #     features = np.concatenate((im, features), axis=2)
+
 
             dim_input = list(map(int,self.train_features[0].shape))#[0])
+            dim_in_channels = self.feature_image.shape[-1]
 
-            print("    * dim mlp train features: ", dim_input)
+            print("    * dim mlp train features: ", dim_in_channels)
 
             #
             #                          Network Parameters
@@ -496,7 +533,7 @@ class mlp(MLGraph):
             feat_x , feat_y, in_channels = dim_input[0], dim_input[1], dim_input[-1]
 
             self.dim_input = in_channels
-            self.X_IN = tf.placeholder("float", shape=(None,feat_x , feat_y, in_channels))#[None, in_channels])
+            self.X_IN = tf.placeholder("float", shape=(None,feat_x , feat_y, dim_in_channels))#[None, in_channels])
             self.Y_OUT = tf.placeholder("float", shape=(None,dim_im , dim_im, self.n_classes))
             self.batch_size_ph = tf.placeholder(tf.int32,shape=(None))
 
@@ -508,41 +545,67 @@ class mlp(MLGraph):
         x_full = [0, self.image.shape[0]]
         y_full = [0, self.image.shape[1]]
         full_bounds = (x_full, y_full)
+        #
+        # positive class labeling
+        #
         seg = self.generate_pixel_labeling(full_bounds,
                                            seg_image=seg, growth_radius=growth_radius,
                                            train_set=train_set)
+        #
+        # Negative class labeling
+        #
+        neg_seg = np.array(np.bitwise_not(np.array(seg,dtype=bool)),dtype=np.int8)
+
+        #
+        # binary seg stack
+        #
+        bin_seg = np.dstack((neg_seg,seg))
 
         range_group = zip(x_range, y_range)
 
         feature_set , labels = [], []
         for x_rng, y_rng in range_group:
             bounds = (x_rng,y_rng)
-            train_im_crop = deepcopy(self.image[bounds[0][0]:bounds[0][1], bounds[1][0]:bounds[1][1]])
-            seg_crop = deepcopy(seg[bounds[0][0]:bounds[0][1], bounds[1][0]:bounds[1][1]])
+            # also crop stack of filt feat then concat
+            train_feat_im_crop = deepcopy(self.feature_image[bounds[0][0]:bounds[0][1],
+                                 bounds[1][0]:bounds[1][1],
+                                 :])
+            seg_crop = deepcopy(bin_seg[bounds[0][0]:bounds[0][1],
+                       bounds[1][0]:bounds[1][1],
+                                :])
+
+
 
             ################## BUILD FEATURES  ################
-            sigma_min = 1
-            sigma_max = 64
-            features_func = partial(multiscale_basic_features,
-                                    intensity=True, edges=False, texture=True,
-                                    sigma_min=sigma_min, sigma_max=sigma_max,
-                                    multichannel=False)
-            # features_func.
-            features = features_func(train_im_crop)
+            # sigma_min = 1
+            # sigma_max = 64
+            # features_func = partial(multiscale_basic_features,
+            #                         intensity=True, edges=False, texture=True,
+            #                         sigma_min=sigma_min, sigma_max=sigma_max,
+            #                         multichannel=False)
+            # # features_func.
+            # features = features_func(train_im_crop)
 
             if with_range:
-                feature_set.append(features)
-                pos_labels = seg_crop.reshape((seg_crop.shape[0] * seg_crop.shape[1]))
-                label = np.array([[1.0 - p, p] for p in pos_labels])
-                label = label.reshape((seg_crop.shape[0], seg_crop.shape[1], self.n_classes))
-                labels.append(label)
-                #dataset.append((features, seg_crop, (x_rng, y_rng)))
+                # feature_set.append(features)
+                # pos_labels = seg_crop.reshape((seg_crop.shape[0] * seg_crop.shape[1]))
+                # label = np.array([[1.0 - p, p] for p in pos_labels])
+                # label = label.reshape((seg_crop.shape[0], seg_crop.shape[1], self.n_classes))
+                # labels.append(label)
+                feature_set.append(train_feat_im_crop)
+                labels.append(seg_crop)
             else:
-                feature_set.append(features)
-                pos_labels = seg_crop.reshape((seg_crop.shape[0]*seg_crop.shape[1]))
-                label = np.array([[1.0-p, p] for p in pos_labels])
-                label = label.reshape((seg_crop.shape[0], seg_crop.shape[1], self.n_classes))
-                labels.append(label)
+                # feature_set.append(features)
+                # pos_labels = seg_crop.reshape((seg_crop.shape[0]*seg_crop.shape[1]))
+                # label = np.array([[1.0-p, p] for p in pos_labels])
+                # label = label.reshape((seg_crop.shape[0], seg_crop.shape[1], self.n_classes))
+                # labels.append(label)
+                feature_set.append(train_feat_im_crop)
+                # pos_labels = seg_crop.reshape((seg_crop.shape[0] * seg_crop.shape[1]))
+                # label = np.array([[1.0 - p, p] for p in pos_labels])
+                # label = label.reshape((seg_crop.shape[0], seg_crop.shape[1], self.n_classes))
+                # labels.append(label)
+                labels.append(seg_crop)
         if full_img:
             return seg, feature_set, labels
         return feature_set, labels
@@ -591,8 +654,8 @@ class mlp(MLGraph):
                 if x_box[0] <= p[1] <= x_box[1] and y_box[0] <= p[0] <= y_box[1]:
                     in_box = True
                     interior_points.append(p)
-                    mapped_y = points[:, 0]  # - x_box[0]
-                    mapped_x = points[:, 1]  # - y_box[0]
+                    mapped_y = np.array(points[:, 0], dtype=int)  # - x_box[0]
+                    mapped_x = np.array(points[:, 1], dtype=int)  # - y_box[0]
                     if int(label[1]) == 1:
                         train_im[mapped_x, mapped_y] = 1
         train_im = ndimage.maximum_filter(train_im, size=growth_radius)
@@ -640,12 +703,15 @@ class mlp(MLGraph):
         X , Y = self.X_IN, self.Y_OUT
         X_TEST, Y_TEST = self.X_TEST, self.Y_TEST
 
-        s = time.time()
+        class_preds = []
+        true_labels = []
+        preds = []
 
         with tf.Session() as sess:
             sess.run(self.init)
 
             # Training cycle
+            s_train = time.time()
             for epoch in range(self.training_epochs):
                 avg_cost = 0.
                 # Loop over all batches
@@ -660,8 +726,7 @@ class mlp(MLGraph):
                 if epoch % self.display_step == 0:
                     print("Epoch:", '%04d' % (epoch+1), "cost={:.9f}".format(avg_cost))
 
-            f = time.time()
-            self.record_time(round(f - s, 4), dir=self.pred_session_run_path, type='train')
+            f_train = time.time()
 
             print("Optimization Finished!")
 
@@ -683,17 +748,19 @@ class mlp(MLGraph):
             print("Accuracy:", ac)
             pred_train = pred.eval({X: self.train_features, Y: self.train_labels})
             self.accuracy=ac
-            class_preds = []
-            true_labels = []
+
             for gid, pred in zip(self.test_gid_features_dict.keys(), preds):
                 self.node_gid_to_prediction[gid] = float(pred[1])
                 if self.node_gid_to_partition[gid] != 'train':
                     class_preds.append(pred[1])
                     label = self.node_gid_to_label[gid]
                     true_labels.append(label[1])
-            return preds, true_labels, ac #[pred_test, pred_train] , [self.test_labels , self.train_labels] , ac
+        self.record_time(round(f_train - s_train, 4), dir=self.pred_session_run_path, type='train')
+        return preds, true_labels, ac #[pred_test, pred_train] , [self.test_labels , self.train_labels] , ac
 
     def _train_pixel(self, growth_radius=2):
+
+
 
         self.update_run_info(batch_multi_run=self.run_num)
 
@@ -703,12 +770,14 @@ class mlp(MLGraph):
         X, Y = self.X_IN, self.Y_OUT
         #X_TEST, Y_TEST = self.X_TEST, self.Y_TEST
 
-        s = time.time()
 
+        accuracies = []
+        all_preds = []
         with tf.Session() as sess:
             sess.run(self.init)
 
             # Training cycle
+            s_train = time.time()
             for epoch in range(self.training_epochs):
                 avg_cost = 0.
                 # Loop over all batches
@@ -725,8 +794,7 @@ class mlp(MLGraph):
                 if epoch % self.display_step == 0:
                     print("Epoch:", '%04d' % (epoch+1), "cost={:.9f}".format(avg_cost))
 
-            f = time.time()
-            self.record_time(round(f - s, 4), dir=self.pred_session_run_path, type='train')
+            f_train = time.time()
 
             print("Optimization Finished!")
 
@@ -735,8 +803,7 @@ class mlp(MLGraph):
             correct_prediction = tf.equal(tf.argmax(prediction, 1), tf.argmax(Y, 1))
             # Calculate accuracy
             accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
-            accuracies = []
-            all_preds = []
+
 
             s = time.time()
             for im_slice, slice_label in zip(self.test_features,self.test_labels):
@@ -750,11 +817,11 @@ class mlp(MLGraph):
 
             f = time.time()
             self.record_time(round(f - s, 4), dir=self.pred_session_run_path, type='pred')
-
+            ac =  np.mean(accuracies)
             print("Accuracy:", np.mean(accuracies))
             self.accuracy=ac
-
-            return all_preds, [], ac #[pred_test, pred_train] , [self.test_labels , self.train_labels] , ac
+        self.record_time(round(f_train - s_train, 4), dir=self.pred_session_run_path, type='train')
+        return all_preds, [], ac #[pred_test, pred_train] , [self.test_labels , self.train_labels] , ac
 
     def compute_metrics(self, pred_images,# scores, pred_labels, pred_thresh,
                         INTERACTIVE=False):#predictions_topo, labels_topo,

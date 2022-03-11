@@ -42,11 +42,13 @@ from ml.features import (
     manhattan_distance,
     mahalanobis_distance_arc,
     cumulative_distance_from_centroid,
+    cos_sim_2d,
 )
 
 
 from localsetup import LocalSetup
 from ml.utils import load_data
+from ml.utils import pout
 
 class GeToFeatureGraph(GeToGraph):
     def __init__(self, image=None, geomsc_fname_base = None, label_file=None,
@@ -274,6 +276,7 @@ class GeToFeatureGraph(GeToGraph):
 
 
             num_nodes = len(self.gid_gnode_dict.values())
+            sampled_arc_points = np.array(get_points_from_vertices([gnode],sampled=True))
             node_translated_vec = translate_points_by_centroid([gnode], centroid)
             length_gnode = len(gnode.points)
 
@@ -287,24 +290,34 @@ class GeToFeatureGraph(GeToGraph):
             node_degree = gnode.degree
 
             hyperbolic_distance_arc = hyperbolic_distance_line(gnode.points)
-
             end_to_end_hyperbolic_grad, end_to_end_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
                                                                                          gnode.points[-1])
             p1_centroid_hyperbolic_grad, p1_centroid_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
-                                                                                         centroid)
+                                                                                         centroid[0])
             p2_centroid_hyperbolic_grad, p2_centroid_hyperbolic_dist = hyperbolic_distance(gnode.points[-1],
-                                                                                           centroid)
+                                                                                           centroid[0])
 
-            velocity_arc_x = np.gradient(np.array(gnode.points)[:,0])
-            velocity_arc_y = np.gradient(np.array(gnode.points)[:,1])
+            # cosim
+            centroid_norm_vec = np.array([0.0, linalg.norm(np.array(centroid), axis=0)])
+            cos_sim_numerator = linalg.norm(sampled_arc_points, axis=0) @ centroid_norm_vec
+            cos_sim_denominator = linalg.norm(sampled_arc_points) * linalg.norm(centroid_norm_vec)
+            cos_sim_centroid = cos_sim_numerator / (cos_sim_denominator+1e-9)
+            cos_sim_centroid_max = np.max(cos_sim_2d(sampled_arc_points,centroid))
+            cos_sim_centroid_min = np.min(cos_sim_2d(sampled_arc_points,centroid))
+
+            # velocity
+            velocity_arc_x = np.gradient(sampled_arc_points[:,0])
+            velocity_arc_y = np.gradient(sampled_arc_points[:,1])
             velocity_arc = list(np.array([[velocity_arc_x[i], velocity_arc_y[i]] for i in range(velocity_arc_y.size)]).flatten())
 
-            euclidean_sum_self = sum_euclid(gnode.points)
-            euclidean_dist_arc = end_to_end_euclid(gnode.points)
+            euclidean_sum_self = sum_euclid(sampled_arc_points)#gnode.points)
+            euclidean_dist_arc = end_to_end_euclid(sampled_arc_points)#gnode.points)
             manhattan_distance_arc = manhattan_distance(gnode.points)
+            manhattan_distance_centroid = manhattan_distance(sampled_arc_points, centroid)
             length_self = len(gnode.points)
             slope_self = slope(gnode.points)
-            self_distance_from_centroid = cumulative_distance_from_centroid(gnode.points, centroid)
+            self_distance_from_centroid = cumulative_distance_from_centroid(sampled_arc_points,
+                                                                            centroid)
             mahalanobis_distance_self = mahalanobis_distance_arc(gnode.points[0],
                                                                 gnode.points[-1],
                                                                 inverse_covariance_points) if len(gnode.points) >= 2 else 0
@@ -316,10 +329,22 @@ class GeToFeatureGraph(GeToGraph):
             for i, p in enumerate(centroid_translated_points_self.flatten()):
                 computed_self_attributes.append(p)
                 if len(self.getoelms) == 0:
-                    self_attr_names += add_name('self_centroid_coord_' + str(i), self_attr_names)
+                    self_attr_names += ['self_centroid_coord_' + str(i)]
+            for i, p in enumerate(sampled_arc_points):
+                computed_self_attributes.append(np.sqrt((p[0]-centroid[0][0])**2+(p[1]-centroid[0][1])**2))
+                if len(self.getoelms) == 0:
+                    self_attr_names += ['sampled_points_euclid_dist_centroid_' + str(i)]
+
+            # new
+            for i, p in enumerate(sampled_arc_points.flatten()):
+                computed_self_attributes.append(p)
+                if len(self.getoelms) == 0:
+                    self_attr_names += ['sampled_points_' + str(i)]
+
             '''computed_self_attributes += list(end_to_end_hyperbolic_grad.flatten())
             computed_self_attributes += list(p1_centroid_hyperbolic_grad.flatten())
             computed_self_attributes += list(p2_centroid_hyperbolic_grad.flatten())'''
+
             computed_self_attributes += list(end_to_end_hyperbolic_dist.flatten())
             computed_self_attributes += list(p1_centroid_hyperbolic_dist.flatten())
             computed_self_attributes += list(p2_centroid_hyperbolic_dist.flatten())
@@ -332,174 +357,245 @@ class GeToFeatureGraph(GeToGraph):
                 self_attr_names += ['hyperbolic-grad_p2'+str(i) for i in
                                     range(len(list(p2_centroid_hyperbolic_grad.flatten())))]'''
                 self_attr_names += ['hyperbolic-dist_e2e'+str(i) for i in
-                                    range(len(list(end_to_end_hyperbolic_dist.flatten())))]
+                                     range(len(list(end_to_end_hyperbolic_dist.flatten())))] #new
                 self_attr_names += ['hyperbolic-dist_p1' + str(i) for i in
-                                    range(len(list(p1_centroid_hyperbolic_dist.flatten())))]
+                                    range(len(list(p1_centroid_hyperbolic_dist.flatten())))] #0
                 self_attr_names += ['hyperbolic-dist_p2' + str(i) for i in
-                                    range(len(list(p2_centroid_hyperbolic_dist.flatten())))]
+                                     range(len(list(p2_centroid_hyperbolic_dist.flatten())))] #0
 
-            for attr_vec in velocity_arc:
-                computed_self_attributes += list(attr_vec.flatten())
+            for i,attr_vec in enumerate(velocity_arc):
+
+                attr_vec = list(attr_vec.flatten())
+                computed_self_attributes += attr_vec
+                if len(self.getoelms) == 0:
+                    pout(["velo length", len(attr_vec)])
+                    self_attr_names += ['velocity_arc_' + str(i)]
+
+
+            # angle between unit vectors
+            x1, y1 = sampled_arc_points[0]
+            x2, y2 = sampled_arc_points[-1]
+            vp = np.array([x2 - x1, y2 - y1])
+            veclength = np.sqrt(vp[0] * vp[0] + vp[1] * vp[1])
+            thetax = np.arccos(vp[0] / (veclength+1e-9))
+
+            # project onto S1
+            vec_scaled = (1.0/(veclength+1e-9)) * vp
+
+            for i, attr_vec in enumerate(vec_scaled):
+                computed_self_attributes.append( attr_vec )
+                if len(self.getoelms) == 0:
+                    self_attr_names.append('vec_scaled_' + '_' + str(i))
+
+            # hyperbolic dist vec
+            vec_centroid_hyperbolic_grad, vec_centroid_hyperbolic_dist = hyperbolic_distance(vp,
+                                                                                           centroid[0])
+            computed_self_attributes += list(vec_centroid_hyperbolic_dist.flatten())
             if len(self.getoelms) == 0:
-                self_attr_names += ['velocity_arc_' + '_' + str(i) for i in
-                                      range(len(velocity_arc))]
+                self_attr_names += ['hyperbolic-dist_vec' + str(i) for i in
+                                    range(len(list(vec_centroid_hyperbolic_dist.flatten())))]
+
+            #print
+            if check > 5:
+                pout(["vp", vp, 'x1', x1, 'y1', y1, 'thetax', thetax, 'veclength', veclength])
+                pout(['hyperbolic dist arc',hyperbolic_distance_arc])
+                check -= 1
 
             computed_self_attributes += [
+                                    cos_sim_centroid_max,
+                                    cos_sim_centroid_min,
                                    hyperbolic_distance_arc,
-                                   node_degree,
+                                   #node_degree,
                                    length_self,
                                    slope_self,
                                    euclidean_sum_self,
                                    euclidean_dist_arc,
                                    self_distance_from_centroid,
                                    manhattan_distance_arc,
-                                   mahalanobis_distance_self]
+                                   manhattan_distance_centroid,
+                                   mahalanobis_distance_self,
+                                   thetax,
+                                   vp[0],
+                                   vp[1],
+                                veclength]
+
             if len(self.getoelms) == 0:
                 self_attr_names += [
-                         'hyperbolic_distance_arc',
-                         'node_degree',
-                         'length_self',
+                    'cos_sim_centroid_max', #0
+                    'cos_sim_centroid_min',
+                         'hyperbolic_distance_self_arc', #0
+                         #'node_degree', #0
+                         'length_self', #0
                          'slope_self',
-                         'euclidean_sum_self',
-                         'euclidean_dist_arc',
-                         'self_distance_from_centroid',
+                         'euclidean_sum_self', #0
+                         'euclidean_dist_arc', # 0
+                         'self_distance_from_centroid', #0
                          'manhattan_distance_arc',
-                         'mahalanobis_distance_self'
+                         'manhattan_distance_centroid',
+                         'mahalanobis_distance_self',
+                    'thetax',
+                    'vec_x',
+                    'vec_y',
+                    'vec_length'
                          ]
+                pout(["sample of getoelms", computed_self_attributes,"names",self_attr_names])
                 #self.geto_attr_names = self_attr_names
             prod_nbr_attr = []
             sum_nbr_attr = []
             #nbr_attr_names = []
-            if check < 1:
-                dbgprint(len(self_attr_names), 'len self geto attr')
-
-            for adj_edge in gnode.edge_gids:
-                adj_gnode_gids = self.gid_edge_dict[adj_edge].gnode_gids
-                deg = len(gnode.edge_gids)
-                if deg > max_deg:
-                    max_deg = deg
-                first_neigh = 0
-                for adj_gnode_gid in adj_gnode_gids:
-                    if adj_gnode_gid == gnode.gid:
-                        continue
-                    nbr_geto_attr_vec = []
-                    # geto feature vector attributes for learning hidden
-                    # weighted representation
-                    adj_gnode_nx_id = self.node_gid_to_graph_idx[adj_gnode_gid]
-                    seen = (gnode_nx_idx,adj_gnode_nx_id) in self.lin_adj_idx_to_getoelm_idx.keys() or (adj_gnode_nx_id, gnode_nx_idx) in self.lin_adj_idx_to_getoelm_idx.keys()
-                    if seen:
-                        continue
-                    if adj_gnode_nx_id == gnode_nx_idx:
-                        continue
-                    adj_gnode = self.gid_gnode_dict[adj_gnode_gid]
-
-                    nbr_translated_vec = translate_points_by_centroid([adj_gnode],centroid)
-
-                    cos_sim_numerator = linalg.norm(node_translated_vec,axis=0) @ linalg.norm(nbr_translated_vec,axis=0)
-                    cos_sim_denominator = linalg.norm(node_translated_vec)*linalg.norm(nbr_translated_vec)
-                    cos_sim = cos_sim_numerator/cos_sim_denominator if cos_sim_denominator != 0 else 0.0
-
-                    end_to_adj_hyperbolic_grad, end_to_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
-                                                                                                 adj_gnode.points[-1])
-                    p1_adj_hyperbolic_grad, p1_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[-1],
-                                                                                         adj_gnode.points[-1])
-                    p3_adj_hyperbolic_grad, p3_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
-                                                                                         adj_gnode.points[-1])
-
-
-                    def twod_dot(x, y):
-                        dot = 0
-                        for i,j in zip(x,y):
-                            dot += np.dot(i,j)
-                        return dot
-
-                    dot_vecs = twod_dot(np.array(gnode.points), np.array(adj_gnode.points))
-                    #denom_prod_norm = linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points).T)
-                    inv_cos = np.clip(cos_sim_numerator/cos_sim_denominator,-1,1) if cos_sim_denominator != 0  else 0.0
-                    angle_adj = m.degrees(np.arccos(inv_cos))
-                    angle_adj = 90 if np.isnan(angle_adj) else angle_adj
-
-                    triangle_area = 0.5 * linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points)) * np.sin((angle_adj*np.pi)/180.)
-                    triangle_area2 = 0.5 * linalg.norm(np.array(centroid_translated_points_self) @ np.array(nbr_translated_vec).T)
-
-
-                    euclidean_dist_btwn_arcs_adj1_self1 = end_to_end_euclid([gnode.points[-1],
-                                                                             adj_gnode.points[-1]])
-                    euclidean_dist_btwn_arcs_adj1_self0 = end_to_end_euclid([gnode.points[0],
-                                                                             adj_gnode.points[-1]])
-                    euclidean_dist_btwn_arcs_adj0_self1 = end_to_end_euclid([gnode.points[-1],
-                                                                             adj_gnode.points[0]])
-
-                    mahalanobis_distance_adj = mahalanobis_distance_arc(adj_gnode.points[0],
-                                                                       adj_gnode.points[-1],
-                                                                       inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
-                    mahalanobis_distance_adj = mahalanobis_distance_adj #- mahalanobis_distance_self
-                    mahalanobis_distance_adj1_self0 = mahalanobis_distance_arc(gnode.points[0],
-                                                                         adj_gnode.points[-1],
-                                                                         inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
-                    mahalanobis_distance_adj1_self1 = mahalanobis_distance_arc(gnode.points[-1],
-                                                                         adj_gnode.points[-1],
-                                                                         inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
-                    # #mahalanobis_distance_adj0_self0 = mahalanobis_distance_arc(gnode.points[0],
-                    # #                                                           adj_gnode.points[0],
-                    # #                                                           inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
-                    mahalanobis_distance_adj0_self1 = mahalanobis_distance_arc(gnode.points[-1],
-                                                                                adj_gnode.points[0],
-                                                                                inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
 
 
 
 
-                    computed_nbr_attributes = []
-                    #nbr_attr_names = []
-                    attr_vecs = [#end_to_adj_hyperbolic_grad,p1_adj_hyperbolic_grad,
-                                 #p3_adj_hyperbolic_grad,
-                                 end_to_adj_hyperbolic_dist,p1_adj_hyperbolic_dist,
-                                 p3_adj_hyperbolic_dist]
-                    attr_vec_names = [#'end_to_adj_hyperbolic_grad','p1_adj_hyperbolic_grad',
-                                 #'p3_adj_hyperbolic_grad',
-                                 'end_to_adj_hyperbolic_dist','p1_adj_hyperbolic_dist',
-                                 'p3_adj_hyperbolic_dist']
-                    for attr_vec_name, attr_vec in zip(attr_vec_names, attr_vecs):
-                        computed_nbr_attributes += list(attr_vec.flatten())
-                        if len(self.getoelms) == 0 and first_neigh==0 :
-                            nbr_attr_names += [attr_vec_name+'_' + str(i) for i in
-                                               range(len(list(attr_vec.flatten())))]
 
-                    computed_nbr_attributes += [dot_vecs, cos_sim, cos_sim_numerator, cos_sim_denominator,
-                                           triangle_area,
-                                           triangle_area2,
-                                           angle_adj,
-                                           euclidean_dist_btwn_arcs_adj1_self1,
-                                           euclidean_dist_btwn_arcs_adj1_self0,
-                                           euclidean_dist_btwn_arcs_adj0_self1,
-                                           mahalanobis_distance_adj1_self0,
-                                           mahalanobis_distance_adj1_self1,
-                                           mahalanobis_distance_adj0_self1]
-                    if len(self.getoelms) == 0 and first_neigh == 0:
-                        nbr_attr_names += ['dot_vecs', 'cos_sim','cos_sim_numerator','cos_sim_denominator',
-                             'triangle_area',
-                                 'triangle_area2',
-                                 'angle_adj',
-                                           'euclidean_dist_btwn_arcs_adj1_self1',
-                                 'euclidean_dist_btwn_arcs_adj1_self0',
-                                           'euclidean_dist_btwn_arcs_adj0_self1',
-                                           'mahalanobis_distance_adj1_self0',
-                                 'mahalanobis_distance_adj1_self1',
-                                           'mahalanobis_distance_adj0_self1']
-                        #self.geto_attr_names += nbr_attr_names
-                    first_neigh += 1
+            #
+            #  Adjacency features
+            #
+            use_adj_edges = False
+            if use_adj_edges:
 
-                    if check < 1:
-                        print(len(nbr_attr_names), 'len nbr geto attr names')
-                        print(deg, 'deg')
-                        check+=1
-                    prod_nbr_attr = []
-                    sum_nbr_attr += computed_nbr_attributes
+                gedge_list = list(gnode.edge_gids)
+                gedge_id = gedge_list[0]
+                adj_gnode_gids = self.gid_edge_dict[gedge_id].gnode_gids
+                adj_gnode_gid = adj_gnode_gids[0] if adj_gnode_gids[0] != gnode.gid else adj_gnode_gids[1]
+                if True:#for adj_edge in gnode.edge_gids:
+                    #adj_gnode_gids = self.gid_edge_dict[adj_edge].gnode_gids
+                    #deg = len(gnode.edge_gids)
+                    #if deg > max_deg:
+                    #    max_deg = deg
+                    #first_neigh = 0
+
+                    if True:#for adj_gnode_gid in adj_gnode_gids:
+                        #if adj_gnode_gid == gnode.gid:
+                        #    continue
+
+                        nbr_geto_attr_vec = []
+
+                        '''# geto feature vector attributes for learning hidden
+                        # weighted representation
+                        adj_gnode_nx_id = self.node_gid_to_graph_idx[adj_gnode_gid]
+                        seen = (gnode_nx_idx,adj_gnode_nx_id) in self.lin_adj_idx_to_getoelm_idx.keys() or (adj_gnode_nx_id, gnode_nx_idx) in self.lin_adj_idx_to_getoelm_idx.keys()
+                        if seen:
+                            continue
+                        if adj_gnode_nx_id == gnode_nx_idx:
+                            continue'''
+                        adj_gnode = self.gid_gnode_dict[adj_gnode_gid]
+                        sampled_nbr_points = np.array(get_points_from_vertices([adj_gnode], sampled=True))
+
+
+
+                        nbr_translated_vec = translate_points_by_centroid([adj_gnode],centroid)
+
+                        #cos_sim_numerator = linalg.norm(node_translated_vec,axis=0) @ linalg.norm(nbr_translated_vec,axis=0)
+                        #cos_sim_denominator = linalg.norm(node_translated_vec)*linalg.norm(nbr_translated_vec)
+                        #cos_sim = cos_sim_numerator/cos_sim_denominator if cos_sim_denominator != 0 else 0.0
+
+                        end_to_adj_hyperbolic_grad, end_to_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
+                                                                                                     adj_gnode.points[-1])
+                        p1_adj_hyperbolic_grad, p1_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[-1],
+                                                                                             adj_gnode.points[-1])
+                        p3_adj_hyperbolic_grad, p3_adj_hyperbolic_dist = hyperbolic_distance(gnode.points[0],
+                                                                                             adj_gnode.points[-1])
+
+
+                        def twod_dot(x, y):
+                            dot = 0
+                            for i,j in zip(x,y):
+                                dot += np.dot(i,j)
+                            return dot
+
+                        dot_vecs = twod_dot(np.array(gnode.points), np.array(adj_gnode.points))
+                        #denom_prod_norm = linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points).T)
+                        inv_cos = np.clip(cos_sim_numerator/cos_sim_denominator,-1,1) if cos_sim_denominator != 0  else 0.0
+                        angle_adj = m.degrees(np.arccos(inv_cos))
+                        angle_adj = 90 if np.isnan(angle_adj) else angle_adj
+
+                        triangle_area = 0.5 * linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points)) * np.sin((angle_adj*np.pi)/180.)
+                        triangle_area2 = 0.5 * linalg.norm(np.array(centroid_translated_points_self) @ np.array(nbr_translated_vec).T)
+
+
+                        euclidean_dist_btwn_arcs_adj1_self1 = end_to_end_euclid([gnode.points[-1],
+                                                                                 adj_gnode.points[-1]])
+                        euclidean_dist_btwn_arcs_adj1_self0 = end_to_end_euclid([gnode.points[0],
+                                                                                 adj_gnode.points[-1]])
+                        euclidean_dist_btwn_arcs_adj0_self1 = end_to_end_euclid([gnode.points[-1],
+                                                                                 adj_gnode.points[0]])
+
+                        mahalanobis_distance_adj = mahalanobis_distance_arc(adj_gnode.points[0],
+                                                                           adj_gnode.points[-1],
+                                                                           inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                        mahalanobis_distance_adj = mahalanobis_distance_adj #- mahalanobis_distance_self
+                        mahalanobis_distance_adj1_self0 = mahalanobis_distance_arc(gnode.points[0],
+                                                                             adj_gnode.points[-1],
+                                                                             inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                        mahalanobis_distance_adj1_self1 = mahalanobis_distance_arc(gnode.points[-1],
+                                                                             adj_gnode.points[-1],
+                                                                             inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
+                        # #mahalanobis_distance_adj0_self0 = mahalanobis_distance_arc(gnode.points[0],
+                        # #                                                           adj_gnode.points[0],
+                        # #                                                           inverse_covariance_points) if len(adj_gnode.points) >= 2 else 0
+                        mahalanobis_distance_adj0_self1 = mahalanobis_distance_arc(gnode.points[-1],
+                                                                                    adj_gnode.points[0],
+                                                                                    inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
+
+
+
+
+                        computed_nbr_attributes = []
+                        #nbr_attr_names = []
+                        attr_vecs = [#end_to_adj_hyperbolic_grad,p1_adj_hyperbolic_grad,
+                                     #p3_adj_hyperbolic_grad,
+                                     end_to_adj_hyperbolic_dist,p1_adj_hyperbolic_dist,
+                                     p3_adj_hyperbolic_dist]
+                        attr_vec_names = [#'end_to_adj_hyperbolic_grad','p1_adj_hyperbolic_grad',
+                                     #'p3_adj_hyperbolic_grad',
+                                     'end_to_adj_hyperbolic_dist','p1_adj_hyperbolic_dist',
+                                     'p3_adj_hyperbolic_dist']
+                        for attr_vec_name, attr_vec in zip(attr_vec_names, attr_vecs):
+                            computed_nbr_attributes += list(attr_vec.flatten())
+                            if len(self.getoelms) == 0:# and first_neigh==0 :
+                                nbr_attr_names += [attr_vec_name+'_' + str(i) for i in
+                                                   range(len(list(attr_vec.flatten())))]
+
+                        computed_nbr_attributes += [dot_vecs, #fi = 0
+                                                    #cos_sim, #fi = 0
+                                                    #cos_sim_numerator, #fi = 0
+                                                    #cos_sim_denominator, #fi = 0
+                                               triangle_area,#fi = 0
+                                               triangle_area2, #fi = 0
+                                               angle_adj, #fi = 0
+                                               euclidean_dist_btwn_arcs_adj1_self1,
+                                               euclidean_dist_btwn_arcs_adj1_self0,#fi = 0
+                                               euclidean_dist_btwn_arcs_adj0_self1,
+                                               mahalanobis_distance_adj1_self0, #fi = 0
+                                               mahalanobis_distance_adj1_self1, #fi = 0
+                                               mahalanobis_distance_adj0_self1]
+                        if len(self.getoelms) == 0:# and first_neigh == 0:
+                            nbr_attr_names += ['dot_vecs',
+                                               #'cos_sim',
+                                               #'cos_sim_numerator',
+                                               #'cos_sim_denominator',
+                                 'triangle_area',
+                                     'triangle_area2',
+                                     'angle_adj',
+                                               'euclidean_dist_btwn_arcs_adj1_self1',
+                                     'euclidean_dist_btwn_arcs_adj1_self0',
+                                               'euclidean_dist_btwn_arcs_adj0_self1',
+                                               'mahalanobis_distance_adj1_self0',
+                                     'mahalanobis_distance_adj1_self1',
+                                               'mahalanobis_distance_adj0_self1']
+                            #self.geto_attr_names += nbr_attr_names
+                        #first_neigh += 1
+
+
+                        prod_nbr_attr = []
+                        sum_nbr_attr += computed_nbr_attributes
+
+                    break
 
 
             nbr_edge_attributes = prod_nbr_attr + sum_nbr_attr
-            geto_attr_vec = computed_self_attributes + nbr_edge_attributes
+            geto_attr_vec = computed_self_attributes# + nbr_edge_attributes
             #nbr_attributes =  nbr_attributes.flatten()
 
 
@@ -510,9 +606,7 @@ class GeToFeatureGraph(GeToGraph):
 
             #geto_attr_vec = list(-1 * np.log(geto_attr_vec))
 
-            if check < 3:
-                print(geto_attr_vec)
-                check += 1
+
             self.getoelms.append(geto_attr_vec)
             self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx] = lin_getoelm_idx
             lin_getoelm_idx += 1
@@ -524,8 +618,6 @@ class GeToFeatureGraph(GeToGraph):
         #for i in range(2*(max_deg)):
         #    self.geto_attr_names +=  nbr_attr_names
 
-        dbgprint(len(self.geto_attr_names), "len_geto_attr_names")
-        dbgprint(max_deg,'max degree')
         #
         # padding and scaling of features to be more uniform due to large outliers
         #
@@ -540,9 +632,7 @@ class GeToFeatureGraph(GeToGraph):
         max_feat_vec_length = np.max(variable_feat_lengths_only)
         getoelms = []
 
-        scaler = QuantileTransformer(n_quantiles=1, output_distribution='normal')
 
-        #scaler = RobustScaler(with_scaling=True, with_centering=True,unit_variance=False)
         '''geto_copy= self.getoelms.copy()
         self.getoelms = np.array(sum(self.getoelms,[])).astype(dtype=np.float32)
         getoelms_scaled = scaler.fit_transform(self.getoelms.reshape(-1, 1))
@@ -553,22 +643,33 @@ class GeToFeatureGraph(GeToGraph):
                            for
                            idx in range(len(variable_feat_lengths))]'''
 
-        for getoelm in self.getoelms:
-            pad_size =  max_feat_vec_length - len(getoelm)
-            getoelm = scaler.fit_transform(np.array(getoelm).reshape(-1, 1))
-            getoelm = list(getoelm.flatten())
-            for i,z in enumerate(range(pad_size)):
-                getoelm.append(1.0)
+        pad_for_neighbors = False
+        scale_feat_distribution = False
+        # scale for wide range / outlier features
+        scaler = QuantileTransformer(n_quantiles=len(self.getoelms[0]), output_distribution='normal')
+        # scaler = RobustScaler(with_scaling=True, with_centering=True,unit_variance=False)
+        if scale_feat_distribution:
+            for getoelm in self.getoelms:
+                pad_size =  max_feat_vec_length - len(getoelm)
+                getoelm = scaler.fit_transform(np.array(getoelm).reshape(-1, 1))
+                getoelm = list(np.array(getoelm).flatten())
 
-            getoelms.append(getoelm)
+                if pad_for_neighbors:
+                    for i,z in enumerate(range(pad_size)):
+                        print("    *")
+                        print("    * : ADDING PADDING")
+                        print("    *")
+                        getoelm.append(1.0)
 
-        pad_size_names = max_feat_vec_length - len(self.geto_attr_names)
-        for i, z in enumerate(range(pad_size_names)):
-            self.geto_attr_names.append(nbr_attr_names[i % len(nbr_attr_names)])
+                getoelms.append(getoelm)
+
+            if pad_for_neighbors:
+                pad_size_names = max_feat_vec_length - len(self.geto_attr_names)
+                for i, z in enumerate(range(pad_size_names)):
+                    self.geto_attr_names.append(nbr_attr_names[i % len(nbr_attr_names)])
+            self.getoelms = getoelms
 
 
-
-        self.getoelms = getoelms
         self.getoelms = np.array(self.getoelms).astype(dtype=np.float32)
 
 
@@ -613,7 +714,9 @@ class GeToFeatureGraph(GeToGraph):
         feature_order = 0
 
         check = 0
-
+        # skip powers
+        skip_exp = [20, 17, 14, 19, 11, 13, 16]
+        skip_func = ['var']
         for gnode in self.gid_gnode_dict.values():
 
             gnode_feature_row = []
@@ -632,30 +735,16 @@ class GeToFeatureGraph(GeToGraph):
                         print(image_name)
                         print(function_name)
                         check += 1
-                    attribute = foo(gnode_pixels)
-                    gnode_feature_row.append(attribute)
-                    if len(gnode_features) == 0:
-                        feature_names.append(image_name + "_" + function_name)
-                        self.fname_to_featidx[image_name + "_" + function_name] = feature_order
-                        feature_order += 1
+                    if image_name not in skip_exp and function_name not in skip_func:
+                        attribute = foo(gnode_pixels)
+                        gnode_feature_row.append(attribute)
+                        if len(gnode_features) == 0:
+                            feature_names.append(image_name + "_" + function_name)
+                            self.fname_to_featidx[image_name + "_" + function_name] = feature_order
+                            feature_order += 1
 
 
-            #deg = gnode.degree
-            #gnode_feature_row.append(deg)
-            #if len(gnode_features) == 0:
-            #    feature_names.append("degree")
-            #    self.fname_to_featidx["degree"] = feature_order
-            #    feature_order += 1
 
-
-                #dbgprint(len(gnode_feature_row), "num features after geto")
-
-                #dbgprint(len(feature_names), 'len names b4')
-
-                #if len(gnode_features) == 0:
-                #    feature_names += self.geto_attr_names
-
-                #dbgprint(len(feature_names), 'len names')
             if include_geto:
                 gnode_feature_row = np.array(gnode_feature_row)
                 gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
@@ -741,7 +830,11 @@ class GeToFeatureGraph(GeToGraph):
                                 multichannel=False)
         image_c = copy.deepcopy(image_og)
         features = features_func(image_c)
+        skip_exp = ['feat-func_20', 'feat-func_17', 'feat-func_14', 'feat-func_19',
+                    'feat-func_11', 'feat-func_13', 'feat-func_16']
         for i in range(features.shape[2]):
+            # skip powers which have 0 feature importance (20, 17, 14, 19, 11, 13, 16)
+            # if i not in skip_exp:
             self.images['feat-func_'+str(i)] = features[:,:,i]
 
         image_c = copy.deepcopy(image_og)
@@ -789,7 +882,7 @@ class GeToFeatureGraph(GeToGraph):
                 plt.imsave(im_name, image,cmap=mplt.cm.Greys_r)#astype('uint8'),
                 #           cmap=mplt.cm.Greys_r)
 
-
+                plt.close()
 
                 # image = np.array(image).astype(np.uint8)
                 #

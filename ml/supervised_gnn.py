@@ -33,7 +33,7 @@ from .models import SAGEInfo
 from .minibatch import NodeMinibatchIterator
 from .neigh_samplers import UniformNeighborSampler, GeToInformedNeighborSampler
 from .utils import load_data
-
+from ml.utils import pout
 
 
 
@@ -166,9 +166,9 @@ class gnn:
 
             if not learning_rate:
                 learning_rate = 0.001
-            self.learning_rate = learning_rate
+            self.learning_rate = .003#learning_rate
 
-            self.epochs = epochs
+            self.epochs = 10#epochs
 
             self.depth = depth
 
@@ -241,7 +241,7 @@ class gnn:
             self.flags.DEFINE_integer('validate_batch_size', batch_size//4, "how many nodes per validation sample.")
             flags.DEFINE_integer('gpu', gpu, "which gpu to use.")
             self.flags.DEFINE_string('env', 'multivax', 'environment to manage data paths and gpu use')
-            self.flags.DEFINE_integer('print_every', 50, "How often to print training info.")
+            self.flags.DEFINE_integer('print_every', 300, "How often to print training info.")
             self.flags.DEFINE_integer('max_total_steps', 10**10, "Maximum total number of iterations")
             self.flags.DEFINE_string('model_name', self.model_name, 'name of the embedded graph model file is created.')
             self.flags.DEFINE_integer('depth', self.depth,
@@ -472,7 +472,7 @@ class gnn:
     def _train(self, train_data, test_data=None):
 
 
-        start_time = time.time()
+
 
         G = train_data[0]
         features = train_data[1]
@@ -489,6 +489,9 @@ class gnn:
 
         FLAGS = self.FLAGS
 
+        pout(["    * learning rate", self.FLAGS.learning_rate,
+              "epochs",FLAGS.epochs,
+              "weight decay",FLAGS.weight_decay])
         context_pairs = train_data[3] if FLAGS.random_context else None
         placeholders = self.construct_placeholders(num_classes)
         self.placeholders = placeholders
@@ -943,11 +946,13 @@ class gnn:
         if self.use_geto:
             train_geto_adj_info = tf.assign(geto_adj_info, minibatch.geto_adj)
             val_geto_adj_info = tf.assign(geto_adj_info, minibatch.test_geto_adj, name='geto_adj_assign')
+
+        start_time = time.time()
         for epoch in range(FLAGS.epochs):
             minibatch.shuffle()
 
             iter = 0
-            print('Epoch: %04d' % (epoch + 1))
+
             epoch_val_costs.append(0)
             while not minibatch.end():
                 # Construct feed dictionary
@@ -989,6 +994,7 @@ class gnn:
                 avg_time = (avg_time * total_steps + time.time() - t) / (total_steps + 1)
 
                 if total_steps % FLAGS.print_every == 0:
+                    print('Epoch: %04d' % (epoch + 1))
                     train_f1_mic, train_f1_mac = self.calc_f1(labels, outs[-1])
                     print("Iter:", '%04d' % iter,
                           "train_loss=", "{:.5f}".format(train_cost),

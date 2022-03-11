@@ -342,6 +342,23 @@ def get_partition_feature_label_pairs(node_gid_to_partition, node_gid_to_feature
 
     return partition_label_dict, partition_feature_dict
 
+def pout(show=None):
+    if isinstance(show, list):
+        print("    *")
+        for elm in show:
+            if isinstance(elm, str):
+                print("    * ",elm)
+            else:
+                print("    * ", str(elm))
+        print("    *")
+    else:
+        print("    *")
+        if isinstance(show, str):
+            print("    * ", show)
+        else:
+            print("    * ", str(show))
+        print("    *")
+
 # Dataset class for the retina dataset
 # each item of the dataset is a tuple with three items:
 # - the first element is the input image to be segmented

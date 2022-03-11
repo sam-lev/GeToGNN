@@ -253,6 +253,8 @@ class GeToGNN(MLGraph):
                                           env=self.params['env'],
                                           msc_collection=None,
                                           model_path=None)#self.params['model_path'])
+            print("    * : " )
+            print("    * : depth", self.params['depth'])
             self.gnn.train(G=G,
                            learning_rate=self.params['learning_rate'],
                            load_walks=self.params['load_walks'],

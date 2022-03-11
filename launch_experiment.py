@@ -14,17 +14,17 @@ from proc_manager import experiment_manager
 #
 # input
 #
-name = ['retinal',                      # 0
+name = ['retinal',                        # 0
              'neuron1',                 # 1
-             'neuron2',                 # 2
+             'neuron2',                   # 2
              'mat2_lines',              # 3
              'berghia',                 # 4
              'faults_exmouth',          # 5
              'transform_tests',         # 6
              'map_border',              # 7
-        'foam_cell',                    # 8
-        'diadem_sub1',                  # 9
-        'berghia_membrane']             # 10
+        'foam_cell',                      # 8
+        'diadem_sub1',                    # 9
+        'berghia_membrane']               # 10
 #                                                         590    375         125     125
 box_list = [[[375,439,590,654 ], [125,189,125,189]]   ,# [[500,680,300,450 ], [ 0,250, 50,200,]]                                  # 0
              'neuron1',                 # 1
@@ -55,27 +55,56 @@ dim_image = [[700,605],                      # 0
         [891,896]]                           # 10
 
 
-batch         = 0
-plot_only     = 0
-overide_plots = 0
-region_thresh = 0
-break_training_thresh = 60
+batch         =         0
+plot_only     =         0
+overide_plots =         0
+region_thresh =         30#0
+break_training_thresh = 50#60 #60 45,57
+load_features =         0
 clear_runs = True if not plot_only else False
 
-experiments = [ 'MLP_MSC', 'MLP_Pixel'] #  # ["Random_Forest_Pixel", "Random_Forest_MSC",'GNN'] #
-models =      [ 'mlp', 'mlp' ] # ['random_forest', 'random_forest', 'getognn']      #
+experiments = [ #      "UNet",
+                #      "Random_Forest_Pixel",
+                #      "Random_Forest_MSC",
+                #      'Random_Forest_MSC_Geom',
+                #      'GNN',
+                      'GNN_Geom'
+                #      'MLP_MSC',
+                #      'MLP_Pixel'
+                ]
+models      = [ #    'unet',
+                #    'random_forest',
+                #    'random_forest',        #     retinal   neuron   foam   diadem   berghia
+                #    'getognn',              #        0         2       8       9       10
+                    'getognn',
+                #    'mlp',
+                #    'mlp'
+                ]
+datasets    = [0]# 10 , 9, 8, 2, 0]
+
+plot_experiments = [  "UNet",
+                      "Random_Forest_Pixel",
+                      "Random_Forest_MSC",
+                      #'Random_Forest_MSC_Geom',
+                      'GNN',
+                      'GNN_Geom',
+                      'MLP_MSC',
+                      'MLP_Pixel'
+                ]
 
 def unit_run():
     exp_runner = None
-    for dataset_idx in [9,2,8,10,0]:
+    for exp, model in zip(experiments,
+                          models):
         current_exp = False
-        for exp,model in zip(experiments,
-                              models):
+        #load_features = True if 'Geom' not in exp else False
+        for dataset_idx in datasets:
             exp_runner = experiment_manager.runner(experiment_name=exp,
                                                    sample_idx=dataset_idx,
                                                    window_file_base=None,#window_file,
                                                    parameter_file_number=1,
                                                    multi_run=True,
+                                                   load_features=load_features,
                                                    percent_train_thresh=region_thresh,
                                                    break_training_size=break_training_thresh,
                                                    clear_runs= not plot_only)
@@ -96,11 +125,13 @@ def unit_run():
 
         plot_models = current_exp == experiments[-1] if not overide_plots else 0
         if plot_models:
-            exp_runner.multi_model_metrics( [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN', 'MLP_MSC','MLP_Pixel'],
-                                           [ "UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC','MLP_Pixel'], None,
+            exp_runner.multi_model_metrics(plot_experiments,
+                                           plot_experiments,
+                                            None,
                                             metric='time')
-            exp_runner.multi_model_metrics(["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC','MLP_Pixel'],
-                                           ["UNet", "Random_Forest_Pixel", "Random_Forest_MSC",'GNN','MLP_MSC','MLP_Pixel'], None)
+            exp_runner.multi_model_metrics(plot_experiments,
+                                           plot_experiments,
+                                           None)
 
 
 

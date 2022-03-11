@@ -13,6 +13,7 @@ from attributes import Attributes
 from ml.features import (
     get_centroid,
     translate_points_by_centroid,
+    get_points_from_vertices,
 )
 
 class GeToElement:
@@ -123,7 +124,9 @@ class GeToGraph(Attributes):
         self.polyline_point_training_size = 0
 
 
-
+        #
+        # read pre-computed MSC
+        #
         if geomsc_fname_base is not None:
             self.read_from_geo_file(fname_base=geomsc_fname_base)
         if label_file is not None:
@@ -272,6 +275,70 @@ class GeToGraph(Attributes):
     def get_closest_selected_gnode(self, point):
         distance, index = self.select_kdtree.query(point)
         return self.select_key_map[index]
+
+    def draw_priors_graph(self, G=None):
+        plt.close()
+        if G is None:
+             G = self.G
+        positions = []
+
+        subgraph = []
+        for gid in self.gid_gnode_dict.keys():
+            gnode = self.gid_gnode_dict[gid]
+            label = self.node_gid_to_label[gid]
+            line = get_points_from_vertices([gnode])
+            # else is
+            for point in line:
+                ly = int(point[0])
+                lx = int(point[1])
+                if 0 < lx < 550 and 0 < ly < 550:
+                    node = self.node_gid_to_graph_idx[gid]
+                    subgraph.append(node)
+        H = G.subgraph(subgraph)
+        nx_idx_to_gid = self.graph_idx_to_gid
+        for nx_node_idx,node in enumerate(G.nodes_iter()):
+            #for node in self.gid_edge_dict.keys():
+            gid = nx_idx_to_gid[nx_node_idx]
+            gnode = self.gid_gnode_dict[gid]#[0]]
+
+
+            line = gnode.points
+
+            point = line[0]
+            ly = int(point[0])
+            lx = int(point[1])
+            node = self.node_gid_to_graph_idx[node]
+            G.node[node]['pos'] = (lx, ly)
+            positions.append([lx,ly])
+        L = nx.line_graph(H)
+        nnodes = L.number_of_nodes()
+        print("     * : numbner line graph nodes",nnodes)
+        pos = nx.spring_layout(L,weight=.000001)
+        #selected1 = [i for i in range(1000, 1200)] + [i for i in range(1800, 1900)]
+        #selected2 = [i for i in range(1900, 2100)] + [i for i in range(1200, 1300)]
+
+        nearest_hundred = 784# 0.2*len(self.gid_edge_dict.keys()) - (0.2*len(self.gid_edge_dict.keys())) % 100
+        blobs = np.arange(nearest_hundred).reshape((28,28))
+        #    (int((0.2*len(self.gid_edge_dict.keys()))) // 100, int((0.2*len(self.gid_edge_dict.keys()))) // 100))
+        selected1 = [blobs[i, :] for i in range(0, 28) if i%2==0]#(0.2*len(self.gid_edge_dict.keys())) // 100) if i % 2 == 0]
+        selected2 = [blobs[i, :] for i in range(0, 28) if i%2!=0]#range(0, (0.2*len(self.gid_edge_dict.keys())) // 100) if i % 2 != 0]
+        selected1 = [i for ar in selected1 for i in ar]
+        selected2 = [i for ar in selected2 for i in ar]
+        node_color = [.3 if idx in selected1 else .7 if idx in selected2 else .5 for idx,n in enumerate(L.nodes_iter()) ]
+        nx.draw(L, node_size=60,cmap=plt.get_cmap('Spectral_r'), node_color=node_color, pos=pos)#np.array(positions))
+        plt.savefig(os.path.join(self.pred_session_run_path,'priors_graph_labeled.png'))
+        plt.show()
+        nearest_hundred = 2401#len(self.gid_edge_dict.keys()) - len(self.gid_edge_dict.keys())%100
+        blobs = np.arange(nearest_hundred).reshape(49,49)#(len(self.gid_edge_dict.keys())//100,len(self.gid_edge_dict.keys())//100))
+        selected1 = [blobs[i,:] for i in range(0, 49) if i%2==0]+[blobs[i,:] for i in range(0, 10)]#len(self.gid_edge_dict.keys())//100) if i%2==0]
+        selected2 = [blobs[i,:] for i in range(10, 49)  if i%2!=0]#len(self.gid_edge_dict.keys())//100) if i%2 != 0]
+        selected1 = [i for ar in selected1 for i in ar]
+        selected2 = [i for ar in selected2 for i in ar]
+        node_color = [.3 if idx in selected1  else .7 if idx in selected2 else .7 for idx, n in enumerate(L.nodes_iter())]
+        nx.draw(L, node_size=60, cmap=plt.get_cmap('Spectral_r'), node_color=node_color, pos=pos)  # np.array(positions))
+        plt.show()
+        plt.savefig(os.path.join(self.pred_session_run_path, 'priors_graph_predicted.png'))
+        plt.close()
 
     def draw_segmentation(self, dirpath, ridge=True, valley=True, invert=False):
         X = self.X #if not invert else self.Y

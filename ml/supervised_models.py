@@ -6,6 +6,7 @@ from .aggregators import MeanAggregator, MaxPoolingAggregator, MeanPoolingAggreg
     , SeqAggregator, GCNAggregator, TwoMaxLayerPoolingAggregator, \
     GeToMeanPoolAggregator, GeToMaxPoolAggregator,HiddenGeToMeanPoolAggregator,HiddenGeToMaxPoolAggregator,\
     GeToEdgeAggregator
+from ml.utils import pout
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
@@ -68,7 +69,7 @@ class SupervisedGraphsage(SampleAndAggregate):
         self.hidden_geto_agg = "hidden" in aggregator_type or "edge" in aggregator_type
 
         if hidden_dim_1_agg is not None:
-            print(">>> hidden dim 1 ", hidden_dim_1_agg,)
+            #print(">>> hidden dim 1 ", hidden_dim_1_agg,)
             self.aggregator_cls.hidden_dim_1 = hidden_dim_1_agg
         if hidden_dim_2_agg is not None:
             self.aggregator_cls.hidden_dim_2 = hidden_dim_2_agg
@@ -140,10 +141,12 @@ class SupervisedGraphsage(SampleAndAggregate):
 
         self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
 
+        #pout(["    * supgeto: learning rate",FLAGS.learning_rate])
+
         self.build()#name=name)
 
-        print("aggregator hidden dim:",self.aggregator_cls.hidden_dim_1)
-        print("aggregator hidden dim:", self.aggregator_cls.hidden_dim_2)
+        #print("aggregator hidden dim:",self.aggregator_cls.hidden_dim_1)
+        #print("aggregator hidden dim:", self.aggregator_cls.hidden_dim_2)
 
     def build(self):
 
@@ -248,7 +251,7 @@ class SupervisedGraphsage(SampleAndAggregate):
                     logits=self.node_preds,
                     labels=self.placeholders['labels']))
         else:
-            print("--------------- using weighted loss")
+            #print("--------------- using weighted loss")
             self.loss += tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(
                 logits=self.node_preds,
                 labels=self.placeholders['labels'],
@@ -273,7 +276,7 @@ class SupervisedGraphsage(SampleAndAggregate):
                     logits=self.geto_node_preds,
                     labels=self.placeholders['labels']))
             else:
-                print("--------------- using weighted loss")
+                #print("--------------- using weighted loss")
                 self.geto_loss += tf.reduce_mean(tf.nn.weighted_cross_entropy_with_logits(
                     logits=self.geto_node_preds,
                     labels=self.placeholders['labels'],
