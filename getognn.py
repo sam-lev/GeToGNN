@@ -6,11 +6,13 @@ import json
 from networkx.readwrite import json_graph
 import datetime
 
+from data_ops.utils import compute_features
 from ml import supervised_gnn
 from ml import unsupervised_gnn
 from ml.utils import format_data
 from ml.LinearRegression import LinearRegression
 from ml.utils import random_walk_embedding
+from ml.utils import pout
 from mlgraph import MLGraph
 from getograph import  Attributes
 from ui.arcselector import ArcSelector
@@ -202,7 +204,7 @@ class GeToGNN(MLGraph):
             print("total positive samples: ", positive_sample_count)
 
         if self.params['getofeaturegraph_file']:
-            print("loading")
+            pout(["loading graph"])
             cwd = './'
             walks = self.params['load_walks']
             train_path = os.path.join(cwd, 'data', 'json_graphs', self.params['getofeaturegraph_name'])
@@ -230,6 +232,7 @@ class GeToGNN(MLGraph):
             self.train_time = self.gnn.train_time
             self.ped_time = self.gnn.pred_time
         else:
+
             # format networkx idx to features and labels
             nx_idx_to_feat_idx = {self.node_gid_to_graph_idx[gid]: feat for gid, feat
                                   in self.node_gid_to_feat_idx.items()}
@@ -241,7 +244,7 @@ class GeToGNN(MLGraph):
             G, features, nx_idx_to_feat_idx, _ , nx_idx_to_label_idx, _ , _ \
                 = format_data(dual=self.G.copy(),
                               features=self.features,
-                              node_id=nx_idx_to_feat_idx,
+                              #node_id=nx_idx_to_feat_idx,
                               id_map=nx_idx_to_feat_idx,
                               node_classes=nx_idx_to_label_idx,
                               train_or_test='',
@@ -253,8 +256,7 @@ class GeToGNN(MLGraph):
                                           env=self.params['env'],
                                           msc_collection=None,
                                           model_path=None)#self.params['model_path'])
-            print("    * : " )
-            print("    * : depth", self.params['depth'])
+
             self.gnn.train(G=G,
                            learning_rate=self.params['learning_rate'],
                            load_walks=self.params['load_walks'],
@@ -262,7 +264,7 @@ class GeToGNN(MLGraph):
                            feats=features,
                            id_map=nx_idx_to_feat_idx,#node_gid_to_feat_idx ,
                            class_map=nx_idx_to_label_idx,#node_gid_to_label,
-                           nx_idx_to_getoelm_idx=self.lin_adj_idx_to_getoelm_idx,
+                           nx_idx_to_getoelm_idx=nx_idx_to_getoelm_idx,#self.lin_adj_idx_to_getoelm_idx,
                            geto_elements=self.getoelms,
                            epochs=self.params['epochs'],
                            batch_size=self.params['batch_size'],
@@ -854,7 +856,10 @@ class supervised_getognn:
                  parameter_file_number, format = 'raw', run_num=2, experiment_folder=None,
                  name=None, image=None, label_file=None, msc_file=None, X_BOX=None,Y_BOX=None,regions =None,
                  ground_truth_label_file=None, write_path=None, feature_file=None, boxes = None,
-                 window_file=None, model_name="GeToGNN", BEGIN_LOADING_FEATURES=False):
+                 window_file=None, model_name="GeToGNN",
+                      BEGIN_LOADING_FEATURES=False,COMPUTE_FEATURES=False,
+                      BEGIN_LOADING_GETO_FEATURES=False,COMPUTE_GETO_FEATURES=False,
+                      FEATS_INDEPENDENT = True):
 
 
 
@@ -872,31 +877,39 @@ class supervised_getognn:
                          model_name=model_name,
                           load_feature_graph_name=None,
                           write_json_graph = False,
-                               BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES)
+                               BEGIN_LOADING_FEATURES      = BEGIN_LOADING_FEATURES,
+                               COMPUTE_FEATURES            = COMPUTE_FEATURES,
+                               BEGIN_LOADING_GETO_FEATURES = BEGIN_LOADING_GETO_FEATURES,
+                               COMPUTE_GETO_FEATURES       = COMPUTE_GETO_FEATURES,
+                               FEATS_INDEPENDENT           = FEATS_INDEPENDENT
+                               )
 
         #self.attributes = deepcopy(self.getognn.get_attributes())
-
         if BEGIN_LOADING_FEATURES:
             self.getognn.params['load_features'] = True
             self.getognn.params['write_features'] = False
-            self.getognn.params['load_features'] = True
             self.getognn.params['write_feature_names'] = False
             self.getognn.params['save_filtered_images'] = False
             self.getognn.params['collect_features'] = False
             self.getognn.params['load_preprocessed'] = True
-            self.getognn.params['load_geto_attr'] = True
             self.getognn.params['load_feature_names'] = True
-        else:
+        elif COMPUTE_FEATURES:
             self.getognn.params['load_features'] = False
             self.getognn.params['write_features'] = True
-            self.getognn.params['load_features'] = False
             self.getognn.params['write_feature_names'] = True
             self.getognn.params['save_filtered_images'] = True
             self.getognn.params['collect_features'] = True
             self.getognn.params['load_preprocessed'] = False
-            self.getognn.params['load_geto_attr'] = False
             self.getognn.params['load_feature_names'] = False
+        if BEGIN_LOADING_GETO_FEATURES:
+            self.getognn.params['load_geto_attr'] = True
+            self.getognn.params['load_feature_names'] = True
+        elif COMPUTE_GETO_FEATURES:
+            self.getognn.params['geto_as_feat'] = True
+            self.getognn.params['load_geto_attr'] = False
 
+        self.getognn.params['feats_independent'] = FEATS_INDEPENDENT
+        compute_features(model=self.getognn)
 
         X_BOX = []
         Y_BOX = []
@@ -927,6 +940,7 @@ class supervised_getognn:
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
 
+        '''
         if self.getognn.params['load_geto_attr']:
             if 'geto' in self.getognn.params['aggregator']:
                 self.getognn.load_geto_features()
@@ -962,6 +976,7 @@ class supervised_getognn:
         if self.getognn.params['write_features']:
             if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
                 self.getognn.write_geto_features(self.getognn.session_name)
+        '''
 
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)
@@ -1004,35 +1019,33 @@ class supervised_getognn:
             self.getognn.params['load_walks'] = walk_embedding_file
 
 
-    def compute_features(self):
-        if self.getognn.params['load_geto_attr']:
-            if 'geto' in self.getognn.params['aggregator']:
-                self.getognn.load_geto_features()
-                self.getognn.load_geto_feature_names()
-        else:
-            if 'geto' in self.getognn.params['aggregator']:
-                self.getognn.build_geto_adj_list(influence_type=self.getognn.params['geto_influence_type'])
-                self.getognn.write_geto_features(self.getognn.session_name)
-                self.getognn.write_geto_feature_names()
-
-        # features
-        if not self.getognn.params['load_features']:
-            self.getognn.compile_features(include_geto=self.getognn.params['geto_as_feat'])
-            self.getognn.write_gnode_features(self.getognn.session_name)
-            self.getognn.write_feature_names()
-        else:
-            self.getognn.load_gnode_features()
-            self.getognn.load_feature_names()
-            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
-                self.getognn.load_geto_features()
-                self.getognn.load_geto_feature_names()
-
-        if self.getognn.params['write_features']:
+    def compute_features(self, model=None):
+        # geto feat
+        # if self.getognn.params['load_geto_attr']:
+        #     #if 'geto' in self.getognn.params['aggregator']:
+        #     self.getognn.load_geto_features()
+        #     self.getognn.load_geto_feature_names()
+        # elif self.getognn.params['geto_as_feat'] and not self.getognn.params['load_geto_attr']:
+        #     #if 'geto' in self.getognn.params['aggregator']:
+        #     self.getognn.build_geto_adj_list(influence_type=self.getognn.params['geto_influence_type'])
+        #     self.getognn.write_geto_features(self.getognn.session_name)
+        #     self.getognn.write_geto_feature_names()
+        #
+        # # features
+        # if self.getognn.params['collect_features'] and not self.getognn.params['load_features']:
+        #     self.getognn.compile_features(include_geto=self.getognn.params['geto_as_feat'])
+        #     self.getognn.write_gnode_features(self.getognn.session_name)
+        #     self.getognn.write_feature_names()
+        # elif self.getognn.params['load_features']:
+        #     self.getognn.load_gnode_features()
+        #     self.getognn.load_feature_names()
+        compute_features(model=self.getognn)
+        '''if self.getognn.params['write_features']:
             self.getognn.write_gnode_features(self.getognn.session_name)
 
         if self.getognn.params['write_feature_names']:
             self.getognn.write_feature_names()
-
+        
 
         if self.getognn.params['write_feature_names']:
             if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
@@ -1040,6 +1053,7 @@ class supervised_getognn:
         if self.getognn.params['write_features']:
             if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
                 self.getognn.write_geto_features(self.getognn.session_name)
+        '''
 
     def train(self, getognn=None, run_num=1):
         if getognn is not None:

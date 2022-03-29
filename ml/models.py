@@ -348,6 +348,7 @@ class SampleAndAggregate(GeneralizedModel):
         
         if batch_size is None:
             batch_size = self.batch_size
+        # 0th index is target node, nbrs appended from sampler
         samples = [inputs]
         geto_samples = None if self.geto_adj_info is None else [geto_inputs]
         # size of convolution support at each layer per node
@@ -487,9 +488,9 @@ class SampleAndAggregate(GeneralizedModel):
                 skip = idx+1+(len(hidden)%2)
                 if idx +1 < len(hidden)-1:# and skip%2 != 0:
                     #h_jump = tf.concat([h_jump, hidden[idx + 1]], axis=1)
-                    if self.jump_type == 'maxpool':
+                    if  'maxpool' in self.jump_type:
                         h_next = tf.reduce_max(hidden[idx + 1], axis=1)
-                    elif self.jump_type == 'meanpool':
+                    elif 'meanpool' in self.jump_type:
                         h_next = tf.reduce_mean(hidden[idx + 1], axis=1)
                     else:
                         h_next = hidden[idx + 1]

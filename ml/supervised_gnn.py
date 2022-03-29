@@ -39,7 +39,8 @@ from ml.utils import pout
 
 
 
-
+# for debugging
+#tf.compat.v1.enable_eager_execution()
 
 
 ########
@@ -353,10 +354,10 @@ class gnn:
     def log_dir(self):
         log_dir = self.FLAGS.base_log_dir + "/sup-" + self.FLAGS.model_name
         #log_dir = self.FLAGS.base_log_dir + "/sup-" + self.FLAGS.train_prefix.split("/")[-2]
-        log_dir += "/{model:s}_{model_size:s}_{lr:0.4f}/".format(
-            model=self.FLAGS.model,
-            model_size=self.FLAGS.model_size,
-            lr=self.FLAGS.learning_rate)
+        # log_dir += "/{model:s}_{model_size:s}_{lr:0.4f}/".format(
+        #     model=self.FLAGS.model,
+        #     model_size=self.FLAGS.model_size,
+        #     lr=self.FLAGS.learning_rate)
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
         return log_dir
@@ -495,22 +496,21 @@ class gnn:
         context_pairs = train_data[3] if FLAGS.random_context else None
         placeholders = self.construct_placeholders(num_classes)
         self.placeholders = placeholders
-
-        minibatch = NodeMinibatchIterator(G,
-                                          id_map,
-                                          placeholders,
-                                          class_map,
-                                          num_classes,
+        minibatch = NodeMinibatchIterator(G=G,
+                                          id2idx=id_map,
+                                          placeholders=placeholders,
+                                          label_map=class_map,
+                                          num_classes=num_classes,
                                           nx_idx_to_getoelm_idx=self.nx_idx_to_getoelm_idx,
                                           batch_size=FLAGS.batch_size,
                                           max_degree=FLAGS.max_degree,
                                           context_pairs=context_pairs)
-        self.adj_info_ph = tf.placeholder(tf.int32, shape=minibatch.adj.shape)
+        self.adj_info_ph = tf.compat.v1.placeholder(tf.int32, shape=minibatch.adj.shape)
         adj_info_ph = self.adj_info_ph
         adj_info = tf.Variable(initial_value=minibatch.adj, shape=minibatch.adj.shape
                                , trainable=False, name="adj_info", dtype=tf.int32)
 
-        geto_adj_info_ph = tf.placeholder(tf.int32, shape=minibatch.geto_adj.shape) if self.use_geto else None
+        geto_adj_info_ph = tf.compat.v1.placeholder(tf.int32, shape=minibatch.geto_adj.shape) if self.use_geto else None
         geto_adj_info = tf.Variable(geto_adj_info_ph, trainable=False, name="geto_adj_info") if self.use_geto  else None
 
         print(" ... Using aggregator: ", FLAGS.model)
@@ -921,9 +921,12 @@ class gnn:
         config.allow_soft_placement = True
 
         # Initialize session
-        sess = tf.Session(config=config)
+        #sess = tf.Session(config=config)
+
+        sess = tf.InteractiveSession(config=config)
+
         merged = tf.compat.v1.summary.merge_all()
-        #summary_writer = tf.summary.FileWriter(self.log_dir(), sess.graph)
+        summary_writer = tf.compat.v1.summary.FileWriter(self.log_dir(), sess.graph)
 
         # Init variables
         if self.use_geto:
@@ -987,8 +990,9 @@ class gnn:
 
                     #saver.save(sess, model_checkpoint)#, global_step=total_steps)
 
-                #if total_steps % FLAGS.print_every == 0:
-                #    summary_writer.add_summary(outs[0], total_steps)
+                if total_steps % FLAGS.print_every == 0:
+                    summary_writer.add_summary(outs[0], total_steps)
+                    #dist_embed = tf.get_default_graph().get_tensor_by_name("dist_embedd:0")
 
                 # Print results
                 avg_time = (avg_time * total_steps + time.time() - t) / (total_steps + 1)

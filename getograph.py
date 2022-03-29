@@ -64,10 +64,15 @@ class GeTognode(GeToElement):
         self.key = (self.gid,) + tuple(self.edge_gids) + (len(self.points),)
 
     def add_edge(self, edge):
-        edge_gids = set(self.edge_gids)
-        edge_gids.add(edge)
-        self.edge_gids = list(edge_gids)
+        #edge_gids = set(self.edge_gids)
+        #edge_gids.add(edge)
+        if edge not in self.edge_gids:
+            self.edge_gids.append(edge)# = list(edge_gids)
         self.degree = len(self.edge_gids)
+
+    def copy(self):
+        getoelm = GeToElement(dim=1, gid = self.gid, points=self.points)
+        return GeTognode(getoelm)
 
 
 class GeToEdge(GeToElement):
@@ -157,15 +162,18 @@ class GeToGraph(Attributes):
         node_file = open(nodesname, "r")
         node_lines = node_file.readlines()
         node_file.close()
-
+        self.edge_count = 0
+        self.vertex_count = 0
         #getoelm_idx = 0
         for l in geo_lines:
             elm = GeToElement()
             elm.read_line(l)
             if elm.dim == 0:
+                #self.edge_count  +=  1
                 edge = GeToEdge(getoelm=elm)
                 self.gid_edge_dict[edge.gid] = edge
             if elm.dim == 1:
+                self.vertex_count += 1
                 gnode = GeTognode(getoelm=elm)
                 self.gid_gnode_dict[gnode.gid] = gnode
                 #self.gid_geto_elm_dict[elm.gid] = elm
@@ -174,6 +182,7 @@ class GeToGraph(Attributes):
                 #getoelm_idx += 1
 
         for l in edge_lines:
+            self.edge_count += 1
             tmplist = l.split(' ')
             gid_v1 = int(tmplist[1])
             gid_v2 = int(tmplist[2])
@@ -499,7 +508,7 @@ class GeToGraph(Attributes):
                 gnode.prediction = None
             if G.node[node]["label"] is not None:
                 gnode.label = np.array(G.node[node]["label"])
-            gnode.features = np.array(G.node[node]["features"])
+            #gnode.features = np.array(G.node[node]["features"])
 
             if gnode.partition == 'train':
                 self.polyline_point_training_size += len(gnode.points)

@@ -21,6 +21,7 @@ from ml.features import multiscale_basic_features
 from scipy import ndimage
 from data_ops import dataflow
 from data_ops.utils import plot
+from data_ops.utils import compute_features
 
 from data_ops.collect_data import collect_training_data, compute_geomsc, collect_datasets
 
@@ -89,64 +90,70 @@ class RandomForest(MLGraph):
 
 
     def build_random_forest(self,
-                            BEGIN_LOADING_FEATURES=False,
+                            BEGIN_LOADING_FEATURES=False, COMPUTE_FEATURES=False,
+                            BEGIN_LOADING_GETO_FEATURES=False, COMPUTE_GETO_FEATURES=False,
+                            FEATS_INDEPENDENT=True,
                  ground_truth_label_file=None, boxes=None):
 
         self.attributes = self.get_attributes()
 
-
         if BEGIN_LOADING_FEATURES:
             self.params['load_features'] = True
             self.params['write_features'] = False
-            self.params['load_features'] = True
             self.params['write_feature_names'] = False
             self.params['save_filtered_images'] = False
             self.params['collect_features'] = False
             self.params['load_preprocessed'] = True
-            self.params['load_geto_attr'] = True
             self.params['load_feature_names'] = True
-        else:
+        elif COMPUTE_FEATURES:
             self.params['load_features'] = False
             self.params['write_features'] = True
-            self.params['load_features'] = False
             self.params['write_feature_names'] = True
             self.params['save_filtered_images'] = True
             self.params['collect_features'] = True
             self.params['load_preprocessed'] = False
-            self.params['load_geto_attr'] = False
             self.params['load_feature_names'] = False
+        if BEGIN_LOADING_GETO_FEATURES:
+            self.params['load_geto_attr'] = True
+            self.params['load_feature_names'] = True
+        elif COMPUTE_GETO_FEATURES:
+            self.params['geto_as_feat'] = True
+            self.params['load_geto_attr'] = False
 
-        if self.params['load_geto_attr']:
-            if self.params['geto_as_feat']:
-                self.load_geto_features()
-                self.load_geto_feature_names()
+
+        compute_features(model=self)
+
+        # if self.params['load_geto_attr']:
+        #     if self.params['geto_as_feat']:
+        #         self.load_geto_features()
+        #         self.load_geto_feature_names()
 
         # features
-        if not self.params['load_features']:
-            self.compile_features(include_geto=self.params['geto_as_feat'])
-            self.write_gnode_features(self.session_name)
-            self.write_feature_names()
-        else:
-            self.load_gnode_features()
-            self.load_feature_names()
-
-            #if 'geto' in self.params['aggregator']:
-            #    self.load_geto_features()
-            #    self.load_geto_feature_names()
-
-        if self.params['write_features']:
-            self.write_gnode_features(self.session_name)
-
-        if self.params['write_feature_names']:
-            self.write_feature_names()
-
-
-        if self.params['write_feature_names']:
-            if self.params['geto_as_feat']:
-                self.write_geto_feature_names()
-        if self.params['write_features']:
-            if self.params['geto_as_feat']:
-                self.write_geto_features(self.session_name)
+        # if not self.params['load_features']:
+        #     self.compile_features(include_geto=self.params['geto_as_feat'])
+        #     self.write_gnode_features(self.session_name)
+        #     self.write_feature_names()
+        # else:
+        #     self.load_gnode_features()
+        #     self.load_feature_names()
+        #
+        #     #if 'geto' in self.params['aggregator']:
+        #     #    self.load_geto_features()
+        #     #    self.load_geto_feature_names()
+        #
+        # if self.params['write_features']:
+        #     self.write_gnode_features(self.session_name)
+        #
+        # if self.params['write_feature_names']:
+        #     self.write_feature_names()
+        #
+        #
+        # if self.params['write_feature_names']:
+        #     if self.params['geto_as_feat']:
+        #         self.write_geto_feature_names()
+        # if self.params['write_features']:
+        #     if self.params['geto_as_feat']:
+        #         self.write_geto_features(self.session_name)
         # training info, selection, partition train/val/test
         self.read_labels_from_file(file=ground_truth_label_file)
 
@@ -488,7 +495,8 @@ class RandomForest(MLGraph):
 
             nx_gid = self.node_gid_to_graph_idx[gnode.gid]
             node = self.G.node[nx_gid]
-            node["features"] = features  # gnode.features.tolist()
+            print(" LINE 491 OF RANDOM FOREST REMOVED NODE FEATURE")
+            #node["features"] = features  # gnode.features.tolist()
             node["gid"] = gnode.gid
             # getoelm = self.gid_geto_elm_dict[gnode.gid]
             # polyline = getoelm.points

@@ -330,7 +330,7 @@ class NodeMinibatchIterator(object):
             geto_adj = np.ones((len(self.id2getoidx) + 1, self.max_degree)) if self.use_geto else None
         else:
             geto_adj = None
-
+        # id2idx graph_id to feat_idx
         deg = np.zeros((len(self.id2idx),))
         for nodeid in self.G.nodes():
             if self.G.node[nodeid]['test'] or self.G.node[nodeid]['val']:

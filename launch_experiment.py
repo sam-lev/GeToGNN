@@ -58,9 +58,14 @@ dim_image = [[700,605],                      # 0
 batch         =         0
 plot_only     =         0
 overide_plots =         0
-region_thresh =         30#0
-break_training_thresh = 50#60 #60 45,57
-load_features =         0
+region_thresh =         20
+break_training_thresh = 30#60 #60 45,57
+#feat control
+load_features              = 1
+compute_features           = 0
+load_geto_features         = 1
+compute_geto_features      = 0
+feats_independent          = 0 # geom / std separate
 clear_runs = True if not plot_only else False
 
 experiments = [ #      "UNet",
@@ -80,14 +85,14 @@ models      = [ #    'unet',
                 #    'mlp',
                 #    'mlp'
                 ]
-datasets    = [0]# 10 , 9, 8, 2, 0]
+datasets    = [ 0 ]
 
 plot_experiments = [  "UNet",
                       "Random_Forest_Pixel",
                       "Random_Forest_MSC",
                       #'Random_Forest_MSC_Geom',
                       'GNN',
-                      'GNN_Geom',
+                 #     'GNN_Geom',
                       'MLP_MSC',
                       'MLP_Pixel'
                 ]
@@ -105,6 +110,10 @@ def unit_run():
                                                    parameter_file_number=1,
                                                    multi_run=True,
                                                    load_features=load_features,
+                                                   compute_features=compute_features,
+                                                   load_geto_features=load_geto_features,
+                                                   compute_geto_features=compute_geto_features,
+                                                   feats_independent = feats_independent,
                                                    percent_train_thresh=region_thresh,
                                                    break_training_size=break_training_thresh,
                                                    clear_runs= not plot_only)

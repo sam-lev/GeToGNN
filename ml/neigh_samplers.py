@@ -2,10 +2,10 @@ from __future__ import division
 from __future__ import print_function
 import numpy as np
 import sys
-
 from .layers import Layer
-
 import tensorflow as tf
+
+from ml.utils import pout
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
@@ -61,19 +61,24 @@ class GeToInformedNeighborSampler(Layer):
     def __init__(self, adj_info, layer_info=None, geto_adj_info=None, adj_probs=None,
                  geto_dims=None, resampling_rate=0, batch_size=None,
                  name='geto_informed', **kwargs):
+        pout([" WEIGHTED MESSAGE PASSING "])
+        self.summary_writer = tf.compat.v1.summary.FileWriter('./log-dir/debug/')
         super(GeToInformedNeighborSampler, self).__init__(**kwargs)
         self.adj_info = adj_info
         self.geto_adj_info = geto_adj_info
         self.layer_info = layer_info
         self.name = name
         self.previous_sample_ids = None
-        print("    * : prob weight size: ", adj_probs.shape)
+        pout(["    * : prob weight size: ", adj_probs.shape])
+
         #self.adj_probs = tf.placeholder(tf.constant(adj_probs
         #                                            , dtype=tf.float32), trainable=False)
         #self.tensor = tf.placeholder(dtype=tf.float32, shape=(self.adj_probs.shape[1]))
         #self.hidden_geto_samples = tf.placeholder(dtype=tf.float32, shape=batch_size)
         self.batch_size = batch_size
         self.resampling_rate = resampling_rate
+
+        self.check = 0
 
     def _call(self, inputs):
         ids, num_samples, geto_ids, geto_elms, geto_dims, support_size, hop, layer_info, batch_size  = inputs
@@ -83,7 +88,7 @@ class GeToInformedNeighborSampler(Layer):
 
 
 
-        print("    * : GETIDS ARE NONE", geto_ids )
+        #b print("    * : GETIDS ARE NONE", geto_ids )
         self.geto_dims = geto_dims#geto_elms[0].shape[1]
 
         adj_lists = tf.nn.embedding_lookup(self.adj_info, ids, name = self.name)
@@ -102,61 +107,111 @@ class GeToInformedNeighborSampler(Layer):
         geto_adj_lists_all = tf.slice(geto_adj_lists_nbr, [0, 0], [-1, num_samples], name=self.name + 'geto')
 
 
-        geto_sample_all = []
-        geto_sample_all.append(tf.reshape(geto_adj_lists_all, [support_size * batch_size, ]))
+        geto_sampled_all = []
+        geto_sampled_all.append(tf.reshape(geto_adj_lists_all, [support_size * batch_size, ]))
         hidden_geto_all = [tf.nn.embedding_lookup(geto_elms,
-                                                  node_samples) for node_samples in geto_sample_all]
+                                                  node_samples) for node_samples in geto_sampled_all]#sample_all]
 
+        target_nodes = tf.nn.embedding_lookup(geto_elms, ids, name='self_weighted_agg'+self.name)
+        target_nodes = tf.expand_dims(target_nodes, axis=1)
+        hop_target = [target_nodes]
 
         hidden_geto_prob = []#self.reduce_pca(hidden_geto_samples)
+        # batch_size, num_neighbors, self.hidden_dim
+        #neigh_geto_dims = [batch_size*, num_samples,
+        #                   #num_sample_ list[len(num_sample_list) - hop - 1],
+        #                   geto_dims]
 
-        neigh_geto_dims = [batch_size * support_size,#support_size,
-                           #num_sample_list[len(num_sample_list) - hop - 1],
-                           geto_dims]
-        check = 0
-        for neigh_geto in hidden_geto_all:
-            getodims = tf.shape(neigh_geto)
-            tf.print("    *: getodims",getodims, sys.stdout)
-            tf.print("    *: neighbor: ",neigh_geto,sys.stdout)
+        # self_shape = tf.shape(target_nodes)
+        # target_shape = [batch_size, self_shape[0],geto_dims]
+        #f.reshape(target_nodes, target_shape)#
 
-            geto_batch_size = getodims[0]
-            num_nbr_geto = getodims[1]
-            # [nodes * sampled neighbors] x [hidden_dim]
+        pout(["added support", support_size,"num samples", num_samples])
+        hop = 0
+        for hidden_neighbor in hidden_geto_all:
+            neigh_shape = tf.shape(hidden_neighbor)
+            neigh_geto_dims = [batch_size*support_size , geto_dims]
 
-            # neighbor geto mlp
-            #geto_dims_in = based on what layer and specified output
-            #hidden_geto_reshaped = tf.reshape(neigh_geto,
-            #                       (geto_batch_size * num_nbr_geto, self.geto_dims))
-            hidden_geto_reshaped = tf.reshape(neigh_geto,
-                                       neigh_geto_dims)
-            tensor_pca = tf.map_fn(self.reduce_pca, hidden_geto_reshaped)
-
-            if len(hidden_geto_prob) == 0:
-                hidden_geto_prob.append(tensor_pca)
-                continue
-
-            # compute distance between seld and neighbor pca comps
-            dist_2_components = np.sqrt((hidden_geto_prob[0][:,0] - tensor_pca[:,0])**2 +
-                                        (hidden_geto_prob[0][:, 1] - tensor_pca[:, 1]) ** 2)
-            #if check < 10:
-            #    print('    * : ', dist_2_components)
-            #    check+=1
-
-            weight_difference = 1.0 - dist_2_components
-
-            hidden_geto_prob.append(weight_difference)
+            target_node = target_nodes[0]#hop_target[hop]
+            hop+=1
 
 
+            # tensor_pca = tf.map_fn(self.reduce_pca, hidden_geto_reshaped)
+            # dist_2_components = np.sqrt((hidden_geto_prob[0][:,0] - tensor_pca[:,0])**2 +
+            #                             (hidden_geto_prob[0][:, 1] - tensor_pca[:, 1]) ** 2)
+            hidden_neighbor_reshaped = tf.reshape(hidden_neighbor, neigh_geto_dims)
+            # target_shape = [batch_size, num_samples, geto_dims]
+            # target_nodes = tf.reshape(target_nodes, target_shape)#
+            # target_nodes = tf.concat([target_nodes,target_nodes],axis=1)
+            #hop_target.append(target_nodes)#hidden_neighbor_reshaped)
 
+            # geto_reshaped = tf.reshape(hidden_geto_all,#neigh_geto,
+            #                             neigh_geto_dims)
+            #tf.reduce_mean(
+            dist_2_components =  tf.sqrt(tf.reduce_sum(tf.square(
+                tf.subtract(target_node, hidden_neighbor_reshaped, name='subtract1')
+                    # tf.reduce_sum(
+                    #     tf.concat([self.target_node_geto , tf.multiply(geto_reshaped,-1.0)],axis=2),
+                    #     axis=2, keepdims=True)
+                ),
+                    axis=1)#,keepdims=True)
+                ,name='dist_embedd')#, axis=1)
+
+            # dist_2_components = tf.map_fn(fn=lambda n: tf.reduce_mean(
+            #     tf.sqrt(tf.reduce_sum(tf.square(self.target_node_geto - n), 1))),
+            #                               elems=geto_reshaped, parallel_iterations=100)
+
+
+
+            #dist_2_components = self.euclideanMeanDistance(self.target_node_geto, geto_reshaped)
+            # f
+            # self.check < 10:
+            # neigh_shape = tf.shape(geto_reshaped)
+            # dist_summary = tf.summary.tensor_summary('dist comp', dist_2_components)
+            # self_shape = tf.shape(self.target_node_geto)
+            # neigh_summary = tf.summary.tensor_summary('shape neigh', neigh_shape)
+            # self_summary = tf.summary.tensor_summary('shape self', self_shape)
+            pout(["dist comp"])#, dist_2_components.eval()])
+            tf.print(dist_2_components,output_stream=sys.stdout)  # , [dist_2_components])#, message=" distance comp: ")
+            # # pout(['neigh sahape',neigh_shape.numpy()])
+            # tf.print(neigh_shape)  # ,[neigh_shape])#,message=" neighbor shape: ")
+            # # pout(['self shaope',self_shape.numpy()])
+            # tf.print(self_shape)  # ,[self_shape])#,message=" self shape: ")
+            # self.summary_writer.add_summary(dist_summary)
+            # self.summary_writer.add_summary(neigh_summary)  # ,self.check)
+            self.check += 1
+
+
+            #weight_difference = 1.0 - dist_2_components
+
+            hidden_geto_prob.append(dist_2_components)#weight_difference)
+
+
+        # [batch_size, num_samples]
+        # which should be [batch_size, num_neighbors]
         weighted_sample_indices = tf.random.categorical(tf.math.log([tf.reshape(hidden_geto_prob, [-1])]),
                                                         total_num_adj_samples)
+        # w_summary = tf.summary.tensor_summary('weighted indices', weighted_sample_indices)
 
-        weighted_adj_lists_T = tf.gather(adj_lists_T, weighted_sample_indices[0]) ##
+
+        # self.summary_writer.add_summary(w_summary)#, self.check)
+        # weighted_sample_indices_T = tf.transpose(weighted_sample_indices)
+
+        #pout(["weighted_indices", weighted_sample_indices.numpy().shape])
+        #pout(["weighted indices transpose", weighted_sample_indices_T])
+        # if self.check < 10:
+        #     #pout(['weighted indices', weighted_sample_indices.numpy()])
+        #     tf.print(weighted_sample_indices)#, [weighted_sample_indices])#, message=" weighted probs indices :")
+
+        # !!!!!!!!!!!!!!!!!!!!!!!!!! ???????????????
+        # weighted_adj_lists_T = tf.gather(adj_lists_T, weighted_sample_indices[0]) ##
+
+        weighted_adj_lists_T = tf.gather(adj_lists_T, weighted_sample_indices[0])#_T)#[0])  ##
         weighted_adj_lists = tf.transpose(weighted_adj_lists_T) ##
         weighted_adj_lists = tf.slice(weighted_adj_lists, [0, 0], [-1, num_samples], name=self.name+'geto')
 
-        #geto_adj_lists_T = tf.transpose(geto_adj_lists)
-        weighted_geto_adj_lists_T = tf.gather(geto_adj_lists_T, weighted_sample_indices[0]) ##
+        # !!!!!!!!!!!!!!!!!!!!!! ??????????????????????????
+        weighted_geto_adj_lists_T = tf.gather(geto_adj_lists_T, weighted_sample_indices[0])#_T)#[0]) ##
         weighted_geto_adj_lists = tf.transpose(weighted_geto_adj_lists_T)
         weighted_geto_adj_lists = tf.slice(weighted_geto_adj_lists, [0, 0], [-1, num_samples], name=self.name+'geto')
 
@@ -167,7 +222,14 @@ class GeToInformedNeighborSampler(Layer):
         sigma = tf.slice(sigma, [0, 0], [geto_dims, n_dimensions])
         return sigma
 
+    def euclideanMeanDistance(self, y):
+        x = self.target_node_geto
+        dist = tf.sqrt(tf.reduce_sum(tf.square(x - y), 1))
+        return tf.reduce_mean(dist)
 
+    def euclideanDistance(self, x, y):
+        dist = tf.sqrt(tf.reduce_sum(tf.square(x - y), 1))
+        return dist
 
     def reduce_pca(self, X):
         keep_info=0

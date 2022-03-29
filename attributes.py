@@ -14,6 +14,8 @@ class Attributes(object):
         self.node_gid_to_label = {}
         self.node_gid_to_partition = {}
         self.node_gid_to_feature = {}
+        self.node_gid_to_standard_feature = {}
+        self.node_gid_to_geom_feature = {}
         self.node_gid_to_feat_idx = {}
         self.node_gid_to_graph_idx = {}
         self.node_gid_to_prediction = {}

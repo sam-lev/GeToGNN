@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from sklearn.preprocessing import PowerTransformer, RobustScaler, QuantileTransformer
 from functools import partial
+import umap
 
 from ml.features import multiscale_basic_features
 from getograph import GeToGraph
@@ -268,7 +269,46 @@ class GeToFeatureGraph(GeToGraph):
         computed_self_attributes = []
         self_attr_names = []
 
+        # build sampled points matrix
+        """
+                        DEAL WITH THIS LATER
+        """
+        gid_to_sampled_point = {}
+        sample_idx = 1
+        sampled_points = []
+        sampled_points.append(list(centroid)[0])
+        for gnode in self.gid_gnode_dict.values():
+            sampled_arc_points = np.array(get_points_from_vertices([gnode],sampled=True))
+            x1, y1 = sampled_arc_points[0]
+            x2, y2 = sampled_arc_points[-1]
+            gnode_rows = [sample_idx]
+            sampled_points.append(sampled_arc_points[0])
+            sample_idx += 1
+            gnode_rows.append(sample_idx)
+            gid_to_sampled_point[gnode.gid] = gnode_rows
+            sampled_points.append(sampled_arc_points[-1])
+            sample_idx += 1
+        sampled_points = np.array(sampled_points)
+        spherical_embedding = umap.UMAP(output_metric='haversine',
+                                        random_state=801).fit(sampled_points)
+        spherical_embedding = spherical_embedding.embedding_
+        self.write_gnode_spherical_coordinates(spherical_embedding, gid_to_sampled_point)
+
+        # spherical_embedding, gid_to_sampled_point = self.read_gnode_spherical_coordinates()
+
+        #projection onto R3 sphere
+        sphere_x = np.sin(spherical_embedding[:, 0]) * np.cos(spherical_embedding[:, 1])
+        sphere_y = np.sin(spherical_embedding[:, 0]) * np.sin(spherical_embedding[:, 1])
+        sphere_z = np.cos(spherical_embedding[:, 0])
+
+        # for nodes with one incident edge
+        one_edge_gnode = list(self.gid_gnode_dict.values())[0].copy()
+        one_edge_gnode.points = [(1., 1.), (1., 1.), (1., 1.)]
+        one_edge_gnode.gid = -1
+
         max_deg = 0
+        isolated = 0
+
         for gnode in self.gid_gnode_dict.values():
 
             geto_attr_vec = []
@@ -321,6 +361,15 @@ class GeToFeatureGraph(GeToGraph):
             mahalanobis_distance_self = mahalanobis_distance_arc(gnode.points[0],
                                                                 gnode.points[-1],
                                                                 inverse_covariance_points) if len(gnode.points) >= 2 else 0
+            mahalanobis_distance_self0_centroid = mahalanobis_distance_arc(sampled_arc_points[0],
+                                                                 centroid[0],
+                                                                 inverse_covariance_points)
+            mahalanobis_distance_self_mid_centroid = mahalanobis_distance_arc(sampled_arc_points[1],
+                                                                           centroid[0],
+                                                                           inverse_covariance_points)
+            mahalanobis_distance_self_end_centroid = mahalanobis_distance_arc(sampled_arc_points[-1],
+                                                                           centroid[0],
+                                                                           inverse_covariance_points)
             centroid_translated_points_self = translate_points_by_centroid([gnode],
                                                                            centroid)
 
@@ -329,11 +378,11 @@ class GeToFeatureGraph(GeToGraph):
             for i, p in enumerate(centroid_translated_points_self.flatten()):
                 computed_self_attributes.append(p)
                 if len(self.getoelms) == 0:
-                    self_attr_names += ['self_centroid_coord_' + str(i)]
+                    self_attr_names += ['geom-self_centroid_coord_' + str(i)]
             for i, p in enumerate(sampled_arc_points):
                 computed_self_attributes.append(np.sqrt((p[0]-centroid[0][0])**2+(p[1]-centroid[0][1])**2))
                 if len(self.getoelms) == 0:
-                    self_attr_names += ['sampled_points_euclid_dist_centroid_' + str(i)]
+                    self_attr_names += ['geom-sampled_points_euclid_dist_centroid_' + str(i)]
 
             # new
             for i, p in enumerate(sampled_arc_points.flatten()):
@@ -356,11 +405,11 @@ class GeToFeatureGraph(GeToGraph):
                                     range(len(list(p1_centroid_hyperbolic_grad.flatten())))]
                 self_attr_names += ['hyperbolic-grad_p2'+str(i) for i in
                                     range(len(list(p2_centroid_hyperbolic_grad.flatten())))]'''
-                self_attr_names += ['hyperbolic-dist_e2e'+str(i) for i in
+                self_attr_names += ['geom-hyperbolic-dist_e2e'+str(i) for i in
                                      range(len(list(end_to_end_hyperbolic_dist.flatten())))] #new
-                self_attr_names += ['hyperbolic-dist_p1' + str(i) for i in
+                self_attr_names += ['geom-hyperbolic-dist_p1' + str(i) for i in
                                     range(len(list(p1_centroid_hyperbolic_dist.flatten())))] #0
-                self_attr_names += ['hyperbolic-dist_p2' + str(i) for i in
+                self_attr_names += ['geom-hyperbolic-dist_p2' + str(i) for i in
                                      range(len(list(p2_centroid_hyperbolic_dist.flatten())))] #0
 
             for i,attr_vec in enumerate(velocity_arc):
@@ -369,7 +418,7 @@ class GeToFeatureGraph(GeToGraph):
                 computed_self_attributes += attr_vec
                 if len(self.getoelms) == 0:
                     pout(["velo length", len(attr_vec)])
-                    self_attr_names += ['velocity_arc_' + str(i)]
+                    self_attr_names += ['geom-velocity_arc_' + str(i)]
 
 
             # angle between unit vectors
@@ -385,19 +434,58 @@ class GeToFeatureGraph(GeToGraph):
             for i, attr_vec in enumerate(vec_scaled):
                 computed_self_attributes.append( attr_vec )
                 if len(self.getoelms) == 0:
-                    self_attr_names.append('vec_scaled_' + '_' + str(i))
+                    self_attr_names.append('geom-vec_scaled_' + '_' + str(i))
 
             # hyperbolic dist vec
             vec_centroid_hyperbolic_grad, vec_centroid_hyperbolic_dist = hyperbolic_distance(vp,
                                                                                            centroid[0])
             computed_self_attributes += list(vec_centroid_hyperbolic_dist.flatten())
             if len(self.getoelms) == 0:
-                self_attr_names += ['hyperbolic-dist_vec' + str(i) for i in
+                self_attr_names += ['geom-hyperbolic-dist_vec' + str(i) for i in
                                     range(len(list(vec_centroid_hyperbolic_dist.flatten())))]
+
+            # whitney embedding M^n -> R^(2n+1)
+            # taking each 1-d coord t_i of (t_x,t_y) and mapping to (1/(1+t^2)) , t-(2t/(1+t^2))
+            whitney_embed_p0_p1 = []
+            for t in [x1,y1,x2,y2]:
+                whit_p = [1./(1.+t**2) , t-((2.*t)/(1.+t**2))]
+                whitney_embed_p0_p1 += whit_p
+            computed_self_attributes += whitney_embed_p0_p1
+            if len(self.getoelms)==0:
+                self_attr_names += ['geom-whiteney_embedding_p'+str(i) for i in range(len(whitney_embed_p0_p1))]
+
+            #whitney embedding R2 -> R5
+            whitney_embed_R5 = []
+            for t in [(x1,y1),(x2,y2)]:
+                whit_p = [1./((1.+t[0]**2)*(1.+t[1]**2)) , t[0]-((2.*t[0])/((1.+t[0]**2)*(1.+t[1]**2))),
+                          (t[0]*t[1])/((1.+t[0]**2)*(1.+t[1]**2)),t[1]]
+                whitney_embed_R5 += whit_p
+            #computed_self_attributes += whitney_embed_R5
+            #if len(self.getoelms) == 0:
+            #    self_attr_names += ['whiteney_embedding_R5_p' + str(i) for i in range(len(whitney_embed_R5))]
+
+            # location of gnode in spherical embedding of all gnodes
+            gnode_points_row = gid_to_sampled_point[gnode.gid]
+            sphere_emb_p0 = spherical_embedding[gnode_points_row[0]]
+            sphere_emb_p1 = spherical_embedding[gnode_points_row[1]]
+            sphere_emb_gnode = list(sphere_emb_p0)+list(sphere_emb_p1)
+            # projection of spherical embedding into R3
+            row1 = gnode_points_row[0]
+            row2 = gnode_points_row[1]
+            sphere_embedding_R3 = [sphere_x[row1], sphere_y[row1],sphere_z[row1],
+                                   sphere_x[row2], sphere_y[row2],sphere_z[row2]]
+
+            computed_self_attributes += sphere_emb_gnode
+            if len(self.getoelms) == 0:
+                self_attr_names += ['geom-sphere_embedding_p'+str(i) for i in range(len(sphere_emb_gnode))]
+            computed_self_attributes += sphere_embedding_R3
+            if len(self.getoelms) == 0:
+                self_attr_names += ['geom-R3_sphere_embedding_p' + str(i) for i in range(len(sphere_embedding_R3))]
 
             #print
             if check > 5:
-                pout(["vp", vp, 'x1', x1, 'y1', y1, 'thetax', thetax, 'veclength', veclength])
+                pout(["vp", vp, 'x1', x1, 'y1', y1, 'thetax', thetax, 'veclength', veclength,
+                      'spherical embedding',sphere_emb_gnode])
                 pout(['hyperbolic dist arc',hyperbolic_distance_arc])
                 check -= 1
 
@@ -414,6 +502,9 @@ class GeToFeatureGraph(GeToGraph):
                                    manhattan_distance_arc,
                                    manhattan_distance_centroid,
                                    mahalanobis_distance_self,
+                mahalanobis_distance_self0_centroid,
+                mahalanobis_distance_self_mid_centroid,
+                mahalanobis_distance_self_end_centroid,
                                    thetax,
                                    vp[0],
                                    vp[1],
@@ -421,24 +512,27 @@ class GeToFeatureGraph(GeToGraph):
 
             if len(self.getoelms) == 0:
                 self_attr_names += [
-                    'cos_sim_centroid_max', #0
-                    'cos_sim_centroid_min',
-                         'hyperbolic_distance_self_arc', #0
+                    'geom-cos_sim_centroid_max', #0
+                    'geom-cos_sim_centroid_min',
+                         'geom-hyperbolic_distance_self_arc', #0
                          #'node_degree', #0
-                         'length_self', #0
-                         'slope_self',
-                         'euclidean_sum_self', #0
-                         'euclidean_dist_arc', # 0
-                         'self_distance_from_centroid', #0
-                         'manhattan_distance_arc',
-                         'manhattan_distance_centroid',
-                         'mahalanobis_distance_self',
-                    'thetax',
-                    'vec_x',
-                    'vec_y',
-                    'vec_length'
+                         'geom-length_self', #0
+                         'geom-slope_self',
+                         'geom-euclidean_sum_self', #0
+                         'geom-euclidean_dist_arc', # 0
+                         'geom-self_distance_from_centroid', #0
+                         'geom-manhattan_distance_arc',
+                         'geom-manhattan_distance_centroid',
+                         'geom-mahalanobis_distance_self',
+                    'geom-mahalanobis_distance_self0_centroid',
+                    'geom-mahalanobis_distance_self_mid_centroid',
+                    'geom-mahalanobis_distance_self_end_centroid',
+                    'geom-thetax',
+                    'geom-vec_x',
+                    'geom-vec_y',
+                    'geom-vec_length'
                          ]
-                pout(["sample of getoelms", computed_self_attributes,"names",self_attr_names])
+                #pout(["sample of getoelms", computed_self_attributes,"names",self_attr_names])
                 #self.geto_attr_names = self_attr_names
             prod_nbr_attr = []
             sum_nbr_attr = []
@@ -451,12 +545,17 @@ class GeToFeatureGraph(GeToGraph):
             #
             #  Adjacency features
             #
-            use_adj_edges = False
+            use_adj_edges = True
             if use_adj_edges:
 
                 gedge_list = list(gnode.edge_gids)
-                gedge_id = gedge_list[0]
+                gedge_id = gedge_list[-1]
                 adj_gnode_gids = self.gid_edge_dict[gedge_id].gnode_gids
+                if len(adj_gnode_gids) < 2:
+                    isolated += 1
+                    adj_gnode_gids = [-1,-1]#[gnode.gid, gnode.gid]
+
+
                 adj_gnode_gid = adj_gnode_gids[0] if adj_gnode_gids[0] != gnode.gid else adj_gnode_gids[1]
                 if True:#for adj_edge in gnode.edge_gids:
                     #adj_gnode_gids = self.gid_edge_dict[adj_edge].gnode_gids
@@ -479,10 +578,23 @@ class GeToFeatureGraph(GeToGraph):
                             continue
                         if adj_gnode_nx_id == gnode_nx_idx:
                             continue'''
-                        adj_gnode = self.gid_gnode_dict[adj_gnode_gid]
+                        if adj_gnode_gid != -1:
+                            adj_gnode = self.gid_gnode_dict[adj_gnode_gid]
+                        else:
+                            adj_gnode = one_edge_gnode
+
                         sampled_nbr_points = np.array(get_points_from_vertices([adj_gnode], sampled=True))
 
+                        # get vector of adj edge
+                        # angle between unit vectors
+                        x1_n, y1_n = sampled_nbr_points[0]
+                        x2_n, y2_n = sampled_nbr_points[-1]
+                        vp_n = np.array([x2_n - x1_n, y2_n - y1_n])
+                        veclength_n = np.sqrt(vp_n[0] * vp_n[0] + vp_n[1] * vp_n[1])
+                        theta_nbr = np.arccos((vp[0]*vp_n[0] + vp[1]*vp_n[1]) / (veclength * veclength_n + 1e-9))
 
+                        # cosine similarity
+                        cos_sim = np.cos(theta_nbr)
 
                         nbr_translated_vec = translate_points_by_centroid([adj_gnode],centroid)
 
@@ -506,13 +618,17 @@ class GeToFeatureGraph(GeToGraph):
 
                         dot_vecs = twod_dot(np.array(gnode.points), np.array(adj_gnode.points))
                         #denom_prod_norm = linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points).T)
-                        inv_cos = np.clip(cos_sim_numerator/cos_sim_denominator,-1,1) if cos_sim_denominator != 0  else 0.0
-                        angle_adj = m.degrees(np.arccos(inv_cos))
-                        angle_adj = 90 if np.isnan(angle_adj) else angle_adj
+                        #inv_cos = np.clip(cos_sim_numerator/cos_sim_denominator,-1,1) if cos_sim_denominator != 0  else 0.0
+                        #angle_adj = m.degrees(np.arccos(inv_cos))
+                        #angle_adj = 90 if np.isnan(angle_adj) else angle_adj
 
-                        triangle_area = 0.5 * linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points)) * np.sin((angle_adj*np.pi)/180.)
-                        triangle_area2 = 0.5 * linalg.norm(np.array(centroid_translated_points_self) @ np.array(nbr_translated_vec).T)
+                        triangle_area = 0.5 * linalg.norm(np.array(gnode.points)) * linalg.norm(np.array(adj_gnode.points)) * np.sin((theta_nbr*np.pi)/180.)
+                        #triangle_area2 = 0.5 * linalg.norm(np.array(centroid_translated_points_self) @ np.array(nbr_translated_vec).T)
 
+                        # print
+                        if check > 5:
+                            pout(['triangle area', triangle_area, 'theta', theta_nbr,
+                                  'hyperbolic_dist_nbr', p3_adj_hyperbolic_dist])
 
                         euclidean_dist_btwn_arcs_adj1_self1 = end_to_end_euclid([gnode.points[-1],
                                                                                  adj_gnode.points[-1]])
@@ -539,51 +655,43 @@ class GeToFeatureGraph(GeToGraph):
                                                                                     inverse_covariance_points) if len(adj_gnode.points) >= 2 and len(gnode.points) >= 2 else 0
 
 
-
-
-                        computed_nbr_attributes = []
-                        #nbr_attr_names = []
-                        attr_vecs = [#end_to_adj_hyperbolic_grad,p1_adj_hyperbolic_grad,
-                                     #p3_adj_hyperbolic_grad,
-                                     end_to_adj_hyperbolic_dist,p1_adj_hyperbolic_dist,
-                                     p3_adj_hyperbolic_dist]
-                        attr_vec_names = [#'end_to_adj_hyperbolic_grad','p1_adj_hyperbolic_grad',
-                                     #'p3_adj_hyperbolic_grad',
-                                     'end_to_adj_hyperbolic_dist','p1_adj_hyperbolic_dist',
-                                     'p3_adj_hyperbolic_dist']
-                        for attr_vec_name, attr_vec in zip(attr_vec_names, attr_vecs):
-                            computed_nbr_attributes += list(attr_vec.flatten())
-                            if len(self.getoelms) == 0:# and first_neigh==0 :
-                                nbr_attr_names += [attr_vec_name+'_' + str(i) for i in
-                                                   range(len(list(attr_vec.flatten())))]
-
-                        computed_nbr_attributes += [dot_vecs, #fi = 0
-                                                    #cos_sim, #fi = 0
-                                                    #cos_sim_numerator, #fi = 0
-                                                    #cos_sim_denominator, #fi = 0
-                                               triangle_area,#fi = 0
-                                               triangle_area2, #fi = 0
-                                               angle_adj, #fi = 0
-                                               euclidean_dist_btwn_arcs_adj1_self1,
-                                               euclidean_dist_btwn_arcs_adj1_self0,#fi = 0
-                                               euclidean_dist_btwn_arcs_adj0_self1,
-                                               mahalanobis_distance_adj1_self0, #fi = 0
-                                               mahalanobis_distance_adj1_self1, #fi = 0
-                                               mahalanobis_distance_adj0_self1]
+                        computed_nbr_attributes = [##end_to_adj_hyperbolic_dist,
+                                                ##p1_adj_hyperbolic_dist,
+                                                p3_adj_hyperbolic_dist,
+                                                ##dot_vecs, #fi = 0
+                                                theta_nbr,
+                                                cos_sim, #fi = 0
+                                                #cos_sim_numerator, #fi = 0
+                                                #cos_sim_denominator, #fi = 0
+                                                #triangle_area,#fi = 0
+                                                #triangle_area2, #fi = 0
+                                                #angle_adj, #fi = 0
+                                                #euclidean_dist_btwn_arcs_adj1_self1,
+                                                #euclidean_dist_btwn_arcs_adj1_self0,#fi = 0
+                                                ##euclidean_dist_btwn_arcs_adj0_self1,
+                                                mahalanobis_distance_adj1_self0, #fi = 0
+                                                mahalanobis_distance_adj1_self1, #fi = 0
+                                                mahalanobis_distance_adj0_self1
+                        ]
                         if len(self.getoelms) == 0:# and first_neigh == 0:
-                            nbr_attr_names += ['dot_vecs',
-                                               #'cos_sim',
+                            self_attr_names += [##'end_to_adj_hyperbolic_dist',
+                                               ##'p1_adj_hyperbolic_dist',
+                                               'geom-p3_adj_hyperbolic_dist',
+                                               ##'geom-dot_vecs',
+                                               'geom-theta',
+                                               'geom-cos_sim',
                                                #'cos_sim_numerator',
                                                #'cos_sim_denominator',
-                                 'triangle_area',
-                                     'triangle_area2',
-                                     'angle_adj',
-                                               'euclidean_dist_btwn_arcs_adj1_self1',
-                                     'euclidean_dist_btwn_arcs_adj1_self0',
-                                               'euclidean_dist_btwn_arcs_adj0_self1',
-                                               'mahalanobis_distance_adj1_self0',
-                                     'mahalanobis_distance_adj1_self1',
-                                               'mahalanobis_distance_adj0_self1']
+                                               #'triangle_area',
+                                               #'triangle_area2',
+                                               #'angle_adj',
+                                               #'euclidean_dist_btwn_arcs_adj1_self1',
+                                               #'euclidean_dist_btwn_arcs_adj1_self0',
+                                               ##'euclidean_dist_btwn_arcs_adj0_self1',
+                                               'geom-mahalanobis_distance_adj1_self0',
+                                               'geom-mahalanobis_distance_adj1_self1',
+                                               'geom-mahalanobis_distance_adj0_self1'
+                                ]
                             #self.geto_attr_names += nbr_attr_names
                         #first_neigh += 1
 
@@ -591,10 +699,12 @@ class GeToFeatureGraph(GeToGraph):
                         prod_nbr_attr = []
                         sum_nbr_attr += computed_nbr_attributes
 
-                    break
+
+                #nbr_edge_attributes =  sum_nbr_attr #+ prod_nbr_attr
+                computed_self_attributes += computed_nbr_attributes#sum_nbr_attr
+                #self_attr_names += nbr_attr_names
 
 
-            nbr_edge_attributes = prod_nbr_attr + sum_nbr_attr
             geto_attr_vec = computed_self_attributes# + nbr_edge_attributes
             #nbr_attributes =  nbr_attributes.flatten()
 
@@ -606,8 +716,11 @@ class GeToFeatureGraph(GeToGraph):
 
             #geto_attr_vec = list(-1 * np.log(geto_attr_vec))
 
+            self.node_gid_to_geom_feature[gnode.gid] = geto_attr_vec
 
             self.getoelms.append(geto_attr_vec)
+            node_graph_idx = self.node_gid_to_graph_idx[gnode.gid]
+            self.gid_to_getoelm_idx[gnode.gid] = lin_getoelm_idx
             self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx] = lin_getoelm_idx
             lin_getoelm_idx += 1
 
@@ -615,8 +728,9 @@ class GeToFeatureGraph(GeToGraph):
             num_geto_features = len(geto_attr_vec)
 
         self.geto_attr_names = self_attr_names
-        #for i in range(2*(max_deg)):
-        #    self.geto_attr_names +=  nbr_attr_names
+
+
+        pout(["Number of Single Nodes", isolated])
 
         #
         # padding and scaling of features to be more uniform due to large outliers
@@ -644,7 +758,7 @@ class GeToFeatureGraph(GeToGraph):
                            idx in range(len(variable_feat_lengths))]'''
 
         pad_for_neighbors = False
-        scale_feat_distribution = False
+        scale_feat_distribution = True
         # scale for wide range / outlier features
         scaler = QuantileTransformer(n_quantiles=len(self.getoelms[0]), output_distribution='normal')
         # scaler = RobustScaler(with_scaling=True, with_centering=True,unit_variance=False)
@@ -696,6 +810,7 @@ class GeToFeatureGraph(GeToGraph):
         return self.getoelms
 
     def compile_features(self, image=None, return_labels=False, include_geto=False,
+                         include_generic_feat = True,
                          save_filtered_images=False,
                          min_number_features=1, number_features=5, selection=None):
 
@@ -715,40 +830,41 @@ class GeToFeatureGraph(GeToGraph):
 
         check = 0
         # skip powers
-        skip_exp = [20, 17, 14, 19, 11, 13, 16]
-        skip_func = ['var']
+        skip_exp = ['feat-func_19_var','variance_2_mode','feat-func_19_mode',
+                    'feat-func_17_var','feat-func_17_mode','feat-func_16_var',
+                    'feat-func_16_mode','feat-func_20_var','feat-func_14_var',
+                    'feat-func_13_var','feat-func_13_mode','feat-func_11_mode',
+                    'feat-func_10_mode','feat-func_8_mode','feat-func_14_mode',
+                    'feat-func_20_mode']
         for gnode in self.gid_gnode_dict.values():
 
             gnode_feature_row = []
 
 
+            if include_generic_feat:
+                for image_name, im in self.images.items():
 
-            for image_name, im in self.images.items():
+                    #if i not in arc_pixel_map:
+                    #    arc_pixel_map[i] = get_pixel_values_from_arcs([arc], im, sampled=False)
 
-                #if i not in arc_pixel_map:
-                #    arc_pixel_map[i] = get_pixel_values_from_arcs([arc], im, sampled=False)
+                    gnode_pixels = get_pixel_values_from_vertices([gnode], im)
 
-                gnode_pixels = get_pixel_values_from_vertices([gnode], im)
-
-                for function_name, foo in self.feature_ops.items():
-                    if check < 30:
-                        print(image_name)
-                        print(function_name)
-                        check += 1
-                    if image_name not in skip_exp and function_name not in skip_func:
-                        attribute = foo(gnode_pixels)
-                        gnode_feature_row.append(attribute)
-                        if len(gnode_features) == 0:
-                            feature_names.append(image_name + "_" + function_name)
-                            self.fname_to_featidx[image_name + "_" + function_name] = feature_order
-                            feature_order += 1
+                    for function_name, foo in self.feature_ops.items():
+                        aug_name = image_name + "_" + function_name
+                        if aug_name not in skip_exp:
+                            attribute = foo(gnode_pixels)
+                            gnode_feature_row.append(attribute)
+                            if len(gnode_features) == 0:
+                                feature_names.append(image_name + "_" + function_name)
+                                self.fname_to_featidx[image_name + "_" + function_name] = feature_order
+                                feature_order += 1
+                self.node_gid_to_standard_feature[gnode.gid] = gnode_feature_row
 
 
-
-            if include_geto:
-                gnode_feature_row = np.array(gnode_feature_row)
-                gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
-                gnode_feature_row = np.hstack((gnode_feature_row, self.getoelms[gnode_nx_idx,:]))
+            #if include_geto:
+            #    gnode_feature_row = np.array(gnode_feature_row)
+            #    gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
+            #    gnode_feature_row = np.hstack((gnode_feature_row, self.getoelms[gnode_nx_idx,:]))
             gnode_features.append(gnode_feature_row)
             gnode.features = np.array(gnode_feature_row).astype(dtype=np.float32)
             self.node_gid_to_feature[gnode.gid] = np.array(gnode_feature_row).astype(dtype=np.float32)
@@ -773,7 +889,7 @@ class GeToFeatureGraph(GeToGraph):
             dbgprint(self.getoelms.shape, 'geto elm shape')
         dbgprint(gnode_features.shape, '    * feature shape')
 
-        self.feature_names = feature_names if not include_geto else feature_names + self.geto_attr_names
+        self.feature_names = feature_names #if not include_geto else feature_names + self.geto_attr_names
 
         dbgprint(len(self.feature_names), 'len names after')
         self.features = gnode_features
@@ -808,7 +924,7 @@ class GeToFeatureGraph(GeToGraph):
         self.feature_ops["min"] = lambda pixels: np.min(pixels)
         self.feature_ops["max"] = lambda pixels: np.max(pixels)
         self.feature_ops["median"] = lambda pixels: np.median(pixels)
-        #self.feature_ops["mode"] = lambda pixels: scipy.stats.mode(np.round(pixels, 2))[0][0]
+        self.feature_ops["mode"] = lambda pixels: scipy.stats.mode(np.round(pixels, 2))[0][0]
         #self.feature_ops["mean"] = lambda pixels: gaussian_fit(pixels)[0]
 
         self.feature_ops["std"] = lambda pixels: gaussian_fit(pixels)[1]
@@ -902,20 +1018,30 @@ class GeToFeatureGraph(GeToGraph):
         if not os.path.exists(os.path.join(self.experiment_folder,'features')):
             os.makedirs(os.path.join(self.experiment_folder,'features'))
         msc_feats_file = os.path.join(self.experiment_folder,'features', "feats.txt")
-        msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "gid_feat_idx.txt")
+        msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "gid_graph_idx.txt")#"gid_feat_idx.txt")
         print("&&&& writing features in: ", msc_feats_file)
         feats_file = open(msc_feats_file, "w+")
         gid_feats_file = open(msc_gid_to_feats_file, "w+")
         lines = 1
+
+        check = len(self.gid_gnode_dict.keys())
         for gnode in self.gid_gnode_dict.values():
             nl = '\n' if lines != len(self.gid_gnode_dict) else ''
-            gid_feats_file.write(str(gnode.gid)+' '+str(self.node_gid_to_feat_idx[gnode.gid])+nl)
-            feature_vec = self.node_gid_to_feature[gnode.gid]
+            gid_feats_file.write(str(gnode.gid)+' '+str( self.node_gid_to_graph_idx[gnode.gid])+nl)
+            #str(self.node_gid_to_feat_idx[gnode.gid])+nl)
+            feature_vec = self.node_gid_to_standard_feature[gnode.gid]
             feats_file.write(str(gnode.gid)+ ' ')
             for f in feature_vec[0:-1]:
                 feats_file.write(str(f)+' ')
             feats_file.write(str(feature_vec[-1]) + '\n')
             lines += 1
+
+            if check < 3:
+                pout(["feat write end", feature_vec])
+            elif check > len(self.gid_gnode_dict.keys()) - 2:
+                pout(["feat write begin", feature_vec])
+            check -= 1
+
         gid_feats_file.close()
         feats_file.close()
 
@@ -924,23 +1050,34 @@ class GeToFeatureGraph(GeToGraph):
             if not os.path.exists(os.path.join(self.experiment_folder,'features')):
                 os.makedirs(os.path.join(self.experiment_folder,'features'))
             msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_feats.txt")
-            msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "idx_to_getoelm_idx.txt")
-            print("&&&& writing features in: ", msc_feats_file)
+            msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "gid_graph_idx.txt")#"idx_to_getoelm_idx.txt")
+            print("&&&& writing geto features in: ", msc_feats_file)
             feats_file = open(msc_feats_file, "w+")
-            gid_feats_file = open(msc_gid_to_feats_file, "w+")
+            gid_to_graph_idx = open(msc_gid_to_feats_file, "w+")
             lines = 1
-            for gnode in self.gid_gnode_dict.values():
+            check = len(self.gid_gnode_dict.keys())
+            feat_count = 0
+            for gid in self.gid_gnode_dict.keys():
+                gnode = self.gid_gnode_dict[gid]
                 gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
                 nl = '\n' if lines != len(self.gid_gnode_dict) else ''
-                gid_feats_file.write(str(gnode_nx_idx)+' '+
-                                     str(self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx])+nl)
-                feature_vec = self.getoelms[gnode_nx_idx]
-                feats_file.write(str(gnode_nx_idx)+ ' ')
+                gid_to_graph_idx.write(str(gnode.gid)+' '+#str(gnode_nx_idx)+#' '+nl)#
+                                     str(gnode_nx_idx)+nl)#str(self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx])+nl)
+                feature_vec = self.node_gid_to_geom_feature[gid]
+                #self.getoelms[feat_count]#gnode_nx_idx]
+                feats_file.write(str(gnode.gid)+' ')#gnode_nx_idx)+ ' ')
                 for f in feature_vec[0:-1]:
                     feats_file.write(str(f)+' ')
                 feats_file.write(str(feature_vec[-1]) + nl)
                 lines += 1
-            gid_feats_file.close()
+
+                if check < 3:
+                    pout(["geto feat write end", feature_vec])
+                elif check > len(self.gid_gnode_dict.keys()) - 2:
+                    pout(["geto feat write begin", feature_vec])
+                check -= 1
+                feat_count+=1
+            gid_to_graph_idx.close()
             feats_file.close()
 
     def write_feature_names(self):
@@ -954,7 +1091,7 @@ class GeToFeatureGraph(GeToGraph):
     def write_geto_feature_names(self):
         if self.getoelms is not None:
             msc_feats_file = os.path.join(self.experiment_folder,'features', "geto_featnames.txt")
-            print("&&&& writing feature namesin: ", msc_feats_file)
+            print("&&&& writing geto feature namesin: ", msc_feats_file)
             feats_file = open(msc_feats_file, "w+")
             for fname in self.geto_attr_names:
                 feats_file.write(fname + "\n")
@@ -970,10 +1107,11 @@ class GeToFeatureGraph(GeToGraph):
             self.feature_names.append(f)
         #print(self.feature_names)
         feats_file.close()
+        return self.feature_names
 
     def load_geto_feature_names(self):
         msc_feats_file = os.path.join(self.experiment_folder, 'features', "geto_featnames.txt")
-        print("&&&& Reading feature names from: ", msc_feats_file)
+        print("&&&& Reading geto feature names from: ", msc_feats_file)
         feats_file = open(msc_feats_file, "r")
         feat_lines = feats_file.readlines()
         self.geto_attr_names = []
@@ -981,6 +1119,7 @@ class GeToFeatureGraph(GeToGraph):
             self.geto_attr_names.append(f)
         #print(self.feature_names)
         feats_file.close()
+        return self.geto_attr_names
 
     def load_gnode_features(self):
         msc_feats_file = os.path.join( self.experiment_folder,'features', "feats.txt")
@@ -989,41 +1128,151 @@ class GeToFeatureGraph(GeToGraph):
         feat_lines = feats_file.readlines()
         feats_file.close()
         features = []
+        check = len(feat_lines)
+        feat_idx = 0
         for v in feat_lines:
             gid_feats = v.split(' ')
             gid = int(gid_feats[0])
             gnode = self.gid_gnode_dict[gid]
             gnode.features = np.array(gid_feats[1:])
-            self.node_gid_to_feature[gid] = np.array(gid_feats[1:])
+            self.node_gid_to_standard_feature[gid] = gid_feats[1:]
+            #self.node_gid_to_feature[gid] = np.array(gid_feats[1:])
             features.append(np.array(gid_feats[1:]))
-        self.features = np.array(features)
+            if check < 3:
+                pout(["feat load end", gid_feats[1:]])
+            elif check > len(feat_lines) - 2:
+                pout(["feat load begin", gid_feats[1:]])
+            check -= 1
+            self.node_gid_to_feat_idx[gid] = feat_idx
+            feat_idx += 1
+        self.features = np.array(features).astype(dtype=np.float32)
+
+        # nx_idx_to_feat_idx = {self.node_gid_to_graph_idx[gid]: feat for gid, feat
+        #                       in self.node_gid_to_feat_idx.items()}
+        # nx_idx_to_label_idx = {self.node_gid_to_graph_idx[gid]: label for gid, label
+        #                        in self.node_gid_to_label.items()}
+        # nx_idx_to_getoelm_idx = {self.node_gid_to_graph_idx[gid]: getoelm_idx for gid, getoelm_idx
+        #                          in self.gid_to_getoelm_idx.items()}
+
         feats_file.close()
 
-        gid_to_feats_file = os.path.join(self.experiment_folder, 'features',"gid_feat_idx.txt")
-        print("&&&& writing features in: ", gid_to_feats_file)
+        gid_to_feats_file = os.path.join(self.experiment_folder, 'features',"gid_graph_idx.txt")
+        print("&&&& reading gid to graph id in: ", gid_to_feats_file)
         feats_file = open(gid_to_feats_file, "r")
         feat_lines = feats_file.readlines()
         feats_file.close()
         for l in feat_lines:
             gid_featidx = l.split(' ')
-            self.node_gid_to_feat_idx[int(gid_featidx[0])] = int(gid_featidx[1])
+            self.node_gid_to_graph_idx[int(gid_featidx[0])] = int(gid_featidx[1])
+            #self.node_gid_to_feat_idx[int(gid_featidx[0])] = int(gid_featidx[1])
 
     def load_geto_features(self):
         self.getoelms = []
         self.lin_adj_idx_to_getoelm_idx = {}
         msc_feats_file = os.path.join( self.experiment_folder,'features', "geto_feats.txt")
-        print("&&&& Reading features from: ", msc_feats_file)
+        print("&&&& Reading geto features from: ", msc_feats_file)
         feats_file = open(msc_feats_file, "r")
         feat_lines = feats_file.readlines()
         feats_file.close()
         features = []
+        getofeatures = []
         geto_idx = 0
+        check = len(feat_lines)
+        check2=3
         for v in feat_lines:
             gid_feats = v.split(' ')
-            gnode_nx_idx = int(gid_feats[0])
-            self.lin_adj_idx_to_getoelm_idx[gnode_nx_idx] = geto_idx
+            #gnode_nx_idx = int(gid_feats[0])
+            gid=int(gid_feats[0])
+            gnode = self.gid_gnode_dict[gid]
+            gid_feats_arr = np.array(gid_feats[1:])
+            gid_feats_list = list(gid_feats_arr)
+
+            gnode.features = gid_feats_arr
+            self.node_gid_to_geom_feature[gid] = gid_feats_list
+            #self.node_gid_to_feature[gid] = gid_feats_arr # changed in call to collect feats if combined
+            #self.lin_adj_idx_to_getoelm_idx[gid] = geto_idx#gnode_nx_idx] = geto_idx
+
+            #self.node_gid_to_feat_idx[gid] = geto_idx#features.shape[0]
+            features.append(gnode.features)
+
+
+
+            getofeatures.append(np.array(gid_feats[1:]))
+            self.gid_to_getoelm_idx[gid] = geto_idx
             geto_idx += 1
-            features.append(np.array(gid_feats[1:]))
-        self.getoelms = np.array(features)
+
+            if check < 3:
+                pout(["geto feat load end", gid_feats[1:]])
+            elif check > len(feat_lines) - 2:
+                pout(["geto feat load begin", gid_feats[1:]])
+            check -= 1
+        #self.features = np.array(features).astype(dtype=np.float32)
+        self.getoelms = np.array(getofeatures).astype(dtype=np.float32)
         feats_file.close()
 
+        gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "gid_graph_idx.txt")
+        print("&&&& reading gid to graph id in: ", gid_to_feats_file)
+        feats_file = open(gid_to_feats_file, "r")
+        feat_lines = feats_file.readlines()
+        feats_file.close()
+        for l in feat_lines:
+            gid_featidx = l.split(' ')
+            self.node_gid_to_graph_idx[int(gid_featidx[0])] = int(gid_featidx[1])
+
+
+
+    def write_gnode_spherical_coordinates(self, spherical_coordinates, gid_spherical_dict):
+        if not os.path.exists(os.path.join(self.experiment_folder,'features')):
+            os.makedirs(os.path.join(self.experiment_folder,'features'))
+        msc_feats_file = os.path.join(self.experiment_folder,'features', "spherical_coordinates.txt")
+        print("&&&& writing features in: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "w+")
+        lines = 1
+
+        for gnode in self.gid_gnode_dict.values():
+            gid = gnode.gid
+            r1 = gid_spherical_dict[gid][0]
+
+            r2 = gid_spherical_dict[gid][1]
+            nl = '\n' if lines != len(self.gid_gnode_dict) else ''
+            feature_vec = list(spherical_coordinates[r1]) + list(spherical_coordinates[r2])
+            feats_file.write(str(gnode.gid)+ ' ')
+            for f in feature_vec[0:-1]:
+                feats_file.write(str(f)+' ')
+            feats_file.write(str(feature_vec[-1]) + '\n')
+            lines += 1
+        feats_file.close()
+
+    def read_gnode_spherical_coordinates(self):
+        #if not os.path.exists(os.path.join(self.experiment_folder,'features')):
+        #    os.makedirs(os.path.join(self.experiment_folder,'features'))
+        msc_feats_file = os.path.join(self.experiment_folder,'features', "spherical_coordinates.txt")
+        print("&&&& reading spherical coords in: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "r")
+        s_lines = feats_file.readlines()
+        lines = 1
+        embedding_coords = []
+        gid_sphereical_embed_row = {}
+        rcount = 0
+        for line in s_lines:
+            line = line.split(' ')
+            gid = int(line[0])
+
+            scoords = line[1:]#np.array(line[1:], dtype=np.float32)
+
+            coord_sep = len(scoords)//2
+            gid_sphereical_embed_row[gid] = [rcount]
+            embedding_coords.append(scoords[0:coord_sep])
+            rcount += 1
+            embedding_coords.append(scoords[coord_sep:len(scoords)])
+            if rcount <4:
+                pout(["line", line[1:]])
+                pout(['lenscoords', len(scoords)])
+                pout(['r1', scoords[0:coord_sep]])
+                pout(['r2',scoords[coord_sep:len(scoords)]])
+                pout(['scoords', scoords])
+            gid_sphereical_embed_row[gid].append(rcount)
+            rcount+=1
+        feats_file.close()
+        embedding_coords = np.array(embedding_coords).astype(dtype=np.float32)
+        return embedding_coords, gid_sphereical_embed_row

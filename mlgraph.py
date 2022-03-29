@@ -12,6 +12,7 @@ from getofeaturegraph import GeToFeatureGraph
 from ml.features import get_points_from_vertices
 from data_ops.utils import grow_box
 from data_ops.utils import tile_region
+from ml.utils import pout
 
 class MLGraph(GeToFeatureGraph):
     def __init__(self,**kwargs):
@@ -487,6 +488,8 @@ class MLGraph(GeToFeatureGraph):
         #-- dict mapping node ids to index in feature tensor
         gid_feat_idx = 0
 
+        pout(["REMOVED FEATURE PER NODE"])
+
         for gnode in self.gid_gnode_dict.values():
 
 
@@ -509,7 +512,9 @@ class MLGraph(GeToFeatureGraph):
                 ]
             nx_gid = self.node_gid_to_graph_idx[gnode.gid]
             node = self.G.node[nx_gid]
-            node["features"] =  features#gnode.features.tolist()
+            #
+            #node["features"] =  features#gnode.features.tolist()
+
             node["gid"] = gnode.gid
             #getoelm = self.gid_geto_elm_dict[gnode.gid]
             #polyline = getoelm.points
@@ -604,9 +609,9 @@ class MLGraph(GeToFeatureGraph):
 
         # Print the feature ranking
         print("    * Feature ranking: ")
-        print(importances.shape)
-        print(len(feature_names))
-        print(indices.shape)
+        print("importance shape",importances.shape)
+        print("num_names", len(feature_names))
+        print("indices shape",indices.shape)
         self.feat_importance_dict = {}
         if feature_names is not None:
             for f in range(len(feature_names)):#X.shape[1]):
@@ -663,7 +668,9 @@ class MLGraph(GeToFeatureGraph):
                                total_length_positive_training_nodes=None,
                                total_length_positive_nodes=None,
                                total_length_test_nodes=None,
-                               total_length_nodes=None, fname = 'graph_statistics'):
+                               total_length_nodes=None,
+                               total_nodes=None, total_foreground_nodes=None,
+                               fname = 'graph_statistics'):
 
         msc_pred_file = os.path.join(self.pred_session_run_path, fname+'.txt')
         print("&&&& writing percentages in: ", msc_pred_file)
@@ -675,8 +682,12 @@ class MLGraph(GeToFeatureGraph):
         pred_file.write("total_length_test_nodes " + str(total_length_test_nodes)+"\n")
         pred_file.write("total_length_train_nodes " +str(total_length_training_nodes)+"\n")
         pred_file.write("total_length_nodes " + str(total_length_nodes)+"\n")
+        pred_file.write("total_nodes " + str(total_nodes) + "\n")
+        pred_file.write("total_foreground_nodes " + str(total_foreground_nodes) + "\n")
+        pred_file.write("total_background_nodes " + str(total_nodes - total_foreground_nodes) + "\n")
         pred_file.write("percent_graph_training " + str(100.0*(total_training_nodes/total_number_nodes)) + "\n")
-
+        pred_file.write("Total Positive nodes length "+str(total_length_positive_nodes)+'\n')
+        pred_file.write("Total Negative nodes length " + str(total_length_nodes - total_length_positive_nodes) + '\n')
         pred_file.write("percent_length_training " + str(
             100.0 * (total_length_training_nodes / total_length_nodes)) + "\n")
         pred_file.write("percent_length_positive_training " + str(
@@ -703,7 +714,7 @@ class MLGraph(GeToFeatureGraph):
         pred_file = open(msc_pred_file,"w+")
         pred_file.write("num_pixels "+str( self.image.shape[0] * self.image.shape[1])+"\n")
         pred_file.write("num_pixels_training " + str( np.sum(msc_segmentation))+"\n")
-        pred_file.write(tp+"_percent " + str( 100.0 * (np.sum(msc_segmentation) / (self.image.shape[0] * self.image.shape[1]))))
+        pred_file.write(tp+"_percent " + str( 100.0 * (np.sum(msc_segmentation) / (self.image.shape[0] * self.image.shape[1]))) + '\n')
         if total_positive_training_pixels is not None:
             pred_file.write("total_positive_training_pixels " + str(total_positive_training_pixels) + "\n")
             pred_file.write("total_positive_pixels " + str(total_positive_pixels) + "\n")

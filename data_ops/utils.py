@@ -7,6 +7,7 @@ from matplotlib import colors
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
+from ml.utils import pout
 
 #resize the images of the dataset to be half the height and half the width of the original images, so
 # that models states can fit on the GPU memory
@@ -259,6 +260,101 @@ def plot( image_set, name='RF-Lines Prediction', type='contour',write_path=None,
         plt.savefig(os.path.join(write_path,
                                      "original_img_zoom_box.png"),
                         dpi=300)
+
+def compute_features(model=None):
+    #features must go before geto, see load and write func
+
+    # features
+    if model.params['collect_features'] and not model.params['load_features']:
+        model.compile_features(include_geto=model.params['geto_as_feat'])
+        model.write_gnode_features(model.session_name)
+        model.write_feature_names()
+    elif model.params['load_features']:
+        model.load_gnode_features()
+        model.load_feature_names()
+
+    # geto feat
+    if model.params['load_geto_attr']:
+        #if 'geto' in self.getognn.params['aggregator']:
+        model.load_geto_features()
+        model.load_geto_feature_names()
+    elif model.params['geto_as_feat'] and not model.params['load_geto_attr']:
+        #if 'geto' in self.getognn.params['aggregator']:
+        model.build_geto_adj_list(influence_type=model.params['geto_influence_type'])
+        model.write_geto_features(model.session_name)
+        model.write_geto_feature_names()
+        include_generic_feat = model.params['collect_features'] or model.params['load_features']
+        model.compile_features(include_geto=model.params['geto_as_feat'],
+                               include_generic_feat=include_generic_feat)
+
+    #
+    pout(["Feature collection done, now setting up feature handling"])
+    #
+    if (model.params['collect_features'] or model.params['load_geto_attr']) \
+            and (model.params['geto_as_feat'] or model.params['load_features']) and \
+            model.params['feats_independent']:
+        pout(["Concated STD and GEOM features"])
+        features = []
+        feat_idx = 0
+        for gid, gnode in model.gid_gnode_dict.items():
+            feats = model.node_gid_to_standard_feature[gid]
+            geomfeats = model.node_gid_to_geom_feature[gid]
+            combined_feats = feats + geomfeats
+            model.node_gid_to_feature[gid] = np.array(combined_feats)
+            gnode.features = np.array(combined_feats)
+            features.append(combined_feats)
+            model.node_gid_to_feat_idx[gid] = feat_idx
+            feat_idx += 1
+        model.features = np.array(features)
+    elif (model.params['collect_features'] or model.params['load_geto_attr']) \
+            and (model.params['geto_as_feat'] or model.params['load_features']) and \
+            not model.params['feats_independent']:
+        pout(["Independent GEOM and STD features"])
+        features = []
+        getoelms = []
+        feat_idx = 0
+        for gid, gnode in model.gid_gnode_dict.items():
+            feats = model.node_gid_to_standard_feature[gid]
+            geomfeats = model.node_gid_to_geom_feature[gid]
+            #                                                 # MLP random forest use combined!
+            combined_feats = feats + geomfeats              # check where used!
+            model.node_gid_to_feature[gid] = np.array(combined_feats)#
+            gnode.features = None#np.array(combined_feats)
+            features.append(feats)#combined_feats)
+            getoelms.append(geomfeats)
+            model.node_gid_to_feat_idx[gid] = feat_idx
+            model.gid_to_getoelm_idx[gid]   = feat_idx
+            feat_idx += 1
+        model.features = np.array(features)
+        model.getoelms = np.array(getoelms)
+    elif (model.params['collect_features'] or model.params['load_features']):
+        pout(["STD features only"])
+        features = []
+        feat_idx = 0
+        for gid, gnode in model.gid_gnode_dict.items():
+            feats = model.node_gid_to_standard_feature[gid]
+            #geomfeats = model.node_gid_to_geom_feature[gid]
+            #combined_feats = feats + geomfeats
+            model.node_gid_to_feature[gid] = np.array(feats)
+            gnode.features = np.array(feats)
+            features.append(feats)
+            model.node_gid_to_feat_idx[gid] = feat_idx
+            feat_idx += 1
+        model.features = np.array(features)
+    else:
+        pout(["GEOM features only"])
+        features = []
+        feat_idx = 0
+        for gid, gnode in model.gid_gnode_dict.items():
+            #feats = model.node_gid_to_standard_feature[gid]
+            geomfeats = model.node_gid_to_geom_feature[gid]
+            #combined_feats = feats + geomfeats
+            model.node_gid_to_feature[gid] = np.array(geomfeats)
+            gnode.features = np.array(geomfeats)
+            features.append(geomfeats)
+            model.node_gid_to_feat_idx[gid] = feat_idx
+            feat_idx += 1
+        model.features = np.array(features)
 
 def dbgprint(x,name=""):
     print("    *")

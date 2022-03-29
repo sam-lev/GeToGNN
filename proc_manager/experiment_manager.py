@@ -25,7 +25,10 @@ LocalSetup = LocalSetup()
 
 class runner:
     def __init__(self, experiment_name, window_file_base = None, clear_runs=False,
-                 percent_train_thresh = 0, break_training_size=50, load_features = True,
+                 percent_train_thresh = 0, break_training_size=50,
+                 load_features = True, compute_features = False, load_geto_features = False,
+                 feats_independent=False,
+                 compute_geto_features = False,
                  sample_idx=2, multi_run = True, parameter_file_number = 1):
 
         # base attributes shared between models
@@ -47,7 +50,10 @@ class runner:
         self.model_name = 'GeToGNN'  # 'experiment'#'input_select_from_1st_inference'
 
         self.load_features = load_features
-
+        self.compute_features = compute_features
+        self.load_geto_features = load_geto_features
+        self.compute_geto_features = compute_geto_features
+        self.feats_independent = feats_independent
         #
         # input
         #
@@ -176,6 +182,8 @@ class runner:
         total_length_test_nodes = 0
         total_length_nodes = 0
         total_number_edges = len(gid_edge_dict.keys())
+        total_foreground_nodes = 0
+        total_nodes            = 0
         for gid in node_gid_dict.keys():#gid_split_dict.keys():
             label = gid_to_label_dict[gid]
             node = node_gid_dict[gid]
@@ -189,12 +197,14 @@ class runner:
                 total_length_training_nodes += len(node.points)
 
             total_length_nodes += len(node.points)
+            total_nodes        += 1
             if not label[1] < 1:
                 total_length_positive_nodes += len(node.points)
+                total_foreground_nodes      += 1
 
         return total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,\
                total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes,\
-               total_length_test_nodes, total_length_nodes
+               total_length_test_nodes, total_length_nodes, total_nodes, total_foreground_nodes
 
 
     def grow_box(self, dims, boxes):
@@ -316,7 +326,12 @@ class runner:
 
         growth_regions = self.grow_box(dims=dims, boxes=boxes)
 
-        BEGIN_LOADING_FEATURES = self.load_features
+        BEGIN_LOADING_FEATURES      = self.load_features
+        COMPUTE_FEATURES            = self.compute_features
+        BEGIN_LOADING_GETO_FEATURES = self.load_geto_features
+        COMPUTE_GETO_FEATURES       = self.compute_geto_features
+        FEATS_INDEPENDENT           = self.feats_independent
+        run_feat_importance = 1
 
         for gr in range(len(growth_regions)):
 
@@ -345,7 +360,11 @@ class runner:
 
             sup_getognn = supervised_getognn(model_name=self.model_name)
             sup_getognn.build_getognn(
-                BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                BEGIN_LOADING_FEATURES      = BEGIN_LOADING_FEATURES,
+                COMPUTE_FEATURES            = COMPUTE_FEATURES,
+                BEGIN_LOADING_GETO_FEATURES = BEGIN_LOADING_GETO_FEATURES,
+                COMPUTE_GETO_FEATURES       = COMPUTE_GETO_FEATURES,
+                FEATS_INDEPENDENT           = FEATS_INDEPENDENT,
                                        sample_idx=self.sample_idx,
                                        experiment_num=self.experiment_num,
                                        experiment_name=self.experiment_name,
@@ -365,20 +384,43 @@ class runner:
                                        Y_BOX=Y_BOX,
                                        regions=regions)
 
-            if not BEGIN_LOADING_FEATURES:
+            if BEGIN_LOADING_FEATURES:
                 sup_getognn.getognn.params['load_features'] = True
                 sup_getognn.getognn.params['write_features'] = False
-                sup_getognn.getognn.params['load_features'] = True
                 sup_getognn.getognn.params['write_feature_names'] = False
                 sup_getognn.getognn.params['save_filtered_images'] = False
                 sup_getognn.getognn.params['collect_features'] = False
                 sup_getognn.getognn.params['load_preprocessed'] = True
+                sup_getognn.getognn.params['load_feature_names'] = True
+            elif COMPUTE_FEATURES:
+                sup_getognn.getognn.params['load_features'] = False
+                sup_getognn.getognn.params['write_features'] = True
+                sup_getognn.getognn.params['write_feature_names'] = True
+                sup_getognn.getognn.params['save_filtered_images'] = True
+                sup_getognn.getognn.params['collect_features'] = True
+                sup_getognn.getognn.params['load_preprocessed'] = False
+                sup_getognn.getognn.params['load_feature_names'] = False
+            if BEGIN_LOADING_GETO_FEATURES:
                 sup_getognn.getognn.params['load_geto_attr'] = True
                 sup_getognn.getognn.params['load_feature_names'] = True
+            elif COMPUTE_GETO_FEATURES:
+                sup_getognn.getognn.params['geto_as_feat'] = True
+                sup_getognn.getognn.params['load_geto_attr'] = False
 
-            BEGIN_LOADING_FEATURES = True
+
+
+
 
             sup_getognn.compute_features()
+
+            if BEGIN_LOADING_FEATURES or COMPUTE_FEATURES:
+                BEGIN_LOADING_FEATURES      = True
+                COMPUTE_FEATURES            = False
+
+            if BEGIN_LOADING_GETO_FEATURES or COMPUTE_GETO_FEATURES:
+                BEGIN_LOADING_GETO_FEATURES = True
+                COMPUTE_GETO_FEATURES       = False
+
 
             getognn = sup_getognn.train(run_num=str(percent))
 
@@ -402,14 +444,21 @@ class runner:
                 test_all=True)
             gid_features_dict = partition_feat_dict['all']
             gid_label_dict = partition_label_dict['all']
-            getognn.load_feature_names()
-            if getognn.params['feature_importance']:
-                getognn.feature_importance(feature_names=getognn.feature_names,
-                                      features=gid_features_dict,
+            #getognn.load_feature_names()
+            if run_feat_importance:     #getognn.params['feature_importance'] and
+                names = []
+                if BEGIN_LOADING_FEATURES or COMPUTE_FEATURES:
+                    names += getognn.load_feature_names()
+                if BEGIN_LOADING_GETO_FEATURES or COMPUTE_GETO_FEATURES:
+                    names += getognn.load_geto_feature_names()
+
+                getognn.feature_importance(feature_names=names,#getognn.feature_names,
+                                      features=getognn.node_gid_to_feature,#gid_features_dict,
                                       labels=gid_label_dict,
                                            plot=False)
                 getognn.write_feature_importance()
                 getognn.params['feature_importance'] = False
+                run_feat_importance = 0
 
             training_reg_bg = np.zeros(getognn.image.shape[:2], dtype=np.uint8)
             for x_b, y_b in zip(getognn.x_box, getognn.y_box):
@@ -453,7 +502,7 @@ class runner:
 
             total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes, total_length_training_nodes,\
             total_length_positive_training_nodes,  total_length_positive_nodes,\
-            total_length_test_nodes, total_length_nodes = self.graph_statistics( getognn.gid_gnode_dict,
+            total_length_test_nodes, total_length_nodes, total_nodes, total_foreground_nodes = self.graph_statistics( getognn.gid_gnode_dict,
                                                                                  getognn.gid_edge_dict,
                                                                                  getognn.node_gid_to_partition,
                                                                                  getognn.node_gid_to_label)
@@ -466,6 +515,7 @@ class runner:
                                            total_length_positive_nodes,
                                            total_length_test_nodes,
                                            total_length_nodes,
+                                           total_nodes, total_foreground_nodes,
                                            fname='region_percents')
 
             # getognn.write_training_graph_percentages(dir=getognn.pred_session_run_path,
@@ -579,6 +629,7 @@ class runner:
             #
 
             del getognn
+            del sup_getognn
 
 
 
@@ -696,13 +747,14 @@ class runner:
 
             total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes, \
             total_length_training_nodes, total_length_positive_training_nodes,  total_length_positive_nodes,\
-            total_length_test_nodes, total_length_nodes = self.graph_statistics(UNet.gid_gnode_dict,
+            total_length_test_nodes, total_length_nodes,total_nodes, total_foreground_nodes = self.graph_statistics(UNet.gid_gnode_dict,
                                                                                 UNet.gid_edge_dict,
                                                                                 UNet.node_gid_to_partition,
                                                                                 UNet.node_gid_to_label)
             UNet.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,
                                       total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes,
-                                      total_length_test_nodes, total_length_nodes)
+                                      total_length_test_nodes, total_length_nodes,
+                                        total_nodes, total_foreground_nodes)
 
             UNet.compute_metrics( pred_images=preds, # scores=scores, pred_labels=pred_labels, pred_thresh = pred_thresh,
                                  # predictions_topo=predictions_topo, labels_topo=labels_topo,
@@ -737,6 +789,11 @@ class runner:
             growth_regions = self.grow_box(dims=dims, boxes=boxes)
 
             BEGIN_LOADING_FEATURES = self.load_features
+            COMPUTE_FEATURES = self.compute_features
+            BEGIN_LOADING_GETO_FEATURES = self.load_geto_features
+            COMPUTE_GETO_FEATURES = self.compute_geto_features
+            FEATS_INDEPENDENT = self.feats_independent
+            run_feat_importance = 1
 
             for gr in  range(len(growth_regions)):
 
@@ -788,11 +845,46 @@ class runner:
 
 
                 RF.build_random_forest(
-                                       BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                    BEGIN_LOADING_FEATURES=BEGIN_LOADING_FEATURES,
+                    COMPUTE_FEATURES=COMPUTE_FEATURES,
+                    BEGIN_LOADING_GETO_FEATURES=BEGIN_LOADING_GETO_FEATURES,
+                    COMPUTE_GETO_FEATURES=COMPUTE_GETO_FEATURES,
+                    FEATS_INDEPENDENT=FEATS_INDEPENDENT,
                                        ground_truth_label_file=self.ground_truth_label_file,
                                        boxes=regions)
 
-                #RF.run_num = 0
+                if BEGIN_LOADING_FEATURES:
+                    RF.params['load_features'] = True
+                    RF.params['write_features'] = False
+                    RF.params['write_feature_names'] = False
+                    RF.params['save_filtered_images'] = False
+                    RF.params['collect_features'] = False
+                    RF.params['load_preprocessed'] = True
+                    RF.params['load_feature_names'] = True
+                elif COMPUTE_FEATURES:
+                    RF.params['load_features'] = False
+                    RF.params['write_features'] = True
+                    RF.params['write_feature_names'] = True
+                    RF.params['save_filtered_images'] = True
+                    RF.params['collect_features'] = True
+                    RF.params['load_preprocessed'] = False
+                    RF.params['load_feature_names'] = False
+                if BEGIN_LOADING_GETO_FEATURES:
+                    RF.params['load_geto_attr'] = True
+                    RF.params['load_feature_names'] = True
+                elif COMPUTE_GETO_FEATURES:
+                    RF.params['geto_as_feat'] = True
+                    RF.params['load_geto_attr'] = False
+
+                #sup_getognn.compute_features()
+
+                if BEGIN_LOADING_FEATURES or COMPUTE_FEATURES:
+                    BEGIN_LOADING_FEATURES = True
+                    COMPUTE_FEATURES = False
+
+                if BEGIN_LOADING_GETO_FEATURES or COMPUTE_GETO_FEATURES:
+                    BEGIN_LOADING_GETO_FEATURES = True
+                    COMPUTE_GETO_FEATURES = False
 
 
 
@@ -986,15 +1078,19 @@ class runner:
                 #     training_reg_bg[region[0]:region[1], region[2]:region[3]] = 1
                 total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,\
                 total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes,\
-                total_length_test_nodes, total_length_nodes = self.graph_statistics(RF.gid_gnode_dict,
+                total_length_test_nodes, total_length_nodes, total_nodes, total_foreground_nodes = self.graph_statistics(RF.gid_gnode_dict,
                                                                                     RF.gid_edge_dict,
                                                                                     RF.node_gid_to_partition,
                                                                                     RF.node_gid_to_label)
                 fname = 'graph_statistics' if learning == 'pixel' else 'region_percents'
+                total_number_edges = RF.edge_count
+                total_nodes        = RF.vertex_count
+                total_number_nodes = RF.vertex_count
                 RF.write_graph_statistics(total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes,
                                           total_length_training_nodes, total_length_positive_training_nodes,
                                           total_length_positive_nodes,
                                           total_length_test_nodes, total_length_nodes,
+                                          total_nodes, total_foreground_nodes,
                                           fname=fname)
 
                 if learning=='pixel':
@@ -1311,7 +1407,7 @@ class runner:
 
             total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes, \
             total_length_training_nodes, total_length_positive_training_nodes, total_length_positive_nodes, \
-            total_length_test_nodes, total_length_nodes = self.graph_statistics(MLP.gid_gnode_dict,
+            total_length_test_nodes, total_length_nodes, total_nodes, total_foreground_nodes = self.graph_statistics(MLP.gid_gnode_dict,
                                                                                 MLP.gid_edge_dict,
                                                                                 MLP.node_gid_to_partition,
                                                                                 MLP.node_gid_to_label)
@@ -1320,6 +1416,7 @@ class runner:
                                       total_length_training_nodes, total_length_positive_training_nodes,
                                       total_length_positive_nodes,
                                       total_length_test_nodes, total_length_nodes,
+                                       total_nodes, total_foreground_nodes,
                                       fname=fname)
 
             #

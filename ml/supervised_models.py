@@ -97,6 +97,13 @@ class SupervisedGraphsage(SampleAndAggregate):
         self.getoinputs1 = placeholders["getobatch"] if self.geto_elements is not None else None
         self.model_size = model_size
         self.adj_info = adj
+
+        # check = 100
+        # if check < 200:
+        #     pout(["features at graph idx ", check])
+        #     pout(["feat", self.features[check]])
+        #     check += 100
+
         if identity_dim > 0:
            self.embeds = tf.get_variable("node_embeddings", [adj.get_shape().as_list()[0], identity_dim])
         else:
