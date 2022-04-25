@@ -5,6 +5,8 @@ import numpy as np
 
 np.random.seed(123)
 
+from ml.utils import pout
+
 class EdgeMinibatchIterator(object):
     
     """ This minibatch iterator iterates over batches of sampled edges or
@@ -297,6 +299,27 @@ class NodeMinibatchIterator(object):
         self.train_nodes = set(G.nodes()).difference(self.no_train_nodes_set)
         # don't train on nodes that only have edges to test set
         self.train_nodes = [n for n in self.train_nodes if self.deg[id2idx[n]] > 0]
+
+        self.sublevel_sets = [n for n in self.G.nodes() if self.G.node[n]['sublevel_set_id'][1] != -1]
+        self.sublevel_set_id = 0
+        pout(["len sublevelnodes",len(self.sublevel_sets)])
+        if len(self.sublevel_sets) != 0:
+            self.total_sublevel_sets = self.G.node[self.sublevel_sets[0]]['sublevel_set_id'][0]
+            pout(["total sublevel sets", self.total_sublevel_sets])
+            #self.update_sublevel_training_set()
+
+    def update_sublevel_training_set(self):
+
+        self.sublevel_set_id += 1
+        if self.sublevel_set_id <= self.total_sublevel_sets:
+            self.train_nodes = [n for n in self.sublevel_sets if self.G.node[n]['sublevel_set_id'][1] == self.sublevel_set_id ]
+            # don't train on nodes that only have edges to test set
+            self.train_nodes = [n for n in self.train_nodes if self.deg[self.id2idx[n]] > 0]
+        else:
+            self.train_nodes = set(self.G.nodes()).difference(self.no_train_nodes_set)
+            # don't train on nodes that only have edges to test set
+            self.train_nodes = [n for n in self.train_nodes if self.deg[self.id2idx[n]] > 0]
+        pout(['updating training subgraph', 'length_training',len(self.train_nodes)])
 
     def _make_label_vec(self, node):
         label = self.label_map[node]

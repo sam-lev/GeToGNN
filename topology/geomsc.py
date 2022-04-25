@@ -13,7 +13,6 @@ import subprocess
 #class with local file paths
 from ml.features import *
 from localsetup import *
-from getograph import GeToGraph
 from localsetup import LocalSetup as LS
 
 
@@ -33,7 +32,7 @@ def blur_and_save( original_image, fname_base, blur_sigma=2, grey_scale=True):
     return blurred_image, fname_raw
 
 
-def augment_channels(original_image, fname_base, channels=[0, 1]):
+def augment_image_channels(original_image, fname_base, channels=[0, 1]):
     import copy
     import cv2
     augmented_image = copy.deepcopy(original_image)
@@ -46,7 +45,7 @@ def augment_channels(original_image, fname_base, channels=[0, 1]):
     imsave(fname_aug, augmented_image)
     return augmented_image, fname_aug
 
-def compute_geomscsegmentation( image_filename=None
+def call_geomscsegmentation( image_filename=None
                    , image=None
                    , geomsc_exec_path='.'
                    , X=None, Y=None
@@ -54,72 +53,84 @@ def compute_geomscsegmentation( image_filename=None
                    , blur=True, blur_sigma=2
                    , write_path='', delete_msc_files=False
                    , fname_raw=None
-                   , invert_image=True
+                   , invert_image=False
                    , grey_scale=True
                    , scale_intensities=False
                    , augment_channels=[]):
 
-    if not os.path.exists(os.path.join(write_path, 'raw_images')):
+    if write_path is None and image_filename is not None:
+        write_path = os.path.dirname(image_filename)
         os.mkdir(os.path.join(write_path, 'raw_images'))
     img_name = ""
-    if image_filename is not None:
-        img_name = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[0]
+    # if image_filename is not None:
+    #     img_name = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[0]
 
     use_image = True if image is not None else False
-    # if False:
-    image = image_filename if image is None else image  # np.mean(image,axis=0) if grey_scale else image
 
+    image = image_filename if image is None else image  # np.mean(image,axis=0) if grey_scale else image
+    if image_filename is not None and image_filename.split('.')[-1] == 'raw':
+        if '/' in image_filename:
+            image_no_path_name = image_filename.split(os.path.dirname(image_filename))[-1].split('/')[-1]
+        else:
+            image_no_path_name = image_filename
+        fname_raw = os.path.join(write_path, image_no_path_name)
     if fname_raw:
         fname = image_filename
-        fname_raw = os.path.join(write_path, 'raw_images', fname.rsplit('.', 1)[0] + '.raw')
-        image = io.imread(fname, as_gray=grey_scale, flatten=True)
+        image = np.fromfile(fname, dtype="float32")[:(X * Y)].reshape((X, Y))
+        # image = io.imread(fname, as_gray=grey_scale, flatten=True)
         if invert_image:
             image = invert(image)
-        image.astype('float32').tofile(fname_raw)
+        #image.astype('float32').tofile(fname_raw)
+    else:
+        if '/' in image_filename:
+            image_no_path_name = image_filename.split(os.path.dirname(image_filename))[-1].split('/')[-1]
+        else:
+            image_no_path_name = image_filename
+        fname_raw = os.path.join(write_path, image_no_path_name)
 
     if scale_intensities:
-        raw_image = io.imread(image, as_gray=grey_scale) if use_image else image
+        raw_image = image if image is not None else np.fromfile(image, dtype="float32")[:(X * Y)].reshape((X, Y))
         if invert_image:
             raw_image = invert(raw_image)
         if write_path:
-            raw_path = os.path.join(write_path.rsplit(".", 1)[0], 'raw_images', img_name)
+            raw_path = fname_raw#os.path.join(write_path.rsplit(".", 1)[0], 'raw_images', img_name)
         else:
             raw_path = image.rsplit(".", 1)[0]
         image, fname_raw = scale_intensity(raw_image,
-                                           raw_path + 'PERS' + str(persistence), scale_range=(0, 255))
+                                           raw_path, scale_range=(0, 255))
 
     if len(augment_channels) > 0:
         im_name = img_name
 
-        im = image if use_image else Image.open(image)  # cv2.imread(image)
+        im = image if image is not None else np.fromfile(image, dtype="float32")[:(X * Y)].reshape((X, Y))  # cv2.imread(image)
         im = np.array(im)
         # im = cv2.cvtColor(im, cv2.COLOR_BGR2HSV)
-        write_dir = os.path.join(write_path.rsplit(".", 1)[0], 'augmented_images')
+        write_dir = write_path#os.path.join(write_path.rsplit(".", 1)[0], 'augmented_images')
         if write_path:
-            raw_path = os.path.join(write_dir, img_name)
+            raw_path = fname_raw#os.path.join(write_dir, img_name)
         else:
             raw_path = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[0]  # image.rsplit(".", 1)[0]
         type = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[1]
         if not os.path.exists(write_dir):
             os.makedirs(write_dir)
-        im, image = augment_channels(im, raw_path + '.' + type, augment_channels)  # im_name.split('.')[1]
+        im, image = augment_image_channels(im, raw_path + '.' + type, augment_channels)  # im_name.split('.')[1]
 
     if blur:
-        raw_image = image if use_image else io.imread(image, as_gray=grey_scale)
+        raw_image = image if image is not None else np.fromfile(image, dtype="float32")[:(X * Y)].reshape((X, Y))
         if invert_image:
             raw_image = invert(raw_image)
         if write_path:
-            raw_path = os.path.join(write_path.rsplit(".", 1)[0], 'raw_images', img_name)
+            raw_path = fname_raw#os.path.join(write_path.rsplit(".", 1)[0],  img_name)
         else:
             raw_path = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[0]
         image, fname_raw = blur_and_save(raw_image, raw_path + 'PERS' + str(persistence), blur_sigma=blur_sigma,
                                          grey_scale=grey_scale)
     else:
-        raw_image = image if use_image else io.imread(image, as_gray=grey_scale)
+        raw_image = image if image is not None else np.fromfile(image, dtype="float32")[:(X * Y)].reshape((X, Y))
         if invert_image:
             raw_image = invert(raw_image)
         if write_path:
-            raw_path = os.path.join(write_path.rsplit(".", 1)[0], 'raw_images', img_name)
+            raw_path = os.path.join(write_path.rsplit(".", 1)[0], img_name)
         else:
             raw_path = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[0]
         fname_raw = raw_path + 'PERS' + str(persistence) + ".raw"
@@ -146,10 +157,7 @@ def compute_geomscsegmentation( image_filename=None
 
     starting_dir = geomsc_exec_path  # os.path.join( os.path.dirname(os.path.abspath(__file__)), "..")
     msc_build = "/home/sam/Documents/PhD/Research/GradIntegrator/build/extract2dridgegraph"
-    starting_dir = os.path.join(starting_dir
-                                , "GradIntegrator"
-                                , "build"
-                                , "extract2dridgegraph")
+
 
     # print("list ex dir  %%%%%%%%%%", os.listdir(starting_dir))
 
@@ -160,8 +168,8 @@ def compute_geomscsegmentation( image_filename=None
     proc = subprocess.Popen([
         os.path.join(msc_build, "extract2dridgegraph"),  # note: '.' needed to run executable.
         fname_raw,
-        str(X),
         str(Y),
+        str(X),
         str(persistence)],
         shell=False,
         stdin=subprocess.PIPE,
@@ -174,8 +182,8 @@ def compute_geomscsegmentation( image_filename=None
     #    sys.stdout.write(line)
     # for line in proc.stdout:
     #    sys.stdout.write(line)
-    geomsc = GeToGraph()
-    geomsc.read_from_geo_file(fname_raw)
+    geomsc = MSC()
+    geomsc.read_from_file(fname_raw)
 
     if delete_msc_files:
         raw_folder = os.path.join(write_path.rsplit(".", 1)[0], 'raw_images')
@@ -187,7 +195,11 @@ def compute_geomscsegmentation( image_filename=None
                     # elif os.path.isdir(file_path): shutil.rmtree(file_path)
             except Exception as e:
                 print(e)
+
     return geomsc
+
+
+
 
 def msc_arc_accuracy(self, vertex=None,geomsc=None, labeled_segmentation=None,
                      labeled_mask=None, invert=True):
@@ -225,21 +237,22 @@ def label_msc(geomsc=None, labeled_segmentation=None, labeled_mask=None, invert=
                                       labeled_mask = labeled_mask, invert=invert)
     return labeled_msc
 
-def geomscsegmentation( persistence_values = [1], blur_sigmas = [3]
+def compute_geomsc( persistence_values, blur_sigmas,X=None,Y=None
                           , data_buffer = None, data_path = None, segmentation_path=None,
-                          write_path = None, labeled_segmentation=None, label=True
+                          write_path = None, labeled_segmentation=None, label = False
                           , save=False, save_binary_seg=False, number_images=None, persistence_cardinality = None
                           , valley=True, ridge=True, env='multivax'):
-    LocalSetup = LS(env=env)
+    #LocalSetup = LS(env=env)
 
     # check needed folders present else make
-    if not os.path.exists(os.path.join(write_path, 'raw_images')):
-        os.mkdir(os.path.join(write_path, 'raw_images'))
+    # if not os.path.exists(os.path.join(write_path, 'raw_images')):
+    #     os.mkdir(os.path.join(write_path, 'raw_images'))
     # iterate through images and compute msc for each image
     # at various persistence values
     images = None
-    if data_path and segmentation_path is not None:
-        images = sorted([f for f in os.listdir(data_path) if os.path.isfile(os.path.join(data_path, f)) and any(image_type in f.rsplit('.', 1)[1] for image_type in ['tif','gif','jpg','png','ppm','vk.ppm'])])
+    if data_path and segmentation_path is not None and os.path.isdir(data_path):
+        images = sorted([f for f in os.listdir(data_path) if os.path.isfile(os.path.join(data_path,
+                                                                                         f)) and any(image_type in f.rsplit('.', 1)[1] for image_type in ['tif','gif','jpg','png','ppm','vk.ppm','raw'])])
         seg_image_paths = sorted([f for f in os.listdir(segmentation_path)])
         seg_images = []
         for path in seg_image_paths:
@@ -249,7 +262,10 @@ def geomscsegmentation( persistence_values = [1], blur_sigmas = [3]
         if data_buffer is None:
             print("no data buffer given composing new data buffer")
             data_buffer = zip(images, seg_images, im_count)
-
+    else:
+        data_buffer = zip([None],[None],[None],[None])
+        images = [data_path]
+        number_images = 1 if number_images is None else number_images
     if persistence_cardinality is None:
         persistence_cardinality = {}
         for i in range(number_images):
@@ -294,24 +310,27 @@ def geomscsegmentation( persistence_values = [1], blur_sigmas = [3]
                     continue
 
 
-                image = copy.deepcopy(image)
+                #image = copy.deepcopy(image)
                 if mask is not None:
                     image[rgblabeled_mask==0] = 1.0
 
-                image_name_and_path = os.path.join(data_path,im_path)
+                image_name_and_path = im_path#os.path.join(data_path,im_path)
                 print(">>>>")
                 print(image_name_and_path)
                 print(">>>>")
-                if len(image.shape) == 2:
-                    X=image.shape[0]
-                    Y=image.shape[1]
-                else:
-                    X = image.shape[2]
-                    Y = image.shape[1]
-                geomsc = compute_geomscsegmentation(image_filename =  image_name_and_path
+                # if len(image.shape) == 2:
+                #     X=image.shape[0]
+                #     Y=image.shape[1]
+                # else:
+                #     X = image.shape[2]
+                #     Y = image.shape[1]
+                if X is None or Y is None:
+                    X = int(im_path.split('_')[-2])
+                    Y = int(im_path.split('_')[-1].split('.')[0])
+                geomsc = call_geomscsegmentation(image_filename =  image_name_and_path
                                            ,image=image
                                            ,X=X, Y=Y
-                                           ,geomsc_exec_path=os.path.join(LocalSetup.project_base_path,'..')
+                                           ,geomsc_exec_path=None#os.path.join(LocalSetup.project_base_path,'..')
                                            , persistence = pers
                                            , blur=True
                                            , blur_sigma=blur_sigma
@@ -353,13 +372,78 @@ def geomscsegmentation( persistence_values = [1], blur_sigmas = [3]
 
                 msc_collection[(pers,blur_sigma)] = geomsc
 
-        msc_segmentations.append(msc_collection)
+        msc_segmentations.append(geomsc)#msc_collection)
 
-    if data_buffer is not None:
-        data_buffer_with_msc = list(zip(images_
-                                        ,msc_segmentations
-                                        ,masks_
-                                        ,segmentations_))
-        return data_buffer_with_msc
-    else:
-        return msc_segmentations
+    # if data_buffer is not None:
+    #     data_buffer_with_msc = list(zip(images_
+    #                                     ,msc_segmentations
+    #                                     ,masks_
+    #                                     ,segmentations_))
+    #     return data_buffer_with_msc
+    # else:
+    return msc_segmentations[0]
+
+
+class MSCNode:
+    def __init__(self):
+        self.arcs = []
+
+    def read_from_line(self, line):
+        tmplist = line.split(',')
+        self.id = int(tmplist[0])
+        #self.index = int(tmplist[1])
+        #self.value = float(tmplist[2])
+        #self.boundary = int(tmplist[3])
+        self.points = [(float(tmplist[1]), float(tmplist[2]))]
+
+    def add_arc(self, arc):
+        self.arcs.append(arc)
+
+
+class MSCArc:
+    def __init(self):
+        self.node_ids = []
+        self.label_accuracy = None
+
+    def __group_xy(self, lst):
+        for i in range(0, len(lst), 2):
+            yield tuple(lst[i : i + 2])
+
+    def read_from_line(self, line):
+        tmplist = line.split(',')
+        self.id = int(tmplist[0])
+        self.node_ids = [int(tmplist[1]), int(tmplist[2])]
+        self.points = [
+            i for i in self.__group_xy([float(i) for i in tmplist[3:]])
+        ]
+
+
+class MSC:
+    def __init__(self):
+        self.nodes = {}
+        self.arcs = []
+        self.image = None
+
+    def read_from_file(self, fname_base):
+        nodesname = fname_base + ".nodes.txt"
+        arcsname = fname_base + ".arcs.txt"
+        node_file = open(nodesname, "r")
+        nodes_lines = node_file.readlines()
+        node_file.close()
+        for l in nodes_lines:
+            n = MSCNode()
+            n.read_from_line(l)
+            self.nodes[n.id] = n
+        arcs_file = open(arcsname, "r")
+        arcs_lines = arcs_file.readlines()
+        arcs_file.close()
+        for l in arcs_lines:
+            a = MSCArc()
+            a.read_from_line(l)
+            n1 = self.nodes[a.node_ids[0]]
+            n2 = self.nodes[a.node_ids[1]]
+            n1.add_arc(a)
+            n2.add_arc(a)
+            a.nodes = [n1, n2]
+            self.arcs.append(a)
+

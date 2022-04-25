@@ -186,6 +186,7 @@ class GeToGNN(MLGraph):
         for arg in kwargs:
             self.params[arg] = kwargs[arg]
 
+        pout(["using sublevel sets", self.params['sublevel_sets']])
         wp=1.0
         if self.params['getognn_class_weights']:
             positive_sample_count = 0
@@ -239,7 +240,7 @@ class GeToGNN(MLGraph):
             nx_idx_to_label_idx = {self.node_gid_to_graph_idx[gid]: label for gid, label
                                    in self.node_gid_to_label.items()}
             nx_idx_to_getoelm_idx = {self.node_gid_to_graph_idx[gid]: getoelm_idx for gid, getoelm_idx
-                                     in self.gid_to_getoelm_idx.items()}
+                                     in self.gid_to_getoelm_idx.items()} if self.getoelms is not None else None
 
             G, features, nx_idx_to_feat_idx, _ , nx_idx_to_label_idx, _ , _ \
                 = format_data(dual=self.G.copy(),
@@ -288,7 +289,8 @@ class GeToGNN(MLGraph):
                            dim_2=self.params['out_dim_2'],
                            concat=self.params['concat'],
                            jumping_knowledge=self.params['jumping_knowledge'],
-                           jump_type=self.params['jump_type'])
+                           jump_type=self.params['jump_type'],
+                           sublevel_sets=self.params['sublevel_sets'])
             self.train_time = self.gnn.train_time
             self.ped_time = self.gnn.pred_time
 
@@ -940,43 +942,7 @@ class supervised_getognn:
         if not os.path.exists(out_folder):
             os.makedirs(out_folder)
 
-        '''
-        if self.getognn.params['load_geto_attr']:
-            if 'geto' in self.getognn.params['aggregator']:
-                self.getognn.load_geto_features()
-                self.getognn.load_geto_feature_names()
-        else:
-            if 'geto' in self.getognn.params['aggregator']:
-                self.getognn.build_geto_adj_list(influence_type=self.getognn.params['geto_influence_type'])
-                self.getognn.write_geto_features(self.getognn.session_name)
-                self.getognn.write_geto_feature_names()
 
-        # features
-        if not self.getognn.params['load_features']:
-            self.getognn.compile_features(include_geto=self.getognn.params['geto_as_feat'])
-            self.getognn.write_gnode_features(self.getognn.session_name)
-            self.getognn.write_feature_names()
-        else:
-            self.getognn.load_gnode_features()
-            self.getognn.load_feature_names()
-            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
-                self.getognn.load_geto_features()
-                self.getognn.load_geto_feature_names()
-
-        if self.getognn.params['write_features']:
-            self.getognn.write_gnode_features(self.getognn.session_name)
-
-        if self.getognn.params['write_feature_names']:
-            self.getognn.write_feature_names()
-
-
-        if self.getognn.params['write_feature_names']:
-            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
-                self.getognn.write_geto_feature_names()
-        if self.getognn.params['write_features']:
-            if 'geto' in self.getognn.params['aggregator'] or self.getognn.params['geto_as_feat']:
-                self.getognn.write_geto_features(self.getognn.session_name)
-        '''
 
         # training info, selection, partition train/val/test
         self.getognn.read_labels_from_file(file=ground_truth_label_file)
@@ -986,37 +952,9 @@ class supervised_getognn:
         training_set , test_and_val_set, box_set = self.getognn.box_select_geomsc_training(x_range=X_BOX,
                                                                                   y_range=Y_BOX,
                                                                                   boxes=None)
-        # self.getognn.X_BOX = box_set[0]
-        # self.getognn.Y_BOX = box_set[1]
-        # self.X_BOX, self.Y_BOX = box_set
-        print("BOX SET")
-        print(box_set)
-
-        self.getognn.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,
-                                                 validation_samples = 1)
 
 
 
-
-
-        if self.getognn.params['write_json_graph']:
-            self.getognn.write_json_graph_data(folder_path=self.getognn.pred_session_run_path, name=model_name + '_' + self.getognn.params['name'])
-
-
-
-
-        # random walks
-        if not self.getognn.params['load_preprocessed_walks']:
-            walk_embedding_file = os.path.join(self.getognn.LocalSetup.project_base_path, 'datasets',
-                                               self.getognn.params['write_folder'],'walk_embeddings',
-                                               'gnn')
-            self.getognn.params['load_walks'] = walk_embedding_file
-            self.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
-        else:
-            walk_embedding_file = os.path.join(self.getognn.LocalSetup.project_base_path, 'datasets',
-                                               self.getognn.params['write_folder'], 'walk_embeddings',
-                                               'gnn')
-            self.getognn.params['load_walks'] = walk_embedding_file
 
 
     def compute_features(self, model=None):
@@ -1055,7 +993,7 @@ class supervised_getognn:
                 self.getognn.write_geto_features(self.getognn.session_name)
         '''
 
-    def train(self, getognn=None, run_num=1):
+    def train(self, getognn=None, run_num=1, sublevel_sets=False):
         if getognn is not None:
             self.getognn = getognn
         # self.X_BOX = self.getognn.X_BOX
@@ -1063,7 +1001,7 @@ class supervised_getognn:
         # self.Y_BOX = self.getognn.Y_BOX
         #training
 
-        self.getognn.supervised_train()
+        self.getognn.supervised_train(sublevel_sets=sublevel_sets)
 
         self.pred_time = self.getognn.pred_time
         self.train_time = self.getognn.train_time
@@ -1121,8 +1059,8 @@ class unsupervised_getognn:
 
         training_set , test_and_val_set, empty_set = self.getognn.box_select_geomsc_training(x_range=self.getognn.params['x_box'], y_range=self.getognn.params['y_box'])
 
-        self.getognn.get_train_test_val_sugraph_split(collect_validation=True, validation_hops = 1,
-                                                 validation_samples = 1)
+        self.getognn.get_train_test_val_subgraph_split(collect_validation=True, validation_hops = 1,
+                                                       validation_samples = 1)
 
 
 

@@ -209,7 +209,10 @@ class MLGraph(GeToFeatureGraph):
 
         self.node_gid_to_partition = {}
 
-        empty_set = False
+        # deal with priors with incident edge and without adjacent prior( -1 gid)
+        isolated = self.gid_gnode_dict[-1]
+        isolated.partition = 'train'
+        isolated.label = [1., 0.]
 
         if len(x_range_select) == 1:#np.array(x_range).shape == np.array([6,9]).shape:
             x_ranges = x_range_select[0]
@@ -279,6 +282,10 @@ class MLGraph(GeToFeatureGraph):
         train_length = len(self.selected_positive_arc_ids) + len(self.selected_negative_arc_ids)
 
 
+        # deal with priors with incident edge and without adjacent prior( -1 gid)
+        isolated = self.gid_gnode_dict[-1]
+        isolated.partition = 'train'
+        isolated.label = [1, 0]
 
         num_test = len(self.selected_test_arc_ids)
         if num_test == 0:
@@ -441,9 +448,9 @@ class MLGraph(GeToFeatureGraph):
         return not invalid
 
 
-    def get_train_test_val_sugraph_split(self, validation_hops = 1, validation_samples = 1,
-                                         test_hops = None, test_samples = None, multiclass= False
-                                         , collect_validation=False):
+    def get_train_test_val_subgraph_split(self, validation_hops = 1, validation_samples = 1,
+                                          test_hops = None, test_samples = None, multiclass= False
+                                          , collect_validation=False):
         collect_validation = False
         if collect_validation:
 
@@ -494,7 +501,6 @@ class MLGraph(GeToFeatureGraph):
 
 
             partition = self.node_gid_to_partition[gnode.gid]
-            features = self.node_gid_to_feature[gnode.gid].tolist()
 
             if gnode.label is not None and gnode.gid not in all_selected:
                 label = self.node_gid_to_label[gnode.gid]# [0 , 1] if gnode.label > 0 else [1, 0]#[
@@ -524,6 +530,7 @@ class MLGraph(GeToFeatureGraph):
             node["partition"] = partition
             # assign partition to node
             node["train"] = partition == 'train'
+            node["sublevel_set_id"] = [0, -1]
             node["test"] = partition == 'test'
             node["val"] = partition == 'val'
             node["label"] = label
@@ -573,21 +580,179 @@ class MLGraph(GeToFeatureGraph):
                     self.node_gid_to_partition[gnode.gid] = 'train'
             gid_feat_idx += 1
 
-        #for nx_gid, node in list(self.G.nodes_iter(data=True)):
-        #
-        #    for adj_edge in node["edges"]:
-        #        for adj_gnode_gid in self.gid_edge_dict[adj_edge].gnode_gids:
-        #            adj_gnode_nx_id = self.node_gid_to_graph_idx[adj_gnode_gid]
-        #            if adj_gnode_nx_id != nx_gid:
-        #                self.G.add_edge(nx_gid, adj_gnode_nx_id)
-
         self.G_dict = json_graph.node_link_data(self.G)
-        s1 = json.dumps(self.G_dict)  # input graph
-        s2 = json.dumps(self.node_gid_to_feat_idx)  # dict: nodes to ints
-        s3 = json.dumps(self.node_gid_to_label)  # dict: node_id to class
+        # s1 = json.dumps(self.G_dict)  # input graph
+        # s2 = json.dumps(self.node_gid_to_feat_idx)  # dict: nodes to ints
+        # s3 = json.dumps(self.node_gid_to_label)  # dict: node_id to class
 
         end_time = time.time()
         return (self.G_dict, self.node_gid_to_feat_idx , self.node_gid_to_label, self.features)
+
+    def complex_sublevel_training_set(self):
+        # #for gnode in self.gid_gnode_dict.values():
+        #
+        #     partition = self.node_gid_to_partition[gnode.gid]
+        #
+        sublevel_training_set = [gnode.gid for gnode in self.gid_gnode_dict.values() if self.node_gid_to_partition[gnode.gid] == 'train' and gnode.sublevel_set]
+        #     if gnode.sublevel_set:# and partition == 'train':
+        #         sublevel_training_set.append(gnode.gid)
+        superlevel_training_set = [gnode.gid for gnode in self.gid_gnode_dict.values() if self.node_gid_to_partition[gnode.gid] == 'train']
+        #     if partition == 'train':#not gnode.sublevel_set and partition == 'train':
+        #         superlevel_training_set.append(gnode.gid)
+
+        return superlevel_training_set, sublevel_training_set
+
+    def get_complex_informed_subgraph_split(self, sublevel_training_sets,
+                                                          validation_hops=1,
+                                                          validation_samples=1,
+                                                          test_hops=None,
+                                                          test_samples=None,
+                                                          multiclass=False,
+                                                          collect_validation=False):
+
+
+
+        total_sublevel_sets = len(sublevel_training_sets)
+        sublevel_training_set = sublevel_training_sets[0] # change to iterate when have more complexes
+        sublevel_training_set_id = 0
+
+        collect_validation = False
+        if collect_validation:
+
+            self.validation_set, self.validation_set_ids, _, _ = self.cvt_sample_validation_set(hops=validation_hops,
+                                                                                                samples=validation_samples)
+            for gid in self.validation_set_ids["positive"].union(self.validation_set_ids["negative"]):
+                self.node_gid_to_partition[gid] = 'val'
+
+            all_validation = self.validation_set_ids["positive"].union(self.validation_set_ids["negative"])
+            dummy_validation = 0
+        else:
+            dummy_validation_pos = list(self.gid_gnode_dict.values())[0]
+            dummy_validation_neg = list(self.gid_gnode_dict.values())[1]
+            dummy_validation_pos.partition = 'val'
+            dummy_validation_neg.partition = 'val'
+            self.node_gid_to_partition[dummy_validation_pos.gid] = 'val'
+            self.node_gid_to_partition[dummy_validation_neg.gid] = 'val'
+            dp = set()
+            dn = set()
+            dp_g = set()
+            dn_g = set()
+            dp_g.add(dummy_validation_pos)
+            dn_g.add(dummy_validation_neg)
+            dp.add(dummy_validation_pos.gid)
+            dn.add(dummy_validation_neg.gid)
+            self.validation_set_ids = {"positive": dp, "negative": dn}
+            self.validation_set = dp_g.union(dn_g)
+            for gid in self.validation_set_ids["positive"].union(self.validation_set_ids["negative"]):
+                self.node_gid_to_partition[gid] = 'val'
+            all_validation = dp.union(dn)
+
+        all_selected = self.selected_positive_arc_ids.union(self.selected_negative_arc_ids)
+
+        if test_samples is not None:
+            self.test_set, self.test_set_ids, _, _ = self.cvt_sample_test_set(samples=test_samples
+                                                                              , hops=test_hops)
+            all_test = self.test_set_ids["positive"].union(self.test_set_ids["negative"])
+        # -- dict mapping node ids to label
+        # -- dict mapping node ids to index in feature tensor
+        gid_feat_idx = 0
+
+
+
+        for gnode in self.gid_gnode_dict.values():
+
+            partition = self.node_gid_to_partition[gnode.gid]
+
+            if gnode.label is not None and gnode.gid not in all_selected:
+                label = self.node_gid_to_label[gnode.gid]  # [0 , 1] if gnode.label > 0 else [1, 0]#[
+            else:
+                label = [
+                    int(gnode.gid in self.negative_arc_ids),
+                    int(gnode.gid in self.positive_arc_ids)
+                ]
+                self.node_gid_to_label[gnode.gid] = label
+            if multiclass:
+                label = [
+                    int(gnode.gid in self.negative_arc_ids),
+                    int(gnode.gid in self.positive_arc_ids),
+                    0
+                ]
+            nx_gid = self.node_gid_to_graph_idx[gnode.gid]
+            node = self.G.node[nx_gid]
+            #
+            # node["features"] =  features#gnode.features.tolist()
+
+            node["gid"] = gnode.gid
+            # getoelm = self.gid_geto_elm_dict[gnode.gid]
+            # polyline = getoelm.points
+            # node["geto_elm"] = polyline
+            node["key"] = gnode.key
+            node["box"] = gnode.box
+            node["partition"] = partition
+            # assign partition to node
+            node["train"] = partition == 'train'
+            sublevel_id = -1
+            for id, sublevel_set in enumerate(sublevel_training_sets):
+                if gnode.gid in sublevel_set and partition=='train':
+                    sublevel_id = id + 1
+            node["sublevel_set_id"] = [len(sublevel_training_sets), sublevel_id]
+            node["test"] = partition == 'test'
+            node["val"] = partition == 'val'
+            node["label"] = label
+            if self.selection_type == 'map':
+                node["label_accuracy"] = gnode.label_accuracy
+            node["prediction"] = []
+            self.node_gid_to_prediction[gnode.gid] = []
+
+            # labeled nodes assigned as train, test, or val
+            if self.params['union_space']:
+                node["label"] = label
+
+                print(" FDFSDFSDFSDFSDFSDF")
+
+                if self.selection_type == 'map':
+                    node["label_accuracy"] = gnode.label_accuracy
+                node["prediction"] = []
+                modified = 0
+                group = None
+                if gnode.z == 1:
+                    pout(["SHOULDNT BE HERE TRAIN TEST VAL "])
+                    modified = 1
+                    node["train"] = False
+                    node["test"] = True
+                    node["val"] = False
+                    gnode.partition = 'test'
+                    self.node_gid_to_partition[gnode.gid] = 'test'
+                    continue
+                if gnode.gid in all_validation:
+                    modified = 1
+                    node["train"] = False
+                    node["test"] = False
+                    node["val"] = True
+                    gnode.partition = 'val'
+                    self.node_gid_to_partition[gnode.gid] = 'val'
+                elif test_samples is not None and gnode.gid in all_test:
+                    node["test"] = True
+                    node["val"] = False
+                    node["train"] = False
+                    gnode.partition = 'test'
+                    self.node_gid_to_partition[gnode.gid] = 'test'
+                else:  # and  i_val < val_count:
+                    modified = 1
+                    node["train"] = True
+                    node["test"] = False
+                    node["val"] = False
+                    gnode.partition = 'train'
+                    self.node_gid_to_partition[gnode.gid] = 'train'
+            gid_feat_idx += 1
+
+        self.G_dict = json_graph.node_link_data(self.G)
+        # s1 = json.dumps(self.G_dict)  # input graph
+        # s2 = json.dumps(self.node_gid_to_feat_idx)  # dict: nodes to ints
+        # s3 = json.dumps(self.node_gid_to_label)  # dict: node_id to class
+
+        end_time = time.time()
+        return (self.G_dict, self.node_gid_to_feat_idx, self.node_gid_to_label, self.features)
 
     def feature_importance(self, features, feature_names, labels, n_informative = 3, plot=False):
         # Build a classification task using 3 informative features
@@ -598,7 +763,7 @@ class MLGraph(GeToFeatureGraph):
         forest = ExtraTreesClassifier(n_estimators=250,
                                       random_state=666)
 
-        X = np.array(features)
+        X = features
         y = np.array(labels)
         forest.fit(X, y)
         importances = forest.feature_importances_

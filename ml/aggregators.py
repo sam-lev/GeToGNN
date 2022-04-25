@@ -1,5 +1,5 @@
 import tensorflow as tf
-
+import numpy as np
 from .layers import Layer, Dense
 from .inits import glorot, zeros
 from ml.ops import euclideanDistance
@@ -548,7 +548,8 @@ class GeToEdgeAggregator(Layer):
     """
 
     def __init__(self, input_dim, output_dim, model_size="small", neigh_input_dim=None,
-                 dropout=0., bias=False, act=tf.nn.relu, name=None, concat=False,
+                 dropout=0., bias=False, act=tf.nn.elu, pool=tf.reduce_max, pool_geto = tf.reduce_max,
+                 name=None, concat=False,
                  hidden_dim_1=None, hidden_dim_2=None, jumping_knowledge=False,
                  geto_dims_in=None, geto_dims_out=None, geto_vec_dim=None,geto_loss=False,
                  **kwargs):
@@ -559,6 +560,8 @@ class GeToEdgeAggregator(Layer):
         self.dropout = dropout
         self.bias = bias
         self.act = act
+        self.pool = pool
+        self.pool_geto = pool_geto
         self.concat = concat
         self.dim_mult = 2 if concat else 1
         self.jumping_knowledge = jumping_knowledge
@@ -585,7 +588,7 @@ class GeToEdgeAggregator(Layer):
         self.mlp_layers = []
         self.mlp_layers.append(Dense(input_dim=neigh_input_dim,
                                      output_dim=hidden_dim,
-                                     act=tf.nn.relu,
+                                     act=tf.nn.elu,#relu,
                                      dropout=dropout,
                                      sparse_inputs=False,
                                      name='feat_'+name,
@@ -594,7 +597,7 @@ class GeToEdgeAggregator(Layer):
         self.geto_mlp_layers = []
         self.geto_mlp_layers.append(Dense(input_dim=geto_dims_in,
                                      output_dim=hidden_dim,
-                                     act=tf.nn.relu,
+                                     act=tf.nn.elu,#softmax,#elu,
                                      dropout=dropout,
                                      sparse_inputs=False,
                                      name='geto_'+name,
@@ -602,9 +605,9 @@ class GeToEdgeAggregator(Layer):
                                      use_geto=geto_loss))
 
         self.geto_concat_mlp_layers = []
-        self.geto_concat_mlp_layers.append(Dense(input_dim=geto_dims_in,
+        self.geto_concat_mlp_layers.append(Dense(input_dim=1,#geto_dims_in,
                                           output_dim=hidden_dim,
-                                          act=tf.nn.softmax,
+                                          act=tf.nn.elu,#softmax,
                                           dropout=dropout,
                                           sparse_inputs=False,
                                           name='concat_feats_' + name,
@@ -612,11 +615,11 @@ class GeToEdgeAggregator(Layer):
                                           use_geto=geto_loss))
 
         with tf.variable_scope(self.name + name + '_vars'):
-            #
-            # self weights
-            #
-            self.vars['self_feat_weights'] = glorot([input_dim, output_dim],
+
+            # self feature weights
+            self.vars['self_feat_weights'] = glorot([input_dim,  output_dim],
                                                name='self_feat_weights')
+            # self geto weights
             if not geto_loss:
                 self.vars['self_geto_weights'] = glorot([geto_dims_in, output_dim],
                                                    name='self_geto_weights')
@@ -624,22 +627,32 @@ class GeToEdgeAggregator(Layer):
                 self.geto_vars['self_geto_weights'] = glorot([geto_dims_in, output_dim],
                                                         name='self_geto_weights')
 
-            # combined neighbor embedding
-            self.vars['combined_geto'] = glorot([hidden_dim, 2*output_dim],
+            # combined self/neighbor geto embedding
+            self.vars['combined_geto'] = glorot([hidden_dim,  output_dim],
                                                           name='combined_neigh_weights')
 
-            # neighbor weights
-            self.vars['neigh_feat_weights'] = glorot([hidden_dim, output_dim],
+            # combined neighbor geto weigthed embedding
+            # 2 * out due to concat
+            self.vars['weighted_edge'] = glorot([output_dim,output_dim],
+                                                name='weighted_edge')
+
+            # neighbor feature weights
+            self.vars['neigh_feat_weights'] = glorot([hidden_dim,  output_dim],
                                                      name='neigh_feat_weights')
             self.vars['neigh_geto_weights'] = glorot([hidden_dim, output_dim],
                                                name='neigh_geto_weights')
-            self.vars['neigh_geto'] = glorot([hidden_dim, output_dim],
-                                                     name='neigh_geto')
-
-
 
             if self.bias:
                 self.vars['bias'] = zeros([self.output_dim], name='bias')
+
+
+        self.edge_embedding_weighted = True
+
+        if self.edge_embedding_weighted:
+            pout(["using weighted embedding tensor"])
+        else:
+            pout(["Using scalar weighted edge aggregation"])
+
 
         if self.logging:
             self._log_vars()
@@ -647,12 +660,8 @@ class GeToEdgeAggregator(Layer):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.neigh_input_dim = neigh_input_dim
-        print("    * neighbor input dim")
-        print(neigh_input_dim)
         self.geto_dims_in=geto_dims_in
-        self.geto_loss = geto_loss
-        print("    * geto dim")
-        print(geto_dims_out)
+        self.geto_loss = False#geto_loss
 
     def _call(self, inputs):
         self_vecs, neigh_vecs, self_geto_elms, neigh_geto_elms = inputs
@@ -670,23 +679,42 @@ class GeToEdgeAggregator(Layer):
         # [nodes * sampled neighbors] x [hidden_dim]
 
         # [batch size * support, num samples, getodims]
-        geto_embed_concat = tf.concat([neigh_geto,
+        '''geto_embed_concat = tf.concat([neigh_geto,
                                        tf.expand_dims(self_geto_elms, axis=1)], axis=1)#tf.reduce_mean(, axis=1)
         geto_embed_concat_reshaped = tf.reshape(geto_embed_concat,
                                                 (batch_size*(num_neighbors + 1) ,
-                                                 self.geto_dims_in))
-        # out shape [batch size * nbrs+1, hidden]
-        for l in self.geto_concat_mlp_layers:
-            geto_embed_concat_reshaped = l(geto_embed_concat_reshaped)
-        geto_hidden = tf.reshape(geto_embed_concat_reshaped,
-                                  (geto_batch_size , num_nbr_geto + 1, self.hidden_dim))
-        geto_hidden_pool = tf.reduce_mean(geto_hidden,axis=1)
-        # dims out [  geto_batch_size * num_nbr_geto+1 , out_dim]
-        from_geto_embedding = tf.matmul(geto_hidden_pool, self.vars['combined_geto'], name='edge_weights')
+                                                 self.geto_dims_in))'''
+
+        # neighbor geto mlp
+        geto_reshaped = tf.reshape(neigh_geto,
+                                   (geto_batch_size * num_nbr_geto, self.geto_dims_in))
+        for l in self.geto_mlp_layers:
+            geto_reshaped = l(geto_reshaped)
+        neigh_geto_embeddings  = tf.reshape(geto_reshaped,
+                                       (batch_size * num_neighbors, self.hidden_dim))
 
 
 
 
+        # out dim [batch*num_nbr , output_dim]
+        if not self.geto_loss:
+            from_neigh_geto = tf.matmul(neigh_geto_embeddings , self.vars['neigh_geto_weights'])
+        else:
+            from_neigh_geto = tf.matmul(neigh_geto_embeddings , self.geto_vars['neigh_geto_weights'])
+        
+        neigh_geto_embeddings= tf.reshape(from_neigh_geto,(batch_size * num_neighbors,
+                                                           self.output_dim))
+        neigh_geto_embeddings_hidden = tf.reshape(from_neigh_geto, (batch_size,
+                                                             num_neighbors,
+                                                             self.output_dim))
+        from_neigh_geto_pool = self.pool_geto(neigh_geto_embeddings_hidden, axis=1)
+
+
+        # Self Geto Embedding
+        if not self.geto_loss:
+            from_self_geto = tf.matmul(self_geto_elms, self.vars['self_geto_weights'])
+        else:
+            from_self_geto = tf.matmul(self_geto_elms, self.geto_vars['self_geto_weights'])
 
 
 
@@ -696,76 +724,95 @@ class GeToEdgeAggregator(Layer):
         for l in self.mlp_layers:
             h_reshaped = l(h_reshaped)
         neigh_h = tf.reshape(h_reshaped,
-                             (batch_size , num_neighbors, self.hidden_dim))
-        neigh_h_pool = tf.reduce_mean(neigh_h, axis=1)
-
-        #out dim [batch*num_nbr , output_dim]
-        from_neigh_feat = tf.matmul(neigh_h_pool, self.vars['neigh_feat_weights'])
+                             (batch_size * num_neighbors, self.hidden_dim))
+        from_neigh_feat = tf.matmul(neigh_h, self.vars['neigh_feat_weights'])
+        from_neigh_feat_reshaped = tf.reshape(from_neigh_feat,
+                                              (batch_size, num_neighbors, self.output_dim))
+        from_neigh_feat_pool = self.pool(from_neigh_feat_reshaped,axis=1)
 
         # Self Feats Embedding
         from_self_feat = tf.matmul(self_vecs, self.vars["self_feat_weights"])
 
 
-        # self and neighbor feats embedding
-        from_feat_embedding = tf.concat([from_self_feat,from_neigh_feat],axis=1)
-
-        # weighted embedding
-        weighted_embedding = tf.multiply(from_geto_embedding, from_feat_embedding)
 
 
-
-
-
-        # neighbor geto mlp
-        geto_reshaped = tf.reshape(neigh_geto,
-                                   (geto_batch_size * num_nbr_geto, self.geto_dims_in))
-        for l in self.geto_mlp_layers:
-            geto_reshaped = l(geto_reshaped)
-        neigh_geto_hidden = tf.reshape(geto_reshaped,
-                                       (batch_size , num_neighbors, self.hidden_dim))  # self.hidden_dim))
-        from_neigh_geto_pool = tf.reduce_mean(neigh_geto_hidden, axis=1)
-
-        # out dim [batch*num_nbr , output_dim]
-        if not self.geto_loss:
-            from_neigh_geto = tf.matmul(from_neigh_geto_pool, self.vars['neigh_geto_weights'])
-        else:
-            from_neigh_geto = tf.matmul(from_neigh_geto_pool, self.geto_vars['neigh_geto_weights'])
-
-        # Self Geto Embedding
-        if not self.geto_loss:
-            from_self_geto = tf.matmul(self_geto_elms, self.vars['self_geto_weights'])
-        else:
-            from_self_geto = tf.matmul(self_geto_elms, self.geto_vars['self_geto_weights'])
-
-        # Edge weight From Self-Neighbor Geto Similarity
-        # # Concat neighbor GEOM and Sself-Geom embeddings
-        # geom_concat_hidden = tf.concat([from_self_geto,from_neigh_geto],#tf.expand_dims(from_self_geto,axis=1)],
-        #                         axis=1, name='geto_embed_cat')
-        #geom_concat_hidden = tf.reshape(geom_concat,
-        #                                (batch_size*num_neighbors, self.output_dim))
+        if self.edge_embedding_weighted:
+            from_feat_embedding_weighted = tf.multiply(neigh_geto_embeddings_hidden,
+                                                       from_neigh_feat_reshaped)
+            neigh_embedding_weighted = tf.reshape(from_feat_embedding_weighted,
+                                              (batch_size, num_neighbors, self.output_dim))
 
 
 
 
-        # geto_hidden_pool = tf.reduce_mean(geto_hidden,axis=1)
-        # from_geto_embedding = tf.matmul(geto_hidden_pool, self.vars['combined_geto'], name='edge_weights')
+        if self.edge_embedding_weighted:
 
-        #dist_geo_embed = euclideanDistance(from_self_geto, from_neigh_geto)
-        # edge_weighted_nbrs = tf.matmul(geto_hidden, from_neigh_feat,name='weighted_edge_embed')
-        # edge_weighted_nbrs = tf.reshape(edge_weighted_nbrs,
-        #                                 (batch_size , num_neighbors, self.output_dim))
-        # edge_weighted_nbrs = tf.reduce_mean(edge_weighted_nbrs,axis=1)
+            neigh_feat_embedding_reshaped = tf.reshape(from_neigh_feat,
+                                                      (batch_size * num_neighbors,
+                                                       # num_neighbors,
+                                                       self.output_dim))
 
+            # [ batch_size, num_nbr, getodimm_in ]
+            self_replicated = tf.tile(tf.expand_dims(from_self_geto, axis=1),
+                                      [1, num_neighbors, 1])
+            self_replicated = tf.reshape(self_replicated,
+                                         (batch_size * num_neighbors,
+                                          self.output_dim))#self.geto_dims_in))
+            # self.output_dim))
+            def embedding_euclideanDistance( y ):
+                # dist = tf.sqrt(tf.reduce_sum(tf.square(x - y), 1))
+                dist = tf.sqrt(tf.reduce_sum(tf.square( #tf.subtract(self_replicated, y, name='subtract1')
+                    self_replicated - y), axis=1, keepdims=True), name='dist_embedd')
+                return dist
+            # [batch_size*num_neighbors,1]
+            distance_embeddings = embedding_euclideanDistance(neigh_geto_embeddings)#from_geto_embedding_reshaped)
+            #tf.map_fn(_euclideanDistance,from_geto_embedding_reshaped)
+
+            for l in self.geto_concat_mlp_layers:
+                distance_embeddings = l(distance_embeddings)
+            distance_embeddings_h = tf.reshape(distance_embeddings,
+                         (batch_size*num_neighbors, self.hidden_dim))
+            edge_weights = tf.matmul(distance_embeddings_h, self.vars['combined_geto'], name='edge_weights')
+
+            nbr_weighted_edge_embedding = tf.reshape(edge_weights, (batch_size * num_neighbors,
+                                                       self.output_dim))
+            # invert distances to inversely weight by distance
+            one_tensor = tf.ones(tf.shape(nbr_weighted_edge_embedding))
+            from_nbr_edge_weights = tf.divide(one_tensor, nbr_weighted_edge_embedding)
+            from_nbr_edge_weights = tf.reshape(from_nbr_edge_weights,
+                                               (batch_size, num_neighbors, self.output_dim))
+            from_feat_embedding_weighted = tf.multiply(from_nbr_edge_weights,
+                                                       neigh_embedding_weighted)#neigh_feat_embedding_reshaped)
+            neigh_embedding_weighted = tf.reshape(from_feat_embedding_weighted,
+                                                      (batch_size,
+                                                       num_neighbors,
+                                                       self.output_dim))
+
+
+        from_embedding_weighted_pooled  = self.pool(neigh_embedding_weighted,
+                                                             axis=1)
+
+        # self_replicated = tf.tile(tf.expand_dims(from_self_geto, axis=1),
+        #                           [1, num_neighbors, 1])
+        # self_replicated = tf.reshape(self_replicated,
+        #                              (batch_size * num_neighbors,
+        #                               self.output_dim))
 
 
 
 
         if not self.concat:
-            node_output = weighted_embedding#tf.add_n([from_self_feat , edge_weighted_nbrs])#from_neigh_feat])
-            geto_output = tf.add_n([from_self_geto, from_neigh_geto])
+            node_output = tf.add_n([from_self_feat,
+                                    from_embedding_weighted_pooled], axis=1)
+            geto_output = tf.add_n([from_self_geto, from_embedding_weighted_pooled])
         else:
-            node_output = weighted_embedding#tf.concat([from_self_feat , edge_weighted_nbrs],axis=1)#from_neigh_feat], axis=1)
-            geto_output = tf.concat([from_self_geto, from_neigh_geto], axis=1)
+            node_output = tf.concat([from_self_feat,
+                                    from_embedding_weighted_pooled],axis=1)
+            # node_output = tf.concat([from_self_feat,from_nbr_weighted_embedding],axis=1)#tf.concat([from_self_feat , edge_weighted_nbrs],axis=1)#from_neigh_feat], axis=1)
+            # geto_output = self.pool(tf.reshape(tf.concat([self_replicated,neigh_geto_embeddings], axis=1),
+            #                          (batch_size , num_neighbors,
+            #                           2*self.output_dim)), axis=1)
+            geto_output = tf.concat([from_self_geto, from_embedding_weighted_pooled], axis=1)
             #[from_self, from_nbr_geto_augmented_feature], axis=1)
         # if not self.concat:
         #     node_output = tf.add_n([from_self_feat , from_neigh_embedding])
@@ -1019,7 +1066,8 @@ class MaxPoolingAggregator(Layer):
     def __init__(self, input_dim, output_dim, model_size="small", neigh_input_dim=None,
             dropout=0., bias=False, act=tf.nn.relu, name=None, concat=False, hidden_dim_1 = None,
                  hidden_dim_2 = None, geto_loss=False,
-            jumping_knowledge = False, geto_dims_in= None,geto_dims_out = None, **kwargs):
+            jumping_knowledge = False, geto_dims_in= None,geto_dims_out = None,
+                 subgraph_weight = 1.0, **kwargs):
         super(MaxPoolingAggregator, self).__init__(**kwargs)
 
         #print("    * : Aggregator is MaxPool")
@@ -1029,6 +1077,9 @@ class MaxPoolingAggregator(Layer):
         self.act = act
         self.concat = concat
         self.jumping_knowledge = jumping_knowledge
+
+        self.subgraph_weight = subgraph_weight
+
 
         self.hidden_dim_1 = hidden_dim_1
         self.hidden_dim_2 = hidden_dim_2
@@ -1099,10 +1150,12 @@ class MaxPoolingAggregator(Layer):
         #    h_reshaped = h_jump
 
         neigh_h = tf.reshape(h_reshaped, (batch_size, num_neighbors, self.hidden_dim))
+        neigh_h = tf.multiply(self.subgraph_weight, neigh_h)
         neigh_h = tf.reduce_max(neigh_h, axis=1)
         
         from_neighs = tf.matmul(neigh_h, self.vars['neigh_weights'])
         from_self = tf.matmul(self_vecs, self.vars["self_weights"])
+        from_self = tf.multiply(self.subgraph_weight, from_self)
         
         if not self.concat:
             output = tf.add_n([from_self, from_neighs])
@@ -1190,6 +1243,7 @@ class MeanPoolingAggregator(Layer):
         for l in self.mlp_layers:
             h_reshaped = l(h_reshaped)
         neigh_h = tf.reshape(h_reshaped, (batch_size, num_neighbors, self.hidden_dim))
+
         neigh_h = tf.reduce_mean(neigh_h, axis=1)
         
         from_neighs = tf.matmul(neigh_h, self.vars['neigh_weights'])

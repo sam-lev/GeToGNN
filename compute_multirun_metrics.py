@@ -857,6 +857,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
                         'MLP_MSC',
                         'GNN',
                         'GNN_Geom',
+                        'GNN_SUB'
                         ]
     legend_order = ['RF-Pixel', 'MLP-Pixel', 'U-Net' , 'RF-Priors', 'MLP-Priors', 'GNN','GNN-Geom']
     #for model_name, stats in model_statistics.items():
@@ -909,7 +910,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
             lw = 2.0
         if 'GNN' in model_name and 'Geom' in model_name:
-            c = 'orchid'#
+            c = 'gainsboro'#
             lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
             lw = 2.0
         if 'MSC' in model_name and 'Forest' in model_name and 'Geom' not in model_name:
@@ -931,6 +932,11 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             model_name = 'MLP Priors'
             c =  'darkorange'# for pixel chartreuse
             lstyle = (0, (5, 1))#(0, (1, 1))  #(0, (3, 5, 1, 5))#'dashdotted'
+            lw = 2.0
+        if 'GNN' in model_name and 'SUB' in model_name:
+            model_name = 'GNN Complex Informed'
+            c = 'orchid'#
+            lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
             lw = 2.0
         ax.plot(x, y,color=c, label=model_name, linestyle=lstyle, linewidth=lw)
     plt.xticks(fontsize=15)

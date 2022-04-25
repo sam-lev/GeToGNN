@@ -1,4 +1,4 @@
-from topology.geomscsegmentation import geomscsegmentation
+from topology.geomsc import compute_geomsc
 from .dataflow import retinadataset
 from .dataflow import raw2ddataset
 from localsetup import LocalSetup
@@ -21,7 +21,7 @@ def collect_datasets(dataset='neuron', name='neuron2', dim_invert=False, format=
 
 def compute_geomsc(params, data_array, data_path, segmentation_path, msc_write_path, map_labels):
 
-    data_array = geomscsegmentation(persistence_values=params['persistence_values']
+    data_array = compute_geomsc(persistence_values=params['persistence_values']
                                                                  , blur_sigmas=params['blur_sigmas']
                                                                  , data_buffer=data_array
                                                                  , data_path=data_path

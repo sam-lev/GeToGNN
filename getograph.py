@@ -15,6 +15,8 @@ from ml.features import (
     translate_points_by_centroid,
     get_points_from_vertices,
 )
+from topology.geomsc import compute_geomsc, MSC
+from ml.utils import pout
 
 class GeToElement:
     def __init__(self, dim = None, gid = None, points = None):
@@ -43,7 +45,7 @@ class GeToElement:
     def make_id(self):
         pass
 
-class GeTognode(GeToElement):
+class GeTogNode(GeToElement):
     def __init__(self, getoelm):
         super().__init__(dim = getoelm.dim , gid = getoelm.gid, points = getoelm.points)
         # topological / geometric attributes
@@ -59,6 +61,7 @@ class GeTognode(GeToElement):
         self.key = None
         self.z = 0
         self.edge_gids = []
+        self.sublevel_set = False
 
     def make_id(self):
         self.key = (self.gid,) + tuple(self.edge_gids) + (len(self.points),)
@@ -72,7 +75,10 @@ class GeTognode(GeToElement):
 
     def copy(self):
         getoelm = GeToElement(dim=1, gid = self.gid, points=self.points)
-        return GeTognode(getoelm)
+        return GeTogNode(getoelm)
+
+    def is_sublevel_set(self):
+        self.sublevel_set = True
 
 
 class GeToEdge(GeToElement):
@@ -85,26 +91,36 @@ class GeToEdge(GeToElement):
         self.z = 0
         self.gnode_gids = []
         self.key = None
+        self.sublevel_set = False
 
     def make_id(self):
         self.key = (self.gid,) + tuple(self.gnode_gids)
 
     def add_vertices(self, v1, v2):
         self.gnode_gids = [v1 , v2]
-        self.gnode_gids = [v for v in self.gnode_gids if v!=-1]
+        self.gnode_gids = [v for v in self.gnode_gids]
+        ''' if v!=-1]'''
         self.make_id()
+
+    def add_node(self,v):
+        self.gnode_gids.append(v)
+
+    def is_sublevel_set(self):
+        self.sublevel_set = True
+
 
 
 class GeToGraph(Attributes):
     def __init__(self, geomsc_fname_base = None, label_file = None,
-                 experiment_folder = None, parameter_file_number = None,**kwargs):
+                 experiment_folder = None, parameter_file_number = None,write_folder=None,**kwargs):
         # indexing and hashing
         self.gid_gnode_dict = {}
         self.gid_edge_dict   = {}
         self.gid_geto_attr_dict = {'spatial_points':None, 'dim':None}
         self.gid_geto_elm_dict = {}
         self.key_arc_dict    = {}
-
+        if 'write_folder' not in kwargs.keys():
+            kwargs['write_folder'] = write_folder
         super(GeToGraph, self).__init__(parameter_file_number=parameter_file_number,
                                         write_folder = kwargs['write_folder'])
 
@@ -137,6 +153,153 @@ class GeToGraph(Attributes):
         if label_file is not None:
             self.read_labels_from_file(file = label_file)
 
+    def compute_morse_smale_complex(self, fname_base, polyline_graph = True,
+                                    persistence = [0.01], sigma=[2], X=None,Y=None):
+
+        f_path      = fname_base
+        seg_folder = os.path.dirname(os.path.abspath(f_path))
+        if not os.path.exists(os.path.join(seg_folder,'geomsc')):
+            os.makedirs(os.path.join(seg_folder,'geomsc'))
+        write_path = os.path.join(seg_folder,'geomsc')
+
+        msc = compute_geomsc( persistence_values=persistence, blur_sigmas=sigma,
+                data_buffer = None, data_path = f_path, segmentation_path=seg_folder,
+                write_path =write_path , labeled_segmentation=None, label=False,
+                save=False, save_binary_seg=False, number_images=None,
+                              X=X,Y=Y,
+                persistence_cardinality = None, valley=polyline_graph, ridge=polyline_graph)
+        return msc
+
+    def map_to_priors_graph(self, msc):
+        gid_gnode_dict = {}
+        gid_edge_dict  = {}
+        for arc in msc.arcs:
+            gelm = GeToElement()
+            gelm.points = arc.points
+            gelm.dim = 1
+            gelm.gid = arc.id
+            gnode = GeTogNode(getoelm=gelm)
+            for incident in arc.node_ids:
+                gnode.add_edge(incident)
+            gid_gnode_dict[gnode.gid] = gnode
+        for id, node in msc.nodes.items():
+            gelm = GeToElement()
+            gelm.points = node.points
+            gelm.dim = 0
+            gelm.gid = node.id
+            gedge = GeToEdge(getoelm=gelm)
+            for arc in node.arcs:
+                gedge.add_node(arc.id)
+            gid_edge_dict[gedge.gid] = gedge
+        return gid_gnode_dict, gid_edge_dict
+
+    def mark_sublevel_set(self, sublevel_edges, sublevel_nodes,X,Y, union_radius=None, union_thresh=0):
+
+
+        point_map_sub = np.ones(self.image.shape) * -2
+        i_x = 1
+        i_y = 0
+
+        for gid, gedge in sublevel_edges.items():
+            sub_points = gedge.points
+            sub_points = [tuple(map(round, p)) for p in sub_points]
+            for xy in sub_points:
+                xy = (xy[i_x], xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
+                point_map_sub[xy] = gid
+            
+        for gid, gedge_super in self.gid_edge_dict.items():
+            sup_points = gedge_super.points
+            sup_points = [tuple(map(round, p)) for p in sup_points]
+
+            cardinality_intersect = 0
+            for xy in sup_points:
+                xy = (xy[i_x],xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
+                if point_map_sub[xy] >= -1:
+                    cardinality_intersect += 1
+                    gedge_super.is_sublevel_set()
+                    gedge_super.sublevel_set = True
+                if union_radius is not None:
+                    x, y = xy
+                    for factor in [1,-1]:
+                        for r_y in range(1,union_radius):
+                            for r_x in range(1,union_radius):
+                                r_x *= factor
+                                r_y *= factor
+                                if x + r_x >= X-1:
+                                    r_x = 0
+                                if y + r_y >= Y-1:
+                                    r_y = 0
+                                if x + r_x < 0:
+                                    r_x = 0
+                                if y + r_y < 0:
+                                    r_y = 0
+                                if point_map_sub[(x + r_x, y + r_y)] >= -1:
+                                    cardinality_intersect += 1
+                                if point_map_sub[(x, y + r_y)] >= -1:
+                                    cardinality_intersect += 1
+                                if point_map_sub[(x + r_x, y)] >= -1:
+                                    cardinality_intersect += 1
+            if cardinality_intersect >= 1:#union_thresh * len(sup_points):
+                gedge_super.is_sublevel_set()
+                gedge_super.sublevel_set = True
+                for ngid in gedge_super.gnode_gids:
+                    gn = self.gid_gnode_dict[ngid]
+                    gn.is_sublevel_set()
+
+            self.gid_edge_dict[gid] = gedge_super
+
+
+        arc_point_to_gid_sub = {}
+        for gid, gnode_sub in sublevel_nodes.items():
+            sub_points = gnode_sub.points
+            sub_points = [tuple(map(round, p)) for p in sub_points]
+            for xy in sub_points:
+                xy = (xy[i_x], xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
+                point_map_sub[xy] = gid
+                arc_point_to_gid_sub[xy] = gid
+
+        for gid, gnode_super in self.gid_gnode_dict.items():
+            sup_points = gnode_super.points
+            sup_points = [tuple(map(round, p)) for p in sup_points]
+
+            cardinality_intersect = 0
+            for xy in sup_points:
+                xy = (xy[i_x],xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
+                if point_map_sub[xy] >= -1:
+                    cardinality_intersect += 1
+                    if cardinality_intersect >= union_thresh * len(sup_points):
+                        gnode_super.is_sublevel_set()
+                        gnode_super.sublevel_set = True
+                if union_radius is not None:
+                    x, y = xy
+                    for factor in (1,-1):
+                        for r_y in range(1,union_radius):
+                            for r_x in range(1,union_radius):
+                                r_x *= factor
+                                r_y *= factor
+                                if x + r_x >= X - 1:
+                                    r_x = 0
+                                if y + r_y >= Y - 1:
+                                    r_y = 0
+                                if x + r_x < 0:
+                                    r_x = 0
+                                if y + r_y < 0:
+                                    r_y = 0
+                                if point_map_sub[(x + r_x, y + r_y)] >= -1:
+                                    cardinality_intersect += 1
+                                if point_map_sub[(x, y + r_y)] >= -1:
+                                    cardinality_intersect += 1
+                                if point_map_sub[(x + r_x, y)] >= -1:
+                                    cardinality_intersect += 1
+            if cardinality_intersect >= union_thresh * len(sup_points):
+                gnode_super.is_sublevel_set()
+                gnode_super.sublevel_set = True
+                incident_edge = gnode_super.edge_gids
+                for egid in incident_edge:
+                    edge = self.gid_edge_dict[egid]
+                    edge.is_sublevel_set()
+            self.gid_gnode_dict[gid] = gnode_super
+        return self.gid_gnode_dict, self.gid_edge_dict
 
 
     def update_max_degree(self, gnode1, gnode2):
@@ -174,12 +337,20 @@ class GeToGraph(Attributes):
                 self.gid_edge_dict[edge.gid] = edge
             if elm.dim == 1:
                 self.vertex_count += 1
-                gnode = GeTognode(getoelm=elm)
+                gnode = GeTogNode(getoelm=elm)
                 self.gid_gnode_dict[gnode.gid] = gnode
                 #self.gid_geto_elm_dict[elm.gid] = elm
                 #self.getoelms.append(elm.vec)
                 #self.gid_to_getoelm_idx[elm.gid] = getoelm_idx
                 #getoelm_idx += 1
+        # add isolated placement holder gnode due to single
+        # vertice edges
+        isolated = GeToElement()
+        isolated.dim = 1
+        isolated.gid = -1
+        isolated.points = [(1., 1.), (1., 1.), (1., 1.)]
+        phantom_gnode = GeTogNode(getoelm=isolated)
+        self.gid_gnode_dict[phantom_gnode.gid] = phantom_gnode
 
         for l in edge_lines:
             self.edge_count += 1
@@ -187,14 +358,14 @@ class GeToGraph(Attributes):
             gid_v1 = int(tmplist[1])
             gid_v2 = int(tmplist[2])
             gid_edge = int(tmplist[0])
-            if gid_v1 != -1:
-                v1 = self.gid_gnode_dict[gid_v1]
-                v1.add_edge(gid_edge)
-            if gid_v2 != -1:
-                v2 = self.gid_gnode_dict[gid_v2]
-                v2.add_edge(gid_edge)
-            v2 = v1 if gid_v2 == -1 else v2
-            v1 = v2 if gid_v1 == -1 else v1
+            '''if gid_v1 != -1:'''
+            v1 = self.gid_gnode_dict[gid_v1]
+            v1.add_edge(gid_edge)
+            '''if gid_v2 != -1:'''
+            v2 = self.gid_gnode_dict[gid_v2]
+            v2.add_edge(gid_edge)
+            '''v2 = v1 if gid_v2 == -1 else v2
+            v1 = v2 if gid_v1 == -1 else v1'''
             self.update_max_degree(v1,v2)
 
             edge = self.gid_edge_dict[gid_edge]
@@ -250,6 +421,7 @@ class GeToGraph(Attributes):
             gnode.label = label
             self.node_gid_to_label[gid] = label
             gnode.ground_truth = label
+        self.node_gid_to_label[-1] = [1., 0.]
 
     def build_kdtree(self):
         sorted_vertices = sorted(self.gid_gnode_dict.values(), key=lambda gnode: len(gnode.points))
@@ -349,7 +521,7 @@ class GeToGraph(Attributes):
         plt.savefig(os.path.join(self.pred_session_run_path, 'priors_graph_predicted.png'))
         plt.close()
 
-    def draw_segmentation(self, dirpath, ridge=True, valley=True, invert=False):
+    def draw_segmentation(self, dirpath, ridge=True, valley=True, draw_sublevel_set = False,invert=False):
         X = self.X #if not invert else self.Y
         Y = self.Y #if not invert else self.X
         original_image = self.image
@@ -383,10 +555,15 @@ class GeToGraph(Attributes):
 
         for gnode in self.gid_gnode_dict.values():
             gid = gnode.gid
-            prediction = self.node_gid_to_prediction[gid]
-            partition = self.node_gid_to_partition[gid]
-            label =self.node_gid_to_label[gid]
-            gnode = self.gid_gnode_dict[gid]
+            if not draw_sublevel_set:
+                prediction = self.node_gid_to_prediction[gid]
+                partition = self.node_gid_to_partition[gid]
+                label =self.node_gid_to_label[gid]
+                gnode = self.gid_gnode_dict[gid]
+            else:
+                prediction = [0.,1.]#self.node_gid_to_prediction[gid]
+                partition = 'test'#self.node_gid_to_partition[gid]
+                label = [1.,0.]
             if isinstance(prediction,
                           (int, np.integer)) or isinstance(prediction, (float, np.float)):
                 label_color = cmap(float(prediction))
@@ -406,8 +583,8 @@ class GeToGraph(Attributes):
                         label_color = cmap(prediction)
 
             if original_image is not None:
-                x = 1#  if invert else 0
-                y = 0#0  if invert else 1
+                x = 1#1#1#1#1#  if invert else 0
+                y = 0#0#0#0#0#0  if invert else 1
                 scale = 255.
                 if partition == 'train':
                     label_color = [255, 51, 255]
@@ -415,8 +592,13 @@ class GeToGraph(Attributes):
                 if partition == 'val':
                     label_color = [51, 255, 51]
                     scale = 1
+                if draw_sublevel_set:
+                    label_color = [190,0, 0]  if gnode.sublevel_set else [0,0, 255]
+                    scale=1
                 if len(mapped_image.shape) == 2:
                     for p in np.array(gnode.points):
+                        if len(p) == 1:
+                            continue
                         mapped_image[int(p[x]), int(p[y])] = int(label_color[0] * scale)
                         mapped_image[int(p[x]), int(p[y])] = int(label_color[1] * scale)
                         mapped_image[int(p[x]), int(p[y])] = int(label_color[2] * scale)
@@ -427,6 +609,8 @@ class GeToGraph(Attributes):
                         label_map_image[int(p[x]), int(p[y])] = int(msc_ground_seg_color[2] * 255)
                 else:
                     for p in np.array(gnode.points):
+                        if len(p) == 1:
+                            continue
                         mapped_image[int(p[x]), int(p[y]), 0] = int(label_color[0] * scale)
                         mapped_image[int(p[x]), int(p[y]), 1] = int(label_color[1] * scale)
                         mapped_image[int(p[x]), int(p[y]), 2] = int(label_color[2] * scale)

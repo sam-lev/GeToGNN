@@ -292,7 +292,7 @@ def compute_features(model=None):
     #
     if (model.params['collect_features'] or model.params['load_geto_attr']) \
             and (model.params['geto_as_feat'] or model.params['load_features']) and \
-            model.params['feats_independent']:
+            not model.params['feats_independent']:
         pout(["Concated STD and GEOM features"])
         features = []
         feat_idx = 0
@@ -308,7 +308,7 @@ def compute_features(model=None):
         model.features = np.array(features)
     elif (model.params['collect_features'] or model.params['load_geto_attr']) \
             and (model.params['geto_as_feat'] or model.params['load_features']) and \
-            not model.params['feats_independent']:
+            model.params['feats_independent']:
         pout(["Independent GEOM and STD features"])
         features = []
         getoelms = []
@@ -318,7 +318,7 @@ def compute_features(model=None):
             geomfeats = model.node_gid_to_geom_feature[gid]
             #                                                 # MLP random forest use combined!
             combined_feats = feats + geomfeats              # check where used!
-            model.node_gid_to_feature[gid] = np.array(combined_feats)#
+            model.node_gid_to_feature[gid] = None#np.array(combined_feats)#
             gnode.features = None#np.array(combined_feats)
             features.append(feats)#combined_feats)
             getoelms.append(geomfeats)
@@ -327,7 +327,7 @@ def compute_features(model=None):
             feat_idx += 1
         model.features = np.array(features)
         model.getoelms = np.array(getoelms)
-    elif (model.params['collect_features'] or model.params['load_features']):
+    elif (model.params['collect_features'] or model.params['load_features']) and not (model.params['geto_as_feat'] or model.params['load_geto_attr']):
         pout(["STD features only"])
         features = []
         feat_idx = 0
@@ -335,12 +335,13 @@ def compute_features(model=None):
             feats = model.node_gid_to_standard_feature[gid]
             #geomfeats = model.node_gid_to_geom_feature[gid]
             #combined_feats = feats + geomfeats
-            model.node_gid_to_feature[gid] = np.array(feats)
-            gnode.features = np.array(feats)
+            model.node_gid_to_feature[gid] = None# np.array(feats)
+            gnode.features = None#np.array(feats)
             features.append(feats)
             model.node_gid_to_feat_idx[gid] = feat_idx
             feat_idx += 1
         model.features = np.array(features)
+        model.getoelms = None
     else:
         pout(["GEOM features only"])
         features = []
@@ -349,12 +350,29 @@ def compute_features(model=None):
             #feats = model.node_gid_to_standard_feature[gid]
             geomfeats = model.node_gid_to_geom_feature[gid]
             #combined_feats = feats + geomfeats
-            model.node_gid_to_feature[gid] = np.array(geomfeats)
-            gnode.features = np.array(geomfeats)
+            model.node_gid_to_feature[gid] = None#np.array(geomfeats)
+            gnode.features = None#np.array(geomfeats)
             features.append(geomfeats)
             model.node_gid_to_feat_idx[gid] = feat_idx
             feat_idx += 1
         model.features = np.array(features)
+
+def pout(show=None):
+    if isinstance(show, list):
+        print("    *")
+        for elm in show:
+            if isinstance(elm, str):
+                print("    * ",elm)
+            else:
+                print("    * ", str(elm))
+        print("    *")
+    else:
+        print("    *")
+        if isinstance(show, str):
+            print("    * ", show)
+        else:
+            print("    * ", str(show))
+        print("    *")
 
 def dbgprint(x,name=""):
     print("    *")

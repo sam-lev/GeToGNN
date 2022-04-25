@@ -15,7 +15,7 @@ import tensorflow as tf
 import numpy as np
 import sklearn
 from sklearn import metrics
-
+from memory_profiler import profile
 import time
 
 from .models import SampleAndAggregate, SAGEInfo, Node2VecModel
@@ -121,7 +121,8 @@ class gnn:
                        geto_weights=None,
                        geto_elements=None,
                        geto_loss=False,
-                       hidden_dim_1=None, hidden_dim_2 = None, random_context=True
+                       hidden_dim_1=None, hidden_dim_2 = None, random_context=True,
+                       sublevel_sets=False, subgraph_weight=1.
               , gpu=0, val_model='cvt', model_size="small", sigmoid=False, env='multivax'):
 
         if True:#not self.params_set:
@@ -167,9 +168,9 @@ class gnn:
 
             if not learning_rate:
                 learning_rate = 0.001
-            self.learning_rate = .003#learning_rate
+            self.learning_rate = learning_rate # standard priors model opt is .003
 
-            self.epochs = 10#epochs
+            self.epochs = epochs
 
             self.depth = depth
 
@@ -186,6 +187,7 @@ class gnn:
             self.dim_feature_space = int((dim + 1) / 2) if concat else dim
             self.jump_type = jump_type
             self.geto_loss = geto_loss
+            self.sublevel_sets = sublevel_sets
             print('.... Jump Type is: ', jump_type)
             #end vomit#####################################
 
@@ -216,6 +218,7 @@ class gnn:
             # left to default values in main experiments
             flags.DEFINE_integer('epochs', self.epochs, 'number of epochs to train.')
             flags.DEFINE_float('dropout', 0.0, 'dropout rate (1 - keep probability).')
+            flags.DEFINE_float('subgraph_weight',subgraph_weight, 'weight for embeddings of complex subgraph')
             flags.DEFINE_float('weight_decay', weight_decay, 'weight for l2 loss on embedding matrix.')
             flags.DEFINE_integer('max_degree', max_degree, 'maximum node degree.')#128
             flags.DEFINE_integer('samples_1', degree_l1, 'number of samples in layer 1')#25, number samples per node
@@ -238,11 +241,11 @@ class gnn:
             # logging, saving, validation settings etc.
             self.flags.DEFINE_boolean('save_embeddings', True, 'whether to save embeddings for all nodes after training')
             self.flags.DEFINE_string('base_log_dir', './log-dir', 'base directory for logging and saving embeddings')
-            self.flags.DEFINE_integer('validate_iter', 100, "how often to run a validation minibatch.")
+            self.flags.DEFINE_integer('validate_iter', 20, "how often to run a validation minibatch.")
             self.flags.DEFINE_integer('validate_batch_size', batch_size//4, "how many nodes per validation sample.")
             flags.DEFINE_integer('gpu', gpu, "which gpu to use.")
             self.flags.DEFINE_string('env', 'multivax', 'environment to manage data paths and gpu use')
-            self.flags.DEFINE_integer('print_every', 300, "How often to print training info.")
+            self.flags.DEFINE_integer('print_every', 200, "How often to print training info.")
             self.flags.DEFINE_integer('max_total_steps', 10**10, "Maximum total number of iterations")
             self.flags.DEFINE_string('model_name', self.model_name, 'name of the embedded graph model file is created.')
             self.flags.DEFINE_integer('depth', self.depth,
@@ -276,7 +279,8 @@ class gnn:
               hidden_dim_1=None, hidden_dim_2=None,
               positive_class_weight=1.0
               , weight_decay=0.001, polarity=6, use_embedding=None
-              , gpu=0, val_model='cvt', sigmoid=False,model_size="small", env='multivax'):
+              , gpu=0, val_model='cvt', sigmoid=False,model_size="small", env='multivax',
+              sublevel_sets = False, subgraph_weight=1.):
 
         self.set_parameters(G=G, feats=feats, id_map=id_map, walks=walks, class_map=class_map
               , train_prefix=train_prefix, load_walks=load_walks, number_negative_samples=number_negative_samples
@@ -292,7 +296,8 @@ class gnn:
                             geto_weights=geto_weights,
                             geto_elements=geto_elements,
                             geto_loss=geto_loss,
-                            hidden_dim_1=hidden_dim_1, hidden_dim_2=hidden_dim_2
+                            hidden_dim_1=hidden_dim_1, hidden_dim_2=hidden_dim_2,
+                            sublevel_sets=sublevel_sets, subgraph_weight=subgraph_weight
               , weight_decay=weight_decay, polarity=polarity, use_embedding=use_embedding
               , gpu=gpu, val_model=val_model, model_size=model_size, sigmoid=sigmoid, env=env)
 
@@ -415,7 +420,7 @@ class gnn:
 
 
     def construct_placeholders(self, num_classes, batch=None, labels = None, inf_batch_shape=None,
-                               class_map=None, id_map = None, name_prefix='', infer=False):
+                               class_map=None, id_map = None, name_prefix='',subgraph_weight=1., infer=False):
         # Define placeholders
         inf_batch_shape=None
 
@@ -426,6 +431,7 @@ class gnn:
         b = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="batch")
         geto_batch = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="getobatch")
         dpo = tf.placeholder_with_default(0., shape=(),  name="dropout")
+        wght = tf.placeholder_with_default(subgraph_weight, shape=(), name="subgraph_weight")
         #b1 = tf.placeholder(tf.int32, shape=(inf_batch_shape), name=name_prefix + 'batch1')
         if not infer:
             placeholders = {
@@ -434,6 +440,7 @@ class gnn:
                 'getobatch': geto_batch,
                 'dropout': dpo,
                 'batch_size': bs, #tf.placeholder(tf.int32,inf_batch_shape, name=name_prefix+'batch_size'),
+                'subgraph_weight': wght,
             }
         else:
             placeholders = {
@@ -447,6 +454,7 @@ class gnn:
                 #    name='neg_sample_size'),
                 'dropout': dpo,
                 'batch_size' : bs,                    #tf.placeholder(tf.int32, name='batch_size'),
+                'subgraph_weight': wght,
             }
         return placeholders
 
@@ -470,6 +478,7 @@ class gnn:
         }
         return placeholders
 
+    #@profile
     def _train(self, train_data, test_data=None):
 
 
@@ -748,11 +757,12 @@ class gnn:
                                         identity_dim=FLAGS.identity_dim,
                                         logging=True)
         elif self.FLAGS.model == 'geto-edge':
-            sampler = GeToInformedNeighborSampler(adj_info,
-                                                  batch_size=FLAGS.batch_size,
-                                                  geto_adj_info=geto_adj_info,
-                                                  adj_probs=self.geto_elements,
-                                                  resampling_rate=0)
+            # sampler = GeToInformedNeighborSampler(adj_info,
+            #                                       batch_size=FLAGS.batch_size,
+            #                                       geto_adj_info=geto_adj_info,
+            #                                       adj_probs=self.geto_elements,
+            #                                       resampling_rate=0)
+            sampler = UniformNeighborSampler(adj_info, geto_adj_info=geto_adj_info)
             layer_infos = [SAGEInfo("node_hidden-geto_maxpool", sampler,
                                     self.FLAGS.samples_1, self.FLAGS.dim_1)]  # ,
             # SAGEInfo("node_maxpool", sampler, FLAGS.samples_2, FLAGS.dim_2)]
@@ -921,9 +931,7 @@ class gnn:
         config.allow_soft_placement = True
 
         # Initialize session
-        #sess = tf.Session(config=config)
-
-        sess = tf.InteractiveSession(config=config)
+        sess = tf.Session(config=config)
 
         merged = tf.compat.v1.summary.merge_all()
         summary_writer = tf.compat.v1.summary.FileWriter(self.log_dir(), sess.graph)
@@ -950,17 +958,36 @@ class gnn:
             train_geto_adj_info = tf.assign(geto_adj_info, minibatch.geto_adj)
             val_geto_adj_info = tf.assign(geto_adj_info, minibatch.test_geto_adj, name='geto_adj_assign')
 
+        if self.sublevel_sets:
+            num_sublevel_sets = minibatch.total_sublevel_sets
+        else:
+            num_sublevel_sets = 1
+
         start_time = time.time()
         for epoch in range(FLAGS.epochs):
             minibatch.shuffle()
 
             iter = 0
 
+            if self.sublevel_sets:
+                total_sublevel_sets = minibatch.total_sublevel_sets
+                if epoch%(FLAGS.epochs//(num_sublevel_sets+1)) == 0:
+                    #FLAGS.weight_decay *= 1e-2
+                    minibatch.update_sublevel_training_set()
+
+
             epoch_val_costs.append(0)
             while not minibatch.end():
                 # Construct feed dictionary
                 feed_dict, labels = minibatch.next_minibatch_feed_dict()
                 feed_dict.update({placeholders['dropout']: FLAGS.dropout})
+                if self.sublevel_sets:
+                    sublevel_set_id = minibatch.sublevel_set_id
+                    total_sublevel_sets = minibatch.total_sublevel_sets
+                    if sublevel_set_id > total_sublevel_sets:
+                        feed_dict.update({placeholders['subgraph_weight']:1.0})
+                    else:
+                        feed_dict.update({placeholders['subgraph_weight']:100.0})#FLAGS.subgraph_weight})
 
                 t = time.time()
                 # Training step

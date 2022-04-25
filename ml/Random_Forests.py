@@ -173,8 +173,8 @@ class RandomForest(MLGraph):
                                                         boxes=None)  #
         self.X_BOX, self.Y_BOX = box_set
 
-        self.get_train_test_val_sugraph_split(collect_validation=False, validation_hops = 1,
-                                                 validation_samples = 1)
+        self.get_train_test_val_subgraph_split(collect_validation=False, validation_hops = 1,
+                                               validation_samples = 1)
         self.box_regions = boxes
 
         num_percent = 0

@@ -10,6 +10,8 @@ from ml.MLP import mlp
 from ml.UNet import UNetwork
 from ml.utils import get_train_test_val_partitions
 from ml.utils import get_partition_feature_label_pairs
+from ml.utils import get_merged_features, pout
+
 from proc_manager.run_manager import *
 from metrics.model_metrics import compute_getognn_metrics, compute_prediction_metrics,compute_opt_F1_and_threshold
 from data_ops.set_params import set_parameters
@@ -95,6 +97,9 @@ class runner:
 
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
+        self.input_path = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
+                                'input')
+        self.image_path = os.path.join(self.input_path, self.label_file.split('raw')[0] + 'raw')#self.image)
 
         print("    * : local project base path:  ", LocalSetup.project_base_path)
 
@@ -142,6 +147,8 @@ class runner:
                 self.run_supervised_getognn( boxes=boxes, dims=dims )
             elif learning == 'unsupervised':
                 self.run_unsupervised_getognn(self.multi_run)
+            elif learning == 'subcomplex':
+                self.run_subcomplex_informed_getognn(boxes=boxes, dims=dims)
         if model == 'mlp':
             self.run_mlp( boxes=boxes, dims=dims, flavor=learning )
         if model == 'random_forest':
@@ -407,11 +414,30 @@ class runner:
                 sup_getognn.getognn.params['geto_as_feat'] = True
                 sup_getognn.getognn.params['load_geto_attr'] = False
 
+            sup_getognn.getognn.get_train_test_val_subgraph_split(  collect_validation=False,
+                                                                    validation_hops=1,
+                                                                    validation_samples=1)
 
+            if sup_getognn.getognn.params['write_json_graph']:
+                sup_getognn.getognn.write_json_graph_data(folder_path=sup_getognn.getognn.pred_session_run_path,
+                                                          name="GeToGNN" + '_' + sup_getognn.getognn.params['name'])
 
+            # random walks
+            if not sup_getognn.getognn.params['load_preprocessed_walks']:
+                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+                                                   'gnn')
+                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+                sup_getognn.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
+            else:
+                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+                                                   'gnn')
+                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
 
 
             sup_getognn.compute_features()
+
 
             if BEGIN_LOADING_FEATURES or COMPUTE_FEATURES:
                 BEGIN_LOADING_FEATURES      = True
@@ -420,6 +446,8 @@ class runner:
             if BEGIN_LOADING_GETO_FEATURES or COMPUTE_GETO_FEATURES:
                 BEGIN_LOADING_GETO_FEATURES = True
                 COMPUTE_GETO_FEATURES       = False
+
+
 
 
             getognn = sup_getognn.train(run_num=str(percent))
@@ -437,23 +465,31 @@ class runner:
             #
             # Feature Importance
             #
+            if BEGIN_LOADING_GETO_FEATURES and BEGIN_LOADING_FEATURES:
+                node_gid_to_feature, node_gid_to_feat_idx, features = get_merged_features(getognn)
+            else:
+                node_gid_to_feature = getognn.node_gid_to_standard_feature
+
             partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
                 getognn.node_gid_to_partition,
-                getognn.node_gid_to_feature,
+                node_gid_to_feature,
                 getognn.node_gid_to_label,
                 test_all=True)
             gid_features_dict = partition_feat_dict['all']
             gid_label_dict = partition_label_dict['all']
             #getognn.load_feature_names()
             if run_feat_importance:     #getognn.params['feature_importance'] and
+
                 names = []
+
                 if BEGIN_LOADING_FEATURES or COMPUTE_FEATURES:
                     names += getognn.load_feature_names()
                 if BEGIN_LOADING_GETO_FEATURES or COMPUTE_GETO_FEATURES:
                     names += getognn.load_geto_feature_names()
 
+
                 getognn.feature_importance(feature_names=names,#getognn.feature_names,
-                                      features=getognn.node_gid_to_feature,#gid_features_dict,
+                                      features=node_gid_to_feature,#gid_features_dict,
                                       labels=gid_label_dict,
                                            plot=False)
                 getognn.write_feature_importance()
@@ -1308,7 +1344,7 @@ class runner:
                     x_box = x_b
                     y_box = y_b
                     training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
-                predictions_topo_bool = []
+                #predictions_topo_bool = []
                 labels_topo_bool = []
                 check = 30
                 for gid in MLP.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
@@ -1443,6 +1479,384 @@ class runner:
                 MLP.write_feature_importance()
 
             del MLP
+
+
+#
+#     Simply Informed
+#
+    def run_subcomplex_informed_getognn(self, boxes=None,  dims=None):
+
+
+        from getognn import supervised_getognn
+
+        IMG_WIDTH = dims[0]
+        IMG_HEIGHT = dims[1]
+
+        growth_regions = self.grow_box(dims=dims, boxes=boxes)
+
+        BEGIN_LOADING_FEATURES      = self.load_features
+        COMPUTE_FEATURES            = self.compute_features
+        BEGIN_LOADING_GETO_FEATURES = self.load_geto_features
+        COMPUTE_GETO_FEATURES       = self.compute_geto_features
+        FEATS_INDEPENDENT           = self.feats_independent
+        run_feat_importance = 1
+
+        for gr in range(len(growth_regions)):
+
+
+
+            regions = growth_regions[gr]
+
+            BOXES = self.get_box_regions(regions)
+            X_BOX = [b[0] for b in BOXES]
+            Y_BOX = [b[1] for b in BOXES]
+
+            num_percent = 0
+            for box in regions:
+                num_percent += float((box[3] - box[2]) * (box[1] - box[0]))
+            percent = num_percent / float(IMG_WIDTH * IMG_HEIGHT)
+            percent_float = percent *100
+            print("    * percent", percent)
+            if percent_float > self.break_training_size:
+                break
+            #if gr > 1 and percent_float < 1:
+            #    continue
+            if percent_float < self.percent_train_thresh:
+                continue
+            percent = int(round(percent, 2) )
+
+
+            sup_getognn = supervised_getognn(model_name=self.model_name)
+            sup_getognn.build_getognn(
+                BEGIN_LOADING_FEATURES      = BEGIN_LOADING_FEATURES,
+                COMPUTE_FEATURES            = COMPUTE_FEATURES,
+                BEGIN_LOADING_GETO_FEATURES = BEGIN_LOADING_GETO_FEATURES,
+                COMPUTE_GETO_FEATURES       = COMPUTE_GETO_FEATURES,
+                FEATS_INDEPENDENT           = FEATS_INDEPENDENT,
+                                       sample_idx=self.sample_idx,
+                                       experiment_num=self.experiment_num,
+                                       experiment_name=self.experiment_name,
+                                       window_file_base=self.window_file_base,
+                                       parameter_file_number=self.parameter_file_number,
+                                       format = format,
+                                       run_num=percent,
+                                       name=self.name, image=self.image,
+                                       label_file=self.label_file,
+                                       msc_file=self.msc_file,
+                                       ground_truth_label_file=self.ground_truth_label_file,
+                                       experiment_folder = self.experiment_folder,
+                                       write_path=self.write_path,
+                                       feature_file=self.feature_file,
+                                       window_file=None,model_name="GeToGNN",
+                                       X_BOX=X_BOX,
+                                       Y_BOX=Y_BOX,
+                                       regions=regions)
+
+            if BEGIN_LOADING_FEATURES:
+                sup_getognn.getognn.params['load_features'] = True
+                sup_getognn.getognn.params['write_features'] = False
+                sup_getognn.getognn.params['write_feature_names'] = False
+                sup_getognn.getognn.params['save_filtered_images'] = False
+                sup_getognn.getognn.params['collect_features'] = False
+                sup_getognn.getognn.params['load_preprocessed'] = True
+                sup_getognn.getognn.params['load_feature_names'] = True
+            elif COMPUTE_FEATURES:
+                sup_getognn.getognn.params['load_features'] = False
+                sup_getognn.getognn.params['write_features'] = True
+                sup_getognn.getognn.params['write_feature_names'] = True
+                sup_getognn.getognn.params['save_filtered_images'] = True
+                sup_getognn.getognn.params['collect_features'] = True
+                sup_getognn.getognn.params['load_preprocessed'] = False
+                sup_getognn.getognn.params['load_feature_names'] = False
+            if BEGIN_LOADING_GETO_FEATURES:
+                sup_getognn.getognn.params['load_geto_attr'] = True
+                sup_getognn.getognn.params['load_feature_names'] = True
+            elif COMPUTE_GETO_FEATURES:
+                sup_getognn.getognn.params['geto_as_feat'] = True
+                sup_getognn.getognn.params['load_geto_attr'] = False
+
+            sublevel_msc = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
+                                                                           persistence=[1.5],
+                                                                           sigma=[2],
+                                                                           X=sup_getognn.getognn.X,
+                                                                           Y=sup_getognn.getognn.Y
+                                                                           )
+
+            gid_gnode_dict, gid_edge_dict = sup_getognn.getognn.map_to_priors_graph(msc=sublevel_msc)
+
+            sup_getognn.getognn.gid_gnode_dict, sup_getognn.getognn.gid_edge_dict = sup_getognn.getognn.mark_sublevel_set(gid_edge_dict,
+                                                  gid_gnode_dict,
+                                                  X=sup_getognn.getognn.X,
+                                                  Y=sup_getognn.getognn.Y,
+                                                  union_radius=0,
+                                                  union_thresh=0.1)
+
+            superlevel_training_set, sublevel_training_set = sup_getognn.getognn.complex_sublevel_training_set()
+            # sublevel_training_set = [gnode.gid for gnode in sup_getognn.getognn.gid_gnode_dict.values() if
+            #                          sup_getognn.getognn.node_gid_to_partition[gnode.gid] == 'training' and gnode.sublevel_set]
+            #
+            # superlevel_training_set = [gnode.gid for gnode in sup_getognn.getognn.gid_gnode_dict.values() if
+            #                            sup_getognn.getognn.node_gid_to_partition[gnode.gid] == 'training']
+            pout(["len sub", len(sublevel_training_set)])
+
+            sup_getognn.getognn.draw_segmentation(dirpath=os.path.join(self.input_path,'geomsc'),
+                                                  draw_sublevel_set=True)
+
+
+
+            sup_getognn.getognn.get_complex_informed_subgraph_split(sublevel_training_sets=[sublevel_training_set],
+                                                                    collect_validation=False,
+                                                                    validation_hops=1,
+                                                                    validation_samples=1)
+
+            if sup_getognn.getognn.params['write_json_graph']:
+                sup_getognn.getognn.write_json_graph_data(folder_path=sup_getognn.getognn.pred_session_run_path,
+                                                   name="GeToGNN" + '_' + sup_getognn.getognn.params['name'])
+
+            # random walks
+            if not sup_getognn.getognn.params['load_preprocessed_walks']:
+                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+                                                   'gnn')
+                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+                sup_getognn.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
+            else:
+                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+                                                   'gnn')
+                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+
+            sup_getognn.compute_features()
+
+
+            if BEGIN_LOADING_FEATURES or COMPUTE_FEATURES:
+                BEGIN_LOADING_FEATURES      = True
+                COMPUTE_FEATURES            = False
+
+            if BEGIN_LOADING_GETO_FEATURES or COMPUTE_GETO_FEATURES:
+                BEGIN_LOADING_GETO_FEATURES = True
+                COMPUTE_GETO_FEATURES       = False
+
+
+
+
+            getognn = sup_getognn.train(run_num=str(percent), sublevel_sets=True)
+
+            #getognn.update_run_info(batch_multi_run=str(percent))
+            getognn.run_num = percent
+
+            out_folder = os.path.join(getognn.pred_session_run_path)
+            if not os.path.exists(out_folder):
+                os.makedirs(out_folder)
+
+
+            #
+
+            #
+            # Feature Importance
+            #
+            if BEGIN_LOADING_GETO_FEATURES and BEGIN_LOADING_FEATURES:
+                node_gid_to_feature, node_gid_to_feat_idx, features = get_merged_features(getognn)
+            else:
+                node_gid_to_feature = getognn.node_gid_to_standard_feature
+            partition_label_dict, partition_feat_dict = get_partition_feature_label_pairs(
+                getognn.node_gid_to_partition,
+                node_gid_to_feature,
+                getognn.node_gid_to_label,
+                test_all=True)
+
+
+            gid_features_dict = partition_feat_dict['all']
+            gid_label_dict = partition_label_dict['all']
+            #getognn.load_feature_names()
+            if run_feat_importance:     #getognn.params['feature_importance'] and
+                names = []
+
+                if BEGIN_LOADING_FEATURES or COMPUTE_FEATURES:
+                    names += getognn.load_feature_names()
+                if BEGIN_LOADING_GETO_FEATURES or COMPUTE_GETO_FEATURES:
+                    names += getognn.load_geto_feature_names()
+
+                pout(['len featname', len(names), 'shape feat', np.array(list(node_gid_to_feature.values())).shape])
+
+                getognn.feature_importance(feature_names=names,#getognn.feature_names,
+                                      features=node_gid_to_feature,#gid_features_dict,
+                                      labels=gid_label_dict,
+                                           plot=False)
+                getognn.write_feature_importance()
+                getognn.params['feature_importance'] = False
+                run_feat_importance = 0
+
+            training_reg_bg = np.zeros(getognn.image.shape[:2], dtype=np.uint8)
+            for x_b, y_b in zip(getognn.x_box, getognn.y_box):
+                x_box = x_b
+                y_box = y_b
+                training_reg_bg[x_box[0]:x_box[1], y_box[0]:y_box[1]] = 1
+            # getognn.write_training_percentages(dir=getognn.pred_session_run_path, train_regions=training_reg_bg)
+
+            #
+            # Perform remainder of runs and don't need to read feats again
+            #
+
+
+            getognn.supervised_train()
+            getognn.record_time(round(getognn.train_time, 4),
+                                   dir=getognn.pred_session_run_path,
+                                   type='train')
+            getognn.record_time(round(getognn.pred_time, 4),
+                                   dir=getognn.pred_session_run_path,
+                                   type='pred')
+            G = getognn.get_graph()
+            getognn.equate_graph(G)
+            # For computing the line graph for visualisation
+            # getognn.draw_priors_graph(G)
+
+
+
+
+
+            predictions, labels, opt_thresh = compute_getognn_metrics(getognn=getognn)
+
+
+            getognn.write_arc_predictions(dir=getognn.pred_session_run_path)
+            getognn.draw_segmentation(dirpath=getognn.pred_session_run_path)
+            getognn.write_gnode_partitions(dir=getognn.pred_session_run_path)  # self.getognn.session_name)
+            getognn.write_selection_bounds(dir=getognn.pred_session_run_path)  # self.getognn.session_name)
+
+            # update newly partitioned/infered graoh
+            G = getognn.get_graph()
+            getognn.equate_graph(G)
+
+            total_number_nodes, total_training_nodes, total_number_edges, total_test_nodes, total_length_training_nodes,\
+            total_length_positive_training_nodes,  total_length_positive_nodes,\
+            total_length_test_nodes, total_length_nodes, total_nodes, total_foreground_nodes = self.graph_statistics( getognn.gid_gnode_dict,
+                                                                                 getognn.gid_edge_dict,
+                                                                                 getognn.node_gid_to_partition,
+                                                                                 getognn.node_gid_to_label)
+            getognn.write_graph_statistics(total_number_nodes,
+                                           total_training_nodes,
+                                           total_number_edges,
+                                           total_test_nodes,
+                                           total_length_training_nodes,
+                                           total_length_positive_training_nodes,
+                                           total_length_positive_nodes,
+                                           total_length_test_nodes,
+                                           total_length_nodes,
+                                           total_nodes, total_foreground_nodes,
+                                           fname='region_percents')
+
+            # getognn.write_training_graph_percentages(dir=getognn.pred_session_run_path,
+            #                                          graph_orders=(total_number_nodes,
+            #                                                        total_training_nodes))
+
+            pred_labels_conf_matrix = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(0.25,opt_thresh/2.) # dtype=np.uint8)
+            pred_labels_msc = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(0.25, opt_thresh/2.)
+            gt_labels_msc = np.zeros(getognn.image.shape[:2], dtype=np.float32) #* min(.25,opt_thresh/2.)
+            pred_prob_im = np.zeros(getognn.image.shape[:2], dtype=np.float32)
+            gt_msc = np.zeros(getognn.image.shape[:2], dtype = np.float32)
+            predictions_topo_bool = []
+            labels_topo_bool = []
+            check = 30
+            for gid in getognn.node_gid_to_label.keys():  # zip(mygraph.labels, mygraph.polylines):
+
+                gnode = getognn.gid_gnode_dict[gid]
+                label = getognn.node_gid_to_label[gid]
+                label = label if type(label) != list else label[1]
+                line = get_points_from_vertices([gnode])
+                # else is fg
+                cutoff = opt_thresh
+
+                vals = []
+
+                for point in line:
+                    ly = int(point[0])
+                    lx = int(point[1])
+                    pred = getognn.node_gid_to_prediction[gid]
+                    vals.append(pred)
+
+
+                inferred = np.array(vals, dtype="float32")
+                infval = np.average(inferred)
+                pred_mode = infval
+
+                getognn.node_gid_to_prediction[gid] = [1. - infval, infval]
+
+
+
+                getognn.node_gid_to_prediction[gid] = [1. - infval, infval]
+                if check >= 0:
+
+                    check -= 1
+
+                t = 0
+                if infval >= opt_thresh:
+                    if label == 1:  # true positive
+                        t = 4  # red
+                        ## ["lightgray", "blue", "yellow", "cyan", "red", 'mediumspringgreen'])
+                    else:  # . False positive
+                        t = 2  # yellow
+                else:
+                    if label == 1:  # false negative
+                        t = 5  # mediumspringgreen
+                    else:  # True Negatuve
+                        t = 1  # blue
+
+                for point in line:
+                    ly = int(point[0])
+                    lx = int(point[1])
+                    gt_msc[lx, ly] = 4 if label == 1 else 1
+                    pred_labels_conf_matrix[lx, ly] = t
+                    pred_labels_msc[lx, ly] = 1 if infval >= opt_thresh else 0
+                    gt_labels_msc[lx,ly] = label
+                    pred_prob_im[lx, ly] = infval
+                    if training_reg_bg[lx, ly] != 1:
+                        getognn.node_gid_to_partition[gid] = 'test'
+                        #predictions_topo_bool.append(infval >= cutoff)
+                        #gt_label = seg_whole[lx, ly]
+                        labels_topo_bool.append(label >= cutoff)
+
+
+            out_folder = getognn.pred_session_run_path
+
+
+
+
+
+            images = [getognn.image, gt_labels_msc, pred_labels_msc,
+                      pred_prob_im]
+            names = ["Image", "Ground Truth Segmentation", "Predicted Foreground Segmentation",
+                     "Line Foreground Probability"]
+            for image, name in zip(images, names):
+                plot(image_set=[image, training_reg_bg], name=name, type='contour', write_path=out_folder)
+
+            image_set = [pred_labels_msc, training_reg_bg, pred_labels_conf_matrix]
+            plot(image_set, name="TP FP TF TN Line Prediction",
+                 type='confidence', write_path=out_folder)
+
+            plot(image_set, name="TP FP TF TN Line Prediction",
+                 type='zoom', write_path=out_folder)
+
+
+            image_set = [getognn.image, training_reg_bg, gt_msc]
+            plot(image_set, name="Ground Truth MSC",
+                 type='confidence', write_path=out_folder)
+
+            plot(image_set, name="Ground Truth MSC",
+                 type='zoom', write_path=out_folder)
+
+            for image, name in zip(images, names):
+                plot(image_set=[image, training_reg_bg], name=name, type='zoom', write_path=out_folder)
+
+
+
+
+            # batch_folder = os.path.join(self.params['experiment_folder'],'batch_metrics', 'prediction')
+            # if not os.path.exists(batch_folder):
+            #    os.makedirs(batch_folder)
+            #
+
+            del getognn
+            del sup_getognn
 
 
 

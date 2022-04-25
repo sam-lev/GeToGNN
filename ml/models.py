@@ -364,7 +364,7 @@ class SampleAndAggregate(GeneralizedModel):
                                 None, None , None, None, None, None, None)
             else:
                 if k == 0:
-                    geto_dims = self.dims_geto_elms[0]
+                   geto_dims = self.dims_geto_elms[0]
                 #   geto_elms = self.geto_elements
                 sample_input = (samples[k], layer_infos[t].num_samples, geto_samples[k],
                                 geto_elms, geto_dims, support_size, k, layer_infos, batch_size)
@@ -422,20 +422,25 @@ class SampleAndAggregate(GeneralizedModel):
                 #print("    * : ",dim_mult)
                 # aggregator at current layer
                 if layer == len(num_samples) - 1:
-                    aggregator = self.aggregator_cls(dim_mult*dims[layer], dims[layer+1], act=lambda x : x,
+                    aggregator = self.aggregator_cls(dim_mult*dims[layer], dims[layer+1],
+                                                     act=lambda x : x,
                             dropout=self.placeholders['dropout'],
+                                                     subgraph_weight = self.placeholders['subgraph_weight'],
                             jumping_knowledge=jumping_knowledge, jump_type=jump_type,
                             hidden_dim_1 = hidden_dim_1, hidden_dim_2 = hidden_dim_2,
                             name=name+str(layer), concat=concat, model_size=model_size,
                                                      geto_loss=geto_loss,
-                            geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],geto_dims_out = geto_dims[layer+1])
+                            geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],
+                                                     geto_dims_out = geto_dims[layer+1])
                 else:
                     aggregator = self.aggregator_cls(dim_mult*dims[layer], dims[layer+1],
                             dropout=self.placeholders['dropout'],geto_loss=geto_loss,
+                                                     subgraph_weight=self.placeholders['subgraph_weight'],
                             jumping_knowledge=jumping_knowledge, jump_type=jump_type,
                             hidden_dim_1 = hidden_dim_1, hidden_dim_2 = hidden_dim_2,
                             name=name+str(layer), concat=concat, model_size=model_size,
-                            geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],geto_dims_out = geto_dims[layer+1])
+                            geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],
+                                                     geto_dims_out = geto_dims[layer+1])
                 aggregators.append(aggregator)
             else:
                 aggregator = aggregators[layer]
@@ -461,7 +466,8 @@ class SampleAndAggregate(GeneralizedModel):
                 else:
                     if self.hidden_geto_agg:
                         node_and_neighbors = (neigh_feat_reshaped[0], neigh_feat_reshaped[1],
-                              hidden_geto_elm[hop], tf.reshape(hidden_geto_elm[hop + 1], neigh_geto_dims))
+                              hidden_geto_elm[hop], tf.reshape(hidden_geto_elm[hop + 1],
+                                                               neigh_geto_dims))
                     else:
                         node_and_neighbors = (neigh_feat_reshaped[0], neigh_feat_reshaped[1],
                                               hidden_geto_elm[hop],
@@ -524,6 +530,7 @@ class SampleAndAggregate(GeneralizedModel):
             unigrams=self.degrees.tolist()))
 
         dim_mult = 2 if self.concat else 1
+        dim_mult_geto =  2 if self.concat else 1
 
         #print("    * : GETO IS NONE", self.geto_elements is None)
         # perform "convolution"
@@ -573,8 +580,8 @@ class SampleAndAggregate(GeneralizedModel):
         self.neg_outputs = tf.nn.l2_normalize(self.neg_outputs, 1)
 
         if self.geto_loss and self.hidden_geto_agg:
-            self.geto_link_pred_layer = BipartiteEdgePredLayer(dim_mult * self.dims_geto_elms[-1],
-                                                          dim_mult * self.dims_geto_elms[-1], self.placeholders,
+            self.geto_link_pred_layer = BipartiteEdgePredLayer(dim_mult_geto * self.dims_geto_elms[-1],
+                                                          dim_mult_geto * self.dims_geto_elms[-1], self.placeholders,
                                                           act=tf.nn.sigmoid,
                                                           bilinear_weights=False,
                                                           name='edge_predict',

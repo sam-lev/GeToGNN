@@ -1,5 +1,5 @@
 from __future__ import print_function
-
+import tensorflow as tf
 import numpy as np
 import random
 import json
@@ -342,6 +342,23 @@ def get_partition_feature_label_pairs(node_gid_to_partition, node_gid_to_feature
 
     return partition_label_dict, partition_feature_dict
 
+
+def get_merged_features(model):
+    feat_idx = 0
+    features = []
+    node_gid_to_feature = {}
+    node_gid_to_feat_idx = {}
+    for gid, gnode in model.gid_gnode_dict.items():
+        feats = list(model.node_gid_to_standard_feature[gid])
+        geomfeats = list(model.node_gid_to_geom_feature[gid])
+        combined_feats = feats + geomfeats
+        node_gid_to_feature[gid] = np.array(combined_feats)
+        feat_idx += 1
+        features.append(combined_feats)
+        node_gid_to_feat_idx[gid] = feat_idx
+    return node_gid_to_feature, node_gid_to_feat_idx, features
+
+
 def pout(show=None):
     if isinstance(show, list):
         print("    *")
@@ -358,6 +375,14 @@ def pout(show=None):
         else:
             print("    * ", str(show))
         print("    *")
+
+def gather_neighbors(adj, indices, num_samples):
+    adj_lists_T = tf.transpose(adj)
+    adj_lists_T_nbr = tf.gather(adj_lists_T, indices)
+    adj_lists_nbr = tf.transpose(adj_lists_T_nbr)
+
+    adj_lists_all = tf.slice(adj_lists_nbr, [0, 0], [-1, num_samples])
+
 
 # Dataset class for the retina dataset
 # each item of the dataset is a tuple with three items:

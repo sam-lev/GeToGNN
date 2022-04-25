@@ -133,14 +133,14 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
                                                          , os.pardir))
         param_file_shared = os.path.join(param_file_shared,'parameter_list_'+str(read_params_from)+'.txt')
 
-        print("    * : ", param_file_shared)
-        print("    * : ", param_file_personal)
+        # print("    * : ", param_file_shared)
+        # print("    * : ", param_file_personal)
         f = open(param_file_shared, 'r')
         param_dict = {}
         params = f.readlines()
         for param in params:
             name_value = param.split(' ')
-            print(name_value)
+            # print(name_value)
             if name_value[0][0] == '_':
                 continue
             if ',' in name_value[1]:
@@ -159,7 +159,7 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
         params = f.readlines()
         for param in params:
             name_value = param.split(' ')
-            print(name_value)
+            # print(name_value)
             if name_value[0][0] == '_':
                 continue
             if ',' in name_value[1]:
@@ -174,7 +174,7 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
                 param_dict_changed[name_value[0]] = name_value[1]
             old_val = param_dict[name_value[0]]
             if ',' not in name_value[1]:
-                print(name_value)
+                # print(name_value)
                 if type(old_val) == str:
                     param_dict[name_value[0]] = type(old_val)(param_dict_changed[name_value[0]][:-1])
                 elif type(old_val) == bool:
@@ -185,9 +185,9 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
                     param_dict[name_value[0]] = float(param_dict_changed[name_value[0]])
                 else:
                     param_dict[name_value[0]] = type(old_val)(param_dict_changed[name_value[0]])
-            print("")
-            print(type(param_dict[name_value[0]]))
-            print("")
+            # print("")
+            # print(type(param_dict[name_value[0]]))
+            # print("")
         f.close()
 
     if growing_windows_from is not None:
@@ -199,7 +199,7 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
         for x_y in [box_line_num, box_line_num+1]:
             param = params[x_y]
             name_value = param.split(' ')
-            print(name_value)
+            # print(name_value)
             if ',' in name_value[1]:
                 if name_value[0] not in param_dict.keys():
                     param_dict[name_value[0]] = list(map(int, name_value[1].split(',')))
