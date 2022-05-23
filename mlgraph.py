@@ -694,7 +694,7 @@ class MLGraph(GeToFeatureGraph):
             sublevel_id = -1
             for id, sublevel_set in enumerate(sublevel_training_sets):
                 if gnode.gid in sublevel_set and partition=='train':
-                    sublevel_id = id + 1
+                    sublevel_id = id + 1 if sublevel_id == -1 else sublevel_id
             node["sublevel_set_id"] = [len(sublevel_training_sets), sublevel_id]
             node["test"] = partition == 'test'
             node["val"] = partition == 'val'

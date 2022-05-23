@@ -357,6 +357,19 @@ def compute_features(model=None):
             feat_idx += 1
         model.features = np.array(features)
 
+def get_subgraph_samples(subadj_idx, sublevel_samples_dict, labels=False):
+    #for subadj_idx in sublevel_ids:
+    sb_name = 'sub_batch' + str(subadj_idx)
+    sb_sz_name = sb_name + '_size'
+    sb_lb_name = sb_name + '_labels'
+    subsamples_i = sublevel_samples_dict[sb_name]
+    # self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
+    if not labels:
+        return subsamples_i
+    else:
+        subsamples_labels_i = sublevel_samples_dict[sb_lb_name]
+        return subsamples_i, subsamples_labels_i
+
 def pout(show=None):
     if isinstance(show, list):
         print("    *")

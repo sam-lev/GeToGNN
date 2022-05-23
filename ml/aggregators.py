@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from .layers import Layer, Dense
-from .inits import glorot, zeros
+from .inits import glorot, zeros, normxav_lrhype
 from ml.ops import euclideanDistance
 from ml.utils import pout
 
@@ -45,8 +45,8 @@ class MeanAggregator(Layer):
     def _call(self, inputs):
         self_vecs, neigh_vecs = inputs
 
-        neigh_vecs = tf.nn.dropout(neigh_vecs, 1-self.dropout)
-        self_vecs = tf.nn.dropout(self_vecs, 1-self.dropout)
+        neigh_vecs = tf.nn.dropout(neigh_vecs,keep_prob=1-self.dropout)
+        self_vecs = tf.nn.dropout(self_vecs, keep_prob=1-self.dropout)
         neigh_means = tf.reduce_mean(neigh_vecs, axis=1)
        
         # [nodes] x [out_dim]
@@ -103,8 +103,8 @@ class GCNAggregator(Layer):
     def _call(self, inputs):
         self_vecs, neigh_vecs = inputs
 
-        neigh_vecs = tf.nn.dropout(neigh_vecs, 1-self.dropout)
-        self_vecs = tf.nn.dropout(self_vecs, 1-self.dropout)
+        neigh_vecs = tf.nn.dropout(neigh_vecs, keep_prob=1-self.dropout)
+        self_vecs = tf.nn.dropout(self_vecs, keep_prob=1-self.dropout)
         means = tf.reduce_mean(tf.concat([neigh_vecs, 
             tf.expand_dims(self_vecs, axis=1)], axis=1), axis=1)
 
@@ -1063,11 +1063,323 @@ class GeToMaxPoolAggregator(Layer):
 class MaxPoolingAggregator(Layer):
     """ Aggregates via max-pooling over MLP functions.
     """
+
+    def __init__(self, input_dim, input_dim_sub, output_dim, model_size="small", neigh_input_dim=None,
+                 sub_neigh_input_dim=None,
+                 sub_ids=None,
+                 dropout=0., bias=False,
+                 act=tf.nn.relu,
+                 aggregator=tf.add_n,
+                 pool=tf.reduce_mean,
+                 multilevel_concat = False,
+                 name=None, concat=False, hidden_dim_1=None,
+                 hidden_dim_2=None, geto_loss=False,
+                 jumping_knowledge=False, geto_dims_in=None, geto_dims_out=None,
+                 subcomplex_weight=1.0, bs = 0, sub_bs = 0, diff_bs =1,
+                 **kwargs):
+        super(MaxPoolingAggregator, self).__init__(**kwargs)
+
+        # print("    * : Aggregator is MaxPool")
+
+        self.dropout = dropout
+        self.bias = bias
+        self.act = act
+
+
+
+
+        self.concat = concat
+        self.multilevel_concat = tf.constant(multilevel_concat,tf.bool)
+
+        self.dim_disrepency = tf.logical_and(tf.constant(multilevel_concat,tf.bool),
+                                             tf.constant(concat,tf.bool))
+
+        self.jumping_knowledge = jumping_knowledge
+
+        self.subcomplex_weight = subcomplex_weight
+
+        self.hidden_dim_1 = hidden_dim_1
+        self.hidden_dim_2 = hidden_dim_2
+
+        self.sub_bs = sub_bs
+        self.bs     = bs
+
+        self.agg_sub_level_graphs = True
+        self.pool                  = pool
+
+        # if multiply change absent sub filler to one
+        self.agg = aggregator
+
+        if neigh_input_dim is None:
+            neigh_input_dim = input_dim
+        if sub_neigh_input_dim is None:
+            sub_neigh_input_dim = input_dim_sub
+
+        if name is not None:
+            name = '/' + name
+        else:
+            name = ''
+
+        if self.hidden_dim_1 is not None:
+            hidden_dim = self.hidden_dim = self.hidden_dim_1
+        else:
+            if model_size == "small":
+                hidden_dim = self.hidden_dim = 201 * 3  # 256
+            elif model_size == "big":
+                hidden_dim = self.hidden_dim = 201 * 3  # 1024
+
+
+
+        # self.sub_mlp_l1 = Dense(input_dim=sub_neigh_input_dim,
+        #                              output_dim=hidden_dim,
+        #                              act=tf.nn.relu,
+        #                              dropout=dropout,
+        #                              sparse_inputs=False,
+        #                              logging=self.logging)
+        self.mlp_layers = []
+        self.mlp_layers.append(Dense(input_dim=neigh_input_dim,
+                                     output_dim=hidden_dim,
+                                     act=tf.nn.relu,
+                                     dropout=dropout,
+                                     sparse_inputs=False,
+                                     logging=self.logging))
+        self.mlp_layers.append(Dense(input_dim=hidden_dim,
+                                     output_dim=hidden_dim,
+                                     act=tf.nn.relu,
+                                     dropout=dropout,
+                                     sparse_inputs=False,
+                                     logging=self.logging))
+
+        # self.mlp_layers.append(Dense(input_dim=hidden_dim,
+        #                              output_dim=hidden_dim,
+        #                              act=tf.nn.relu,
+        #                              dropout=dropout,
+        #                              sparse_inputs=False,
+        #                              logging=self.logging))
+        # self.mlp_layers.append(Dense(input_dim=hidden_dim,
+        #                              output_dim=hidden_dim,
+        #                              act=tf.nn.relu,
+        #                              dropout=dropout,
+        #                              sparse_inputs=False,
+        #                              logging=self.logging))
+
+
+
+        with tf.variable_scope(self.name + name + '_vars'):
+            self.vars['neigh_weights'] = glorot([hidden_dim, output_dim],
+                                                name='neigh_weights')
+
+            self.vars['self_weights'] = glorot([input_dim, output_dim],
+                                               name='self_weights')
+
+            # self.vars['sub_neigh_weights'] = normxav_lrhype([hidden_dim, output_dim], maxval = 1.,
+            #                                         name='sub_neigh_weights')
+            #
+            # self.vars['self_sub_weights'] = normxav_lrhype([input_dim_sub,output_dim],maxval = 1.,
+            #                                        name='self_sub_weights')
+
+            # self.vars['sub_neigh_weight_factor'] = normxav_lrhype([1, output_dim],
+            #                                                       maxval=100, minval=10,
+            #                                                       name='agg_neigh_weights_factor')
+            #
+            # self.vars['self_sub_weight_factor'] = normxav_lrhype([1, output_dim],
+            #                                                      maxval=100, minval=10,
+            #                                                      name='agg_self_weights_factor')
+            if self.bias:
+                self.vars['bias'] = zeros([self.output_dim], name='bias')
+
+        if self.logging:
+            self._log_vars()
+
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.neigh_input_dim = neigh_input_dim
+        self.sub_neigh_input_dim = sub_neigh_input_dim
+        # pout(["hidden 1 ", self.hidden_dim_1,'hidden 2', self.hidden_dim_2])
+
+
+    def _call(self, inputs):
+
+        self_vecs, neigh_vecs, sub_self_vecs, sub_neigh_vecs = inputs
+
+        self.super_present, self.sub_present = self.bs != 0, self.sub_bs != 0
+
+        neigh_h = neigh_vecs
+
+        batch_size = self.bs
+
+        dims = tf.shape(neigh_h)
+        batch_size = dims[0]
+        num_neighbors = dims[1]
+
+        sub_batch0_size = self.sub_bs
+        sub_dims = tf.shape(sub_neigh_vecs)
+        sub_batch0_size = sub_dims[0]
+        num_sub_neighbors = sub_dims[1]
+
+        def sublevel_embeddings():
+            h_sub_reshaped = tf.reshape(sub_neigh_vecs,
+                                        (sub_batch0_size * num_sub_neighbors, self.neigh_input_dim))
+
+            # def sub_mlp():
+            #     h_sub_reshaped_sub = self.sub_mlp_l1(h_sub_reshaped)
+            #     for l in self.mlp_layers[1:]:
+            #         h_sub_reshaped_sub = l(h_sub_reshaped_sub)
+            #     return h_sub_reshaped_sub
+            def mlp():
+                h_sub_reshaped_sub = h_sub_reshaped
+                for l in self.mlp_layers:
+                    h_sub_reshaped_sub = l(h_sub_reshaped_sub)
+                return h_sub_reshaped_sub
+
+            h_sub_reshaped = mlp()
+            # tf.cond(self.dim_disrepency,
+            #                          sub_mlp,
+            #                          mlp)
+            sub_neigh_h = tf.reshape(h_sub_reshaped,
+                                     (sub_batch0_size, num_sub_neighbors, self.hidden_dim))
+
+            sub_neigh_h = self.pool(sub_neigh_h, axis=1)
+
+            from_sub_neighs = tf.matmul(sub_neigh_h, self.vars['neigh_weights'])
+
+            from_self_sub = tf.matmul(sub_self_vecs, self.vars["self_weights"])
+
+            return from_sub_neighs, from_self_sub, sub_neigh_h
+
+        # def sub_absent():
+        #     empty_padding = (tf.zeros((sub_batch0_size, self.output_dim)),
+        #                      tf.zeros((sub_batch0_size,self.output_dim)),
+        #                      tf.zeros((sub_batch0_size,self.hidden_dim)))
+        #     return empty_padding
+
+
+        # from_sub_neighs, from_sub_self = sublevel_embeddings()
+        from_sub_neighs, from_sub_self, sub_neigh_h = sublevel_embeddings()
+        # tf.cond(tf.not_equal(self.sub_bs, 0),
+        #                                          sublevel_embeddings,
+        #                                          sub_absent)
+
+
+
+        def concat_sub():
+            return tf.concat([from_sub_self, from_sub_neighs],axis=1)
+        def add_sub():
+            return tf.add_n([from_sub_self, from_sub_neighs])
+
+        sublevel_embedding_h = tf.cond(tf.constant(self.concat,tf.bool),
+                                     concat_sub,
+                                     add_sub)
+
+
+
+        def levelset_weighted_superlevel_embeddings():
+            h_reshaped = tf.reshape(neigh_vecs, (batch_size * num_neighbors, self.neigh_input_dim))
+            for l in self.mlp_layers:
+                h_reshaped = l(h_reshaped)
+
+            neigh_h = tf.reshape(h_reshaped,
+                                 (batch_size, num_neighbors, self.hidden_dim))
+
+            neigh_h = self.pool(neigh_h, axis=1)
+
+            from_neighs = tf.matmul(neigh_h, self.vars['neigh_weights'])
+
+            from_self = tf.matmul(self_vecs, self.vars["self_weights"])
+
+            return from_neighs, from_self
+
+        # def isolated_level_set():
+        #     def sup():
+        #         h_reshaped = tf.reshape(neigh_vecs,
+        #                                 (batch_size * num_neighbors, self.neigh_input_dim))
+        #         for l in self.mlp_layers:
+        #             h_reshaped = l(h_reshaped)
+        #
+        #         neigh_h = tf.reshape(h_reshaped,
+        #                              (batch_size, num_neighbors, self.hidden_dim))
+        #
+        #         neigh_h = self.pool(neigh_h, axis=1)
+        #
+        #         from_neighs = tf.matmul(neigh_h, self.vars['neigh_weights'])
+        #
+        #         from_self = tf.matmul(self_vecs, self.vars["self_weights"])
+        #
+        #         return from_neighs, from_self
+        #     def sub():
+        #         return from_sub_neighs, from_sub_self
+        #
+        #     from_sup_neighs, from_sup_self = tf.cond(tf.not_equal(self.bs, 0),
+        #                                              sup,
+        #                                              sub)
+        #     return from_sup_neighs, from_sup_self
+
+        from_neighs, from_self =levelset_weighted_superlevel_embeddings()
+        # tf.cond(tf.logical_and(tf.not_equal(self.bs, 0),
+        #                                                 tf.not_equal(self.sub_bs, 0)),
+        #                                  levelset_weighted_superlevel_embeddings,
+        #                                  isolated_level_set)
+
+
+
+
+        def concat_sup():
+            return tf.concat([from_self, from_neighs],axis=1)
+        def add_sup():
+            return tf.add_n([from_self, from_neighs])
+
+        superlevel_embedding_h = tf.cond(tf.constant(self.concat, tf.bool),
+                                     concat_sup,
+                                     add_sup)
+
+        # def training_with_sublevel_graph():
+        #     return sublevel_embedding_h
+        # def testing_superlevel_graph():
+        #     return superlevel_embedding_h
+        # sublevel_embedding_h  = tf.cond(tf.equal(self.sub_bs, 0),
+        #                                          training_with_sublevel_graph,
+        #                                          testing_superlevel_graph)
+        def mult_agg():
+            output = tf.multiply(sublevel_embedding_h, superlevel_embedding_h)
+
+            sub_output = sublevel_embedding_h
+            return output, sub_output
+        def add_agg():
+            output = tf.add_n([sublevel_embedding_h, superlevel_embedding_h])
+
+            sub_output = sublevel_embedding_h
+            return output, sub_output
+        def no_agg():
+            # if self.super_present:
+
+            output = superlevel_embedding_h#tf.concat([sublevel_embedding_h, superlevel_embedding_h], axis=1)
+            sub_output = sublevel_embedding_h
+            return output, sub_output
+
+        output, sub_output = tf.cond(tf.not_equal(self.subcomplex_weight,-1),
+                                     add_agg,
+                                     no_agg)
+
+        # output, sub_output = add_agg()
+        # bias
+        if self.bias:
+            #if self.super_present:
+            output += self.vars['bias']
+            #if self.sub_present:
+            sub_output += self.vars['bias']
+            # agg_output += self.vars['bias']
+
+        return self.act(output), self.act(sub_output)
+
+class GraphSageMaxPoolingAggregator(Layer):
+    """ Aggregates via max-pooling over MLP functions.
+    """
     def __init__(self, input_dim, output_dim, model_size="small", neigh_input_dim=None,
-            dropout=0., bias=False, act=tf.nn.relu, name=None, concat=False, hidden_dim_1 = None,
+                 dropout=0., bias=False, act=tf.nn.relu, name=None, concat=False, hidden_dim_1 = None,
                  hidden_dim_2 = None, geto_loss=False,
-            jumping_knowledge = False, geto_dims_in= None,geto_dims_out = None,
-                 subgraph_weight = 1.0, **kwargs):
+                                                     multilevel_concat = False,
+                 jumping_knowledge = False, geto_dims_in= None, geto_dims_out = None,
+                 subcomplex_weight = 1.0, **kwargs):
         super(MaxPoolingAggregator, self).__init__(**kwargs)
 
         #print("    * : Aggregator is MaxPool")
@@ -1076,9 +1388,10 @@ class MaxPoolingAggregator(Layer):
         self.bias = bias
         self.act = act
         self.concat = concat
+        self.multilevel_concat = multilevel_concat
         self.jumping_knowledge = jumping_knowledge
 
-        self.subgraph_weight = subgraph_weight
+        self.subcomplex_weight = subcomplex_weight
 
 
         self.hidden_dim_1 = hidden_dim_1
@@ -1115,6 +1428,12 @@ class MaxPoolingAggregator(Layer):
            
             self.vars['self_weights'] = glorot([input_dim, output_dim],
                                                         name='self_weights')
+
+            self.vars['sub_neigh_weights'] = glorot([hidden_dim, output_dim],
+                                                name='sub_neigh_weights')
+
+            self.vars['self_sub_weights'] = glorot([input_dim, output_dim],
+                                               name='self_sub_weights')
             if self.bias:
                 self.vars['bias'] = zeros([self.output_dim], name='bias')
 
@@ -1127,46 +1446,61 @@ class MaxPoolingAggregator(Layer):
         #pout(["hidden 1 ", self.hidden_dim_1,'hidden 2', self.hidden_dim_2])
 
     def _call(self, inputs):
-        self_vecs, neigh_vecs = inputs
+        self_vecs, neigh_vecs, sub_self_vecs, sub_neigh_vecs = inputs
         neigh_h = neigh_vecs
 
         dims = tf.shape(neigh_h)
         batch_size = dims[0]
         num_neighbors = dims[1]
+
+        sub_dims = tf.shape(sub_neigh_vecs)
+        sub_batch0_size = sub_dims[0]
+        num_sub_neighbors = sub_dims[1]
+
         # [nodes * sampled neighbors] x [hidden_dim]
         h_reshaped = tf.reshape(neigh_h, (batch_size * num_neighbors, self.neigh_input_dim))
+        h_sub_reshaped = tf.reshape(sub_neigh_vecs, (sub_batch0_size * num_sub_neighbors, self.neigh_input_dim))
 
-        ## jumping knowledge applied here, concat each layer, not just neighbor
-        #jumping_knowledge = []
+        for l in self.mlp_layers:
+            h_sub_reshaped = l(h_sub_reshaped)
+
         for l in self.mlp_layers:
             h_reshaped = l(h_reshaped)
-        #    if self.jumping_knowledge:
-        #        jumping_knowledge.append(h_reshaped)
 
-        #if self.jumping_knowledge:
-        #    h_jump = jumping_knowledge[-1]
-        #    for idx, l_vec in enumerate(jumping_knowledge[::-1]):
-        #        h_jump = tf.concat([h_jump, jumping_knowledge[idx+1]], axis=1)
-        #    h_reshaped = h_jump
 
         neigh_h = tf.reshape(h_reshaped, (batch_size, num_neighbors, self.hidden_dim))
-        neigh_h = tf.multiply(self.subgraph_weight, neigh_h)
         neigh_h = tf.reduce_max(neigh_h, axis=1)
-        
+
         from_neighs = tf.matmul(neigh_h, self.vars['neigh_weights'])
+
         from_self = tf.matmul(self_vecs, self.vars["self_weights"])
-        from_self = tf.multiply(self.subgraph_weight, from_self)
+
+
+        sub_neigh_h = tf.reshape(h_sub_reshaped, (sub_batch0_size, num_sub_neighbors, self.hidden_dim))
+        sub_neigh_h = tf.reduce_max(sub_neigh_h, axis=1)
+        sub_neigh_h = tf.multiply(self.subcomplex_weight, sub_neigh_h)
+
+        from_sub_neighs = tf.matmul(sub_neigh_h, self.vars['sub_neigh_weights'])
+
+        from_self_sub = tf.matmul(self_vecs, self.vars["self_sub_weights"])
+        from_self_sub = tf.multiply(self.subcomplex_weight, from_self_sub)
+
+        from_neighs = tf.add_n([from_sub_neighs, from_neighs])
+        from_self = tf.add_n([from_self_sub, from_self])
         
         if not self.concat:
             output = tf.add_n([from_self, from_neighs])
+            sub_output = tf.add_n([from_self_sub, from_sub_neighs])
         else:
             output = tf.concat([from_self, from_neighs], axis=1)
+            sub_output = tf.concat([from_self_sub, from_sub_neighs], axis=1)
 
         # bias
         if self.bias:
             output += self.vars['bias']
+            sub_output += self.vars['bias']
        
-        return self.act(output)
+        return self.act(output), self.act(sub_output)
 
 class MeanPoolingAggregator(Layer):
     """ Aggregates via mean-pooling over MLP functions.

@@ -14,8 +14,8 @@ import subprocess
 from ml.features import *
 from localsetup import *
 from localsetup import LocalSetup as LS
-
-
+from ml.utils import pout
+import getograph
 
 def scale_intensity( original_image, fname_base, scale_range=(0, 255)):
     scaled_image = exposure.rescale_intensity(original_image)  # , in_range=(0, 255))
@@ -27,7 +27,7 @@ def blur_and_save( original_image, fname_base, blur_sigma=2, grey_scale=True):
     blurred_image = gaussian_blur_filter(original_image, sigma=blur_sigma, as_grey=grey_scale).astype(
         "float32"
     )
-    fname_raw = fname_base + "_smoothed.raw"
+    fname_raw = fname_base# + '.raw'#"_smoothed.raw"
     blurred_image.tofile(fname_raw)
     return blurred_image, fname_raw
 
@@ -123,8 +123,8 @@ def call_geomscsegmentation( image_filename=None
             raw_path = fname_raw#os.path.join(write_path.rsplit(".", 1)[0],  img_name)
         else:
             raw_path = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[0]
-        image, fname_raw = blur_and_save(raw_image, raw_path + 'PERS' + str(persistence), blur_sigma=blur_sigma,
-                                         grey_scale=grey_scale)
+        image, fname_raw = blur_and_save(raw_image, raw_path , blur_sigma=blur_sigma,
+                                         grey_scale=grey_scale) #+ 'PERS' + str(persistence)
     else:
         raw_image = image if image is not None else np.fromfile(image, dtype="float32")[:(X * Y)].reshape((X, Y))
         if invert_image:
@@ -133,7 +133,7 @@ def call_geomscsegmentation( image_filename=None
             raw_path = os.path.join(write_path.rsplit(".", 1)[0], img_name)
         else:
             raw_path = image_filename.rsplit('/', 1)[1].rsplit('.', 1)[0]
-        fname_raw = raw_path + 'PERS' + str(persistence) + ".raw"
+        fname_raw = raw_path + ".raw" #'PERS' + str(persistence)
         image = raw_image.astype("float32")
         image.tofile(fname_raw)
 
@@ -182,8 +182,8 @@ def call_geomscsegmentation( image_filename=None
     #    sys.stdout.write(line)
     # for line in proc.stdout:
     #    sys.stdout.write(line)
-    geomsc = MSC()
-    geomsc.read_from_file(fname_raw)
+    geomsc = getograph.GeToGraph(geomsc_fname_base=fname_raw)
+    #geomsc.read_from_file(fname_raw)
 
     if delete_msc_files:
         raw_folder = os.path.join(write_path.rsplit(".", 1)[0], 'raw_images')

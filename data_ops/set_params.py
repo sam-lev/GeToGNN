@@ -1,4 +1,5 @@
 from localsetup import LocalSetup
+from ml.utils import pout
 import os
 
 LS = LocalSetup()
@@ -20,12 +21,15 @@ def parse_params(param_dict):
         i for i in __group_xy([i for i in param_dict['y_box']])
     ]
 
+    def to_str(item):
+        return str(item)
+
     if isinstance(param_dict['gpu'],list):
         gpus = param_dict['gpu']
         gpus = [str(i) for i in gpus]
         gpus = (',').join(gpus)
     else:
-        gpus = str(param_dict['gpu'])[:-1]
+        gpus = to_str(param_dict['gpu'])#[:-1]
 
 
 
@@ -69,6 +73,7 @@ def parse_params(param_dict):
         'weight_decay' : float(param_dict['weight_decay']),
         'polarity' : int(param_dict['polarity']),
         'epochs' : int(param_dict['epochs']),
+        'sublevel_epochs':  param_dict['sublevel_init_epochs'],
         'depth' : int(param_dict['depth']),
         'geto_loss': tobool(param_dict['geto_loss']),
         'getognn_class_weights' : tobool(param_dict['getognn_class_weights']),
@@ -82,8 +87,8 @@ def parse_params(param_dict):
         'degree_l1' : int(param_dict['degree_l1']),
         'degree_l2' : int(param_dict['degree_l2']),
         'degree_l3' : int(param_dict['degree_l3']),
-        'aggregator' : str(param_dict['aggregator'])[:-1],
-        'geto_influence_type': str(param_dict['geto_influence_type'])[:-1],
+        'aggregator' : to_str(param_dict['aggregator']),#[:-1],
+        'geto_influence_type': to_str(param_dict['geto_influence_type']),#[:-1],
         'out_dim_1' : int(param_dict['out_dim_1']),
         'out_dim_2' : int(param_dict['out_dim_2']),
         'hidden_dim_1' : int(param_dict['hidden_dim_1']),
@@ -91,7 +96,7 @@ def parse_params(param_dict):
         'load_walks' : tobool(param_dict['load_walks']),
         'concat' : tobool(param_dict['concat']),
         'jumping_knowledge' : tobool(param_dict['jumping_knowledge']),
-        'jump_type' : str(param_dict['jump_type'])[:-1],
+        'jump_type' : to_str(param_dict['jump_type']),#[:-1],
         'forest_depth' : int(param_dict['forest_depth']),
         'number_forests' : int(param_dict['number_forests']),
         'forest_class_weights' : tobool(param_dict['forest_class_weights']),
@@ -104,13 +109,15 @@ def parse_params(param_dict):
         'mlp_out_dim_1' : int(param_dict['mlp_out_dim_1']),
         'mlp_out_dim_2' : int(param_dict['mlp_out_dim_2']),
         'mlp_out_dim_3' : int(param_dict['mlp_out_dim_3']),
-        'env' : str(param_dict['env'])[:-1],
+        'env' : to_str(param_dict['env']),#[:-1],
         'getofeaturegraph_file' : tobool(param_dict['getofeaturegraph_file']),
-        'train_data_idx' : str(param_dict['train_data_idx'])[:-1],
-        'inference_data_idx' : str(param_dict['inference_data_idx'])[:-1],
+        'train_data_idx' : to_str(param_dict['train_data_idx']),#[:-1],
+        'inference_data_idx' : to_str(param_dict['inference_data_idx']),#[:-1],
         'blur_sigmas' : [int(param_dict['blur_sigmas'])],
-        'model_size' : str(param_dict['hidden_dim_1'])[:-1],
-        'val_model' : str(param_dict['val_model'])[:-1]
+        'model_size' : to_str(param_dict['hidden_dim_1']),#[:-1],
+        'val_model' : to_str(param_dict['val_model']),#[:-1]
+        'dropout' : float(param_dict['dropout']),
+        'multilevel_concat': tobool(param_dict['multilevel_concat'])
     }
     return params_dict
 
@@ -138,12 +145,19 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
         f = open(param_file_shared, 'r')
         param_dict = {}
         params = f.readlines()
-        for param in params:
+        for lnum, param in enumerate(params):
             name_value = param.split(' ')
+
+
+            if '\n' in name_value[1].split(','):
+                name_value[1] = name_value[1][:-1]
             # print(name_value)
             if name_value[0][0] == '_':
                 continue
             if ',' in name_value[1]:
+                if name_value[1][-1] == ',':
+                    param_dict[name_value[0]] = [int(name_value[1].split(',')[0])]
+                    continue
                 if name_value[0] not in param_dict.keys():
                     param_dict[name_value[0]] = list(map(int, name_value[1].split(',')))
                 else:
@@ -157,12 +171,20 @@ def set_parameters(x_1 = None, x_2 = None, y_1 = None, y_2 = None,
         f = open(param_file_personal, 'r')
         param_dict_changed = {}
         params = f.readlines()
-        for param in params:
+        for lnum,param in enumerate(params):
             name_value = param.split(' ')
             # print(name_value)
             if name_value[0][0] == '_':
                 continue
+
+            if '\n' in name_value[1].split(','):# or lnum == len(params)-1:
+                name_value[1] = name_value[1][:-1]
+
             if ',' in name_value[1]:
+
+                if name_value[1][-1] == ',':
+                    param_dict[name_value[0]] = [int(name_value[1].split(',')[0])]
+                    continue
 
                 if name_value[0] not in param_dict_changed.keys():
                     param_dict_changed[name_value[0]] = list( map( int , name_value[1].split(',') ))

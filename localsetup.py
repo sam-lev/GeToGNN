@@ -26,7 +26,9 @@ class LocalSetup:
                                     stare_train_write_path = "/Users/multivax/Documents/PhD/4spring19/DeepLearning/DeepLearning/HW3/datasets/stare/"
                                     """
 
-                self.project_base_path = "/home/sam/Documents/PhD/Research/GeToGNN/"
+                self.project_base_path = "/home/sam/Documents/PhD/Research/GeToSubComplex/"
+                self.complex_compute_path = "/home/sam/Documents/PhD/Research/GradIntegrator"
+                self.topo_label_path      =  "/home/sam/Documents/PhD/Research/TopoViewerFLTK"
                 self.dataset_base_path = os.path.join(self.project_base_path, "datasets")
                 self.stare_base_path = os.path.join(self.project_base_path, "datasets", "optics", "stare")
                 self.drive_test_base_path = os.path.join(self.project_base_path, "datasets", "optics", "drive", "DRIVE", "test")
@@ -72,7 +74,7 @@ class LocalSetup:
             if env == 'slurm':
                 self.model = None
 
-                self.project_base_path = "/home/sci/samlev/GeToGNN/"
+                self.project_base_path = "/home/sci/samlev/GeToSubComplex/"
                 self.dataset_base_path = os.path.join(self.project_base_path, "datasets")
                 self.neuron_training_segmentation_path = os.path.join(self.project_base_path,
                                                                       "datasets",

@@ -193,7 +193,10 @@ class GeToGraph(Attributes):
             gid_edge_dict[gedge.gid] = gedge
         return gid_gnode_dict, gid_edge_dict
 
-    def mark_sublevel_set(self, sublevel_edges, sublevel_nodes,X,Y, union_radius=None, union_thresh=0):
+    def mark_sublevel_set(self, sublevel_edges, sublevel_nodes,
+                          X, Y,
+                          union_radius=None, union_thresh=0,
+                          sublevel_labels=False):
 
 
         point_map_sub = np.ones(self.image.shape) * -2
@@ -214,10 +217,19 @@ class GeToGraph(Attributes):
             cardinality_intersect = 0
             for xy in sup_points:
                 xy = (xy[i_x],xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
+                gid_sub = -2 if point_map_sub[xy] == -2 else point_map_sub[xy]
                 if point_map_sub[xy] >= -1:
                     cardinality_intersect += 1
-                    gedge_super.is_sublevel_set()
-                    gedge_super.sublevel_set = True
+                    if union_thresh == 0:
+                        intersects = cardinality_intersect > union_thresh * len(sup_points)
+                    else:
+                        intersects = cardinality_intersect >= union_thresh * len(sup_points)
+                    if intersects:
+                        gedge_super.is_sublevel_set()
+                        gedge_super.sublevel_set = True
+                        #if sublevel_labels:
+                        #    sub_node_label = sublevel_labels[gid_sub]
+                        #    self.node_gid_to_label[gid] = sub_node_label
                 if union_radius is not None:
                     x, y = xy
                     for factor in [1,-1]:
@@ -239,13 +251,18 @@ class GeToGraph(Attributes):
                                     cardinality_intersect += 1
                                 if point_map_sub[(x + r_x, y)] >= -1:
                                     cardinality_intersect += 1
-            if cardinality_intersect >= 1:#union_thresh * len(sup_points):
+            if union_thresh == 0:
+                intersects = cardinality_intersect > union_thresh * len(sup_points)
+            else:
+                intersects = cardinality_intersect >= union_thresh * len(sup_points)
+            if intersects:
                 gedge_super.is_sublevel_set()
                 gedge_super.sublevel_set = True
                 for ngid in gedge_super.gnode_gids:
                     gn = self.gid_gnode_dict[ngid]
                     gn.is_sublevel_set()
-
+                    # if sublevel_labels:
+                    #     self.node_gid_to_label[ngid] = sublevel_labels[gid_sub]
             self.gid_edge_dict[gid] = gedge_super
 
 
@@ -263,13 +280,22 @@ class GeToGraph(Attributes):
             sup_points = [tuple(map(round, p)) for p in sup_points]
 
             cardinality_intersect = 0
+            gid_sub = -2
             for xy in sup_points:
                 xy = (xy[i_x],xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
                 if point_map_sub[xy] >= -1:
+                    gid_sub = point_map_sub[xy] #take gid of interesecting node
+                if point_map_sub[xy] >= -1:
                     cardinality_intersect += 1
-                    if cardinality_intersect >= union_thresh * len(sup_points):
-                        gnode_super.is_sublevel_set()
-                        gnode_super.sublevel_set = True
+                    # if union_thresh == 0:
+                    #     intersects = cardinality_intersect > union_thresh * len(sup_points)
+                    # else:
+                    #     intersects = cardinality_intersect >= union_thresh * len(sup_points)
+                    # if intersects:
+                    #     gnode_super.is_sublevel_set()
+                    #     gnode_super.sublevel_set = True
+                    #     if sublevel_labels:
+                    #         self.node_gid_to_label[gid] = sublevel_labels[gid_sub]
                 if union_radius is not None:
                     x, y = xy
                     for factor in (1,-1):
@@ -287,17 +313,27 @@ class GeToGraph(Attributes):
                                     r_y = 0
                                 if point_map_sub[(x + r_x, y + r_y)] >= -1:
                                     cardinality_intersect += 1
+                                    gid_sub = point_map_sub[(x + r_x, y + r_y)]
                                 if point_map_sub[(x, y + r_y)] >= -1:
                                     cardinality_intersect += 1
+                                    gid_sub = point_map_sub[(x, y + r_y)]
                                 if point_map_sub[(x + r_x, y)] >= -1:
                                     cardinality_intersect += 1
-            if cardinality_intersect >= union_thresh * len(sup_points):
+                                    gid_sub = point_map_sub[(x + r_x, y)]
+            if union_thresh == 0:
+                intersects = cardinality_intersect > union_thresh * len(sup_points)
+            else:
+                intersects = cardinality_intersect >= union_thresh * len(sup_points)
+            if intersects:
                 gnode_super.is_sublevel_set()
                 gnode_super.sublevel_set = True
+                if sublevel_labels:
+                    self.node_gid_to_label[gid] = sublevel_labels[gid_sub]
                 incident_edge = gnode_super.edge_gids
                 for egid in incident_edge:
                     edge = self.gid_edge_dict[egid]
                     edge.is_sublevel_set()
+
             self.gid_gnode_dict[gid] = gnode_super
         return self.gid_gnode_dict, self.gid_edge_dict
 
@@ -521,7 +557,8 @@ class GeToGraph(Attributes):
         plt.savefig(os.path.join(self.pred_session_run_path, 'priors_graph_predicted.png'))
         plt.close()
 
-    def draw_segmentation(self, dirpath, ridge=True, valley=True, draw_sublevel_set = False,invert=False):
+    def draw_segmentation(self, dirpath, ridge=True, valley=True,
+                          draw_sublevel_set = False,invert=False, name=None):
         X = self.X #if not invert else self.Y
         Y = self.Y #if not invert else self.X
         original_image = self.image
@@ -563,7 +600,7 @@ class GeToGraph(Attributes):
             else:
                 prediction = [0.,1.]#self.node_gid_to_prediction[gid]
                 partition = 'test'#self.node_gid_to_partition[gid]
-                label = [1.,0.]
+                label = self.node_gid_to_label[gid]
             if isinstance(prediction,
                           (int, np.integer)) or isinstance(prediction, (float, np.float)):
                 label_color = cmap(float(prediction))
@@ -628,18 +665,25 @@ class GeToGraph(Attributes):
             else:
                 map_im = mapped_image
                 lab_map_im = label_map_image
+            if name is None:
+                inf_name = 'inference'
+                gs_name = 'groundseg'
+            else:
+                inf_name = name
+                gs_name = name + '_grndseg'
+
             plt.figure()
             plt.title("Input Image")
             import matplotlib as mplt
             max_val = np.max(mapped_image)
             min_val = np.min(mapped_image)
             mapped_image = (mapped_image.astype(np.float32) - min_val) / (max_val - min_val)
-            plt.imsave(os.path.join(dirpath, 'inference.png'),mapped_image.astype(np.float32))
+            plt.imsave(os.path.join(dirpath, inf_name+'.png'),mapped_image.astype(np.float32))
 
             max_val = np.max(label_map_image)
             min_val = np.min(label_map_image)
             label_map_image = (label_map_image.astype(np.float32) - min_val) / (max_val - min_val)
-            plt.imsave(os.path.join(dirpath , 'groundseg.png'),label_map_image.astype(np.float32))
+            plt.imsave(os.path.join(dirpath , gs_name+'.png'),label_map_image.astype(np.float32))
 
 
 

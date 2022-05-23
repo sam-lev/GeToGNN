@@ -33,15 +33,14 @@ from .models import SAGEInfo
 from .minibatch import NodeMinibatchIterator
 from .neigh_samplers import UniformNeighborSampler, GeToInformedNeighborSampler
 from .utils import load_data
-from ml.utils import pout
+from ml.utils import pout, pouts
 
 
 
 
 
 # for debugging
-#tf.compat.v1.enable_eager_execution()
-
+from tensorflow.python import debug as tf_debug
 
 ########
 #
@@ -107,13 +106,13 @@ class gnn:
         self.placeholders = None
 
     def set_parameters(self, G=None, feats=None, id_map=None, walks=None, class_map=None
-              , train_prefix='', load_walks=False, number_negative_samples=None
-              , number_positive_samples=None, embedding_file_out=''
-              , learning_rate=None, depth=2, epochs=200, batch_size=512
-              , positive_arcs=[], negative_arcs=[]
-                       ,dim_1=128, dim_2=128
-              , max_degree=64*3, degree_l1=25, degree_l2=10,degree_l3=0
-              , weight_decay=0.001, polarity=6, use_embedding=None
+                       , train_prefix='', load_walks=False, number_negative_samples=None
+                       , number_positive_samples=None, embedding_file_out=''
+                       , learning_rate=None, depth=2, epochs=200, batch_size=512
+                       , positive_arcs=[], negative_arcs=[]
+                       , dim_1=128, dim_2=128
+                       , max_degree=64*3, degree_l1=25, degree_l2=10, degree_l3=0
+                       , weight_decay=0.001, polarity=6, use_embedding=None
                        , jumping_knowledge=True, concat=True,
                        positive_class_weight = 1.0,
                        jump_type = 'pool',
@@ -121,9 +120,12 @@ class gnn:
                        geto_weights=None,
                        geto_elements=None,
                        geto_loss=False,
+                       dropout=0.0,
+                       multilevel_concat=False,
+                       sublevel_init_epochs=None,
                        hidden_dim_1=None, hidden_dim_2 = None, random_context=True,
-                       sublevel_sets=False, subgraph_weight=1.
-              , gpu=0, val_model='cvt', model_size="small", sigmoid=False, env='multivax'):
+                       sublevel_sets=False, subcomplex_weight=1.
+                       , gpu=0, val_model='cvt', model_size="small", sigmoid=False, env='multivax'):
 
         if True:#not self.params_set:
             ## variables not actually used but implemented for later development
@@ -146,8 +148,11 @@ class gnn:
             if slurm != 'slurm':
                 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 
+            # for conditionals
+            os.environ['TF_ENABLE_COND_V2'] = '1'
+
             # Set random seed
-            seed = 123
+            seed = 801
             np.random.seed(seed)
             tf.set_random_seed(seed)
 
@@ -171,6 +176,11 @@ class gnn:
             self.learning_rate = learning_rate # standard priors model opt is .003
 
             self.epochs = epochs
+            self.sublevel_init_epochs = sublevel_init_epochs
+            if sublevel_init_epochs is None:
+                self.sublevel_init_epochs = self.epochs+1
+
+            self.multilevel_concat =  multilevel_concat
 
             self.depth = depth
 
@@ -217,8 +227,10 @@ class gnn:
 
             # left to default values in main experiments
             flags.DEFINE_integer('epochs', self.epochs, 'number of epochs to train.')
-            flags.DEFINE_float('dropout', 0.0, 'dropout rate (1 - keep probability).')
-            flags.DEFINE_float('subgraph_weight',subgraph_weight, 'weight for embeddings of complex subgraph')
+            flags.DEFINE_list('sublevel_init_epochs', [], 'number of epochs to train.')
+            flags.sublevel_init_epochs = self.sublevel_init_epochs
+            flags.DEFINE_float('dropout', dropout, 'dropout rate (1 - keep probability).')
+            flags.DEFINE_float('subcomplex_weight',subcomplex_weight, 'weight for embeddings of complex subgraph')
             flags.DEFINE_float('weight_decay', weight_decay, 'weight for l2 loss on embedding matrix.')
             flags.DEFINE_integer('max_degree', max_degree, 'maximum node degree.')#128
             flags.DEFINE_integer('samples_1', degree_l1, 'number of samples in layer 1')#25, number samples per node
@@ -239,14 +251,14 @@ class gnn:
 
             self.flags.DEFINE_boolean('jumping_knowledge', jumping_knowledge, 'whether to use jumping knowledge approach for graph embedding')
             # logging, saving, validation settings etc.
-            self.flags.DEFINE_boolean('save_embeddings', True, 'whether to save embeddings for all nodes after training')
+            self.flags.DEFINE_boolean('save_embeddings', False, 'whether to save embeddings for all nodes after training')
             self.flags.DEFINE_string('base_log_dir', './log-dir', 'base directory for logging and saving embeddings')
-            self.flags.DEFINE_integer('validate_iter', 20, "how often to run a validation minibatch.")
-            self.flags.DEFINE_integer('validate_batch_size', batch_size//4, "how many nodes per validation sample.")
+            self.flags.DEFINE_integer('validate_iter', batch_size*2, "how often to run a validation minibatch.")
+            self.flags.DEFINE_integer('validate_batch_size', 2, "how many nodes per validation sample.")
             flags.DEFINE_integer('gpu', gpu, "which gpu to use.")
             self.flags.DEFINE_string('env', 'multivax', 'environment to manage data paths and gpu use')
-            self.flags.DEFINE_integer('print_every', 200, "How often to print training info.")
-            self.flags.DEFINE_integer('max_total_steps', 10**10, "Maximum total number of iterations")
+            self.flags.DEFINE_integer('print_every', batch_size, "How often to print training info.")
+            self.flags.DEFINE_integer('max_total_steps', 100**10, "Maximum total number of iterations")
             self.flags.DEFINE_string('model_name', self.model_name, 'name of the embedded graph model file is created.')
             self.flags.DEFINE_integer('depth', self.depth,
                                       'epoch to reduce learning rate for the second time by a tenth')  # I added this, journal advocates depth of 2 but loss seems to improve with more
@@ -267,7 +279,7 @@ class gnn:
               , number_positive_samples=None, embedding_file_out=''
               , learning_rate=None, depth=3, epochs=200, batch_size=512
               , positive_arcs=[], negative_arcs=[]
-              , max_degree=64*3, degree_l1=25, degree_l2=10,degree_l3=0
+              , max_degree=64*3, degree_l1=25, degree_l2=10, degree_l3=0
               , dim_1 = 256, dim_2 = 256,
               concat = True, random_context=True,
               nx_idx_to_getoelm_idx=None,
@@ -276,19 +288,22 @@ class gnn:
               jumping_knowledge = False,
               jump_type = 'pool',
               geto_loss = False,
+              sublevel_init_epochs=None,
               hidden_dim_1=None, hidden_dim_2=None,
-              positive_class_weight=1.0
+              positive_class_weight=1.0,
+              dropout = 0.0,
+              multilevel_concat = False
               , weight_decay=0.001, polarity=6, use_embedding=None
-              , gpu=0, val_model='cvt', sigmoid=False,model_size="small", env='multivax',
-              sublevel_sets = False, subgraph_weight=1.):
+              , gpu=0, val_model='cvt', sigmoid=False, model_size="small", env='multivax',
+              sublevel_sets = False, subcomplex_weight=1.):
 
         self.set_parameters(G=G, feats=feats, id_map=id_map, walks=walks, class_map=class_map
-              , train_prefix=train_prefix, load_walks=load_walks, number_negative_samples=number_negative_samples
-              , number_positive_samples=number_positive_samples, embedding_file_out=embedding_file_out
-              , learning_rate=learning_rate, depth=depth, epochs=epochs, batch_size=batch_size
-              , positive_arcs=positive_arcs, negative_arcs=negative_arcs
-              , max_degree=max_degree, degree_l1=degree_l1, degree_l2=degree_l2,degree_l3=degree_l3
-                            ,dim_1=dim_1,dim_2=dim_2,
+                            , train_prefix=train_prefix, load_walks=load_walks, number_negative_samples=number_negative_samples
+                            , number_positive_samples=number_positive_samples, embedding_file_out=embedding_file_out
+                            , learning_rate=learning_rate, depth=depth, epochs=epochs, batch_size=batch_size
+                            , positive_arcs=positive_arcs, negative_arcs=negative_arcs
+                            , max_degree=max_degree, degree_l1=degree_l1, degree_l2=degree_l2, degree_l3=degree_l3
+                            , dim_1=dim_1, dim_2=dim_2,
                             positive_class_weight=positive_class_weight
                             , jumping_knowledge=jumping_knowledge, concat=concat,
                             jump_type = jump_type, random_context=random_context,
@@ -296,10 +311,13 @@ class gnn:
                             geto_weights=geto_weights,
                             geto_elements=geto_elements,
                             geto_loss=geto_loss,
+                            dropout=dropout,
+                            multilevel_concat=multilevel_concat,
+                            sublevel_init_epochs=sublevel_init_epochs,
                             hidden_dim_1=hidden_dim_1, hidden_dim_2=hidden_dim_2,
-                            sublevel_sets=sublevel_sets, subgraph_weight=subgraph_weight
-              , weight_decay=weight_decay, polarity=polarity, use_embedding=use_embedding
-              , gpu=gpu, val_model=val_model, model_size=model_size, sigmoid=sigmoid, env=env)
+                            sublevel_sets=sublevel_sets, subcomplex_weight=subcomplex_weight
+                            , weight_decay=weight_decay, polarity=polarity, use_embedding=use_embedding
+                            , gpu=gpu, val_model=val_model, model_size=model_size, sigmoid=sigmoid, env=env)
 
 
         # format or retriev data
@@ -357,7 +375,7 @@ class gnn:
         return node_outs_val[1], mic, mac, (time.time() - t_test)
 
     def log_dir(self):
-        log_dir = self.FLAGS.base_log_dir + "/sup-" + self.FLAGS.model_name
+        log_dir = self.FLAGS.base_log_dir + "/logs" + self.FLAGS.model_name
         #log_dir = self.FLAGS.base_log_dir + "/sup-" + self.FLAGS.train_prefix.split("/")[-2]
         # log_dir += "/{model:s}_{model_size:s}_{lr:0.4f}/".format(
         #     model=self.FLAGS.model,
@@ -367,7 +385,8 @@ class gnn:
             os.makedirs(log_dir)
         return log_dir
 
-    def incremental_evaluate(self, sess, model, minibatch_iter, size, test=False, inference=False,
+    def incremental_evaluate(self, sess, model, minibatch_iter, size, test=False, sup_only=True,#True,
+                             inference=False,
                              infer_feed_dict=None, infer_labels = None):
         t_test = time.time()
         val_losses = []
@@ -377,17 +396,11 @@ class gnn:
         finished = False
 
         while not finished:
-            if infer_feed_dict is None:
-                feed_dict_val, batch_labels, finished, _ = minibatch_iter.incremental_node_val_feed_dict(size,
-                                                                                                         iter_num,
-                                                                  test=test, inference=inference)
-                if inference:
-                    finished = True
-            else:
-                #feed_dict_val, batch_inf, batch_labels = infer_feed_dict#minibatch_iter.inference_feed_dict()
-                feed_dict_val = infer_feed_dict
-                batch_labels = infer_labels
-                finished = True
+            feed_dict_val, batch_labels, finished, _ = minibatch_iter.incremental_node_val_feed_dict(size,
+                                                                                                     iter_num,
+                                                              test=test, sup_only=sup_only)
+
+
             node_outs_val = sess.run([model.preds, model.loss],
                                      feed_dict=feed_dict_val)
             val_preds.append(node_outs_val[0])
@@ -420,63 +433,70 @@ class gnn:
 
 
     def construct_placeholders(self, num_classes, batch=None, labels = None, inf_batch_shape=None,
-                               class_map=None, id_map = None, name_prefix='',subgraph_weight=1., infer=False):
+                               class_map=None, id_map = None, name_prefix='',
+                               subcomplex_weight=1., subcomplex_ids=tf.int32,
+                               total_sublevel_sets = 0,
+                               infer=False):
         # Define placeholders
-        inf_batch_shape=None
 
+        # bs = tf.placeholder(tf.int32, shape=(), name="batch_size")
 
         bs = tf.placeholder(tf.int32, shape=(), name="batch_size")
+
+        sublevel_placeholders = {}
+        for level_set_id in range(total_sublevel_sets):
+            sub_bi = tf.placeholder(tf.int32, shape=(None), name="sub_batch"+str(level_set_id))
+            level_set_name = "sub_batch"+str(level_set_id)
+            sublevel_placeholders[level_set_name] = sub_bi
+
+            level_set_name_size = level_set_name+'_size'
+            sublevel_placeholders[level_set_name_size] = tf.placeholder(tf.int32, shape=(),
+                                                                        name=level_set_name_size)
+
+            level_set_name_labels = level_set_name+'_labels'
+            sub_batch_labels = tf.placeholder(tf.float32, shape=(inf_batch_shape, num_classes), name=level_set_name_labels)
+            sublevel_placeholders[level_set_name_labels] = sub_batch_labels
+
+            # level_set_name_id = level_set_name+'_id'
+            # sublevel_placeholders[level_set_name_id] = tf.placeholder(tf.int32, shape=(None), name=level_set_name_id)
+
         ls = tf.placeholder(tf.float32, shape=(inf_batch_shape, num_classes), name="labels")
-        #ls2 = tf.placeholder(tf.float32, shape=(inf_batch_shape, num_classes), name=name_prefix + 'labels2')
         b = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="batch")
         geto_batch = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="getobatch")
+        sub_geto_batch = tf.placeholder(tf.int32, shape=(inf_batch_shape), name="sub_getobatch")
         dpo = tf.placeholder_with_default(0., shape=(),  name="dropout")
-        wght = tf.placeholder_with_default(subgraph_weight, shape=(), name="subgraph_weight")
+        wght = tf.placeholder_with_default(subcomplex_weight, shape=(), name="subcomplex_weight")
         #b1 = tf.placeholder(tf.int32, shape=(inf_batch_shape), name=name_prefix + 'batch1')
         if not infer:
             placeholders = {
                 'labels': ls,
                 'batch': b,
                 'getobatch': geto_batch,
+                'sub_getobatch': sub_geto_batch,
                 'dropout': dpo,
-                'batch_size': bs, #tf.placeholder(tf.int32,inf_batch_shape, name=name_prefix+'batch_size'),
-                'subgraph_weight': wght,
+                'batch_size': bs,
+                'subcomplex_weight': wght,
             }
         else:
             placeholders = {
                 'batch' : b,
                 'labels' : ls,
                 'getobatch': geto_batch,
+                'sub_getobatch': sub_geto_batch,
                 #'batch1' : b1,                         #tf.placeholder(tf.int32, shape=(None), name='batch1'),
                 #'batch2' : ls2,                        #tf.placeholder(tf.int32, shape=(None), name='batch2'),
                 # negative samples for all nodes in the batch
                 #'neg_samples': tf.placeholder(tf.int32, shape=(None,),
                 #    name='neg_sample_size'),
                 'dropout': dpo,
-                'batch_size' : bs,                    #tf.placeholder(tf.int32, name='batch_size'),
-                'subgraph_weight': wght,
+                'batch_size' : bs,
+                'subcomplex_weight': wght,
             }
+        if total_sublevel_sets != 0:
+            placeholders.update(sublevel_placeholders)
         return placeholders
 
-    def fetch_placeholders(self, batch, labels):
 
-
-        #bs = tf.get_default_graph().get_tensor_by_name("batch_size")
-        #ls = tf.get_default_graph().get_tensor_by_name("labels")
-        #b = tf.get_default_graph().get_tensor_by_name("batch")
-        #dpo = tf.get_default_graph().get_tensor_by_name("dropout")
-        placeholders = {
-            'batch': batch,#b,
-            'labels': labels, #ls,
-            # 'batch1' : b1,                         #tf.placeholder(tf.int32, shape=(None), name='batch1'),
-            # 'batch2' : ls2,                        #tf.placeholder(tf.int32, shape=(None), name='batch2'),
-            # negative samples for all nodes in the batch
-            # 'neg_samples': tf.placeholder(tf.int32, shape=(None,),
-            #    name='neg_sample_size'),
-            'dropout': 0.,#dpo,
-            'batch_size':  len(batch), #bs,  # tf.placeholder(tf.int32, name='batch_size'),
-        }
-        return placeholders
 
     #@profile
     def _train(self, train_data, test_data=None):
@@ -503,7 +523,12 @@ class gnn:
               "epochs",FLAGS.epochs,
               "weight decay",FLAGS.weight_decay])
         context_pairs = train_data[3] if FLAGS.random_context else None
-        placeholders = self.construct_placeholders(num_classes)
+
+        sublevel_sets = [n for n in G.nodes() if G.node[n]['sublevel_set_id'][1] != -1]
+        total_sublevel_sets = G.node[sublevel_sets[0]]['sublevel_set_id'][0]
+        pout(("total sublevel sets", total_sublevel_sets))
+        placeholders = self.construct_placeholders(num_classes,
+                                                   total_sublevel_sets=total_sublevel_sets)
         self.placeholders = placeholders
         minibatch = NodeMinibatchIterator(G=G,
                                           id2idx=id_map,
@@ -518,6 +543,8 @@ class gnn:
         adj_info_ph = self.adj_info_ph
         adj_info = tf.Variable(initial_value=minibatch.adj, shape=minibatch.adj.shape
                                , trainable=False, name="adj_info", dtype=tf.int32)
+        subadj_info = tf.Variable(tf.constant(minibatch.subadj_list
+                                , dtype=tf.int32), trainable=False)
 
         geto_adj_info_ph = tf.compat.v1.placeholder(tf.int32, shape=minibatch.geto_adj.shape) if self.use_geto else None
         geto_adj_info = tf.Variable(geto_adj_info_ph, trainable=False, name="geto_adj_info") if self.use_geto  else None
@@ -590,7 +617,7 @@ class gnn:
                                         logging=True)
 
         elif FLAGS.model == 'graphsage_maxpool':
-            sampler = UniformNeighborSampler(adj_info)
+            sampler = UniformNeighborSampler(adj_info,subadj_info, max_degree=minibatch.max_degree)
             layer_infos = [SAGEInfo("node_maxpool", sampler, FLAGS.samples_1, FLAGS.dim_1)]#,
                            #SAGEInfo("node_maxpool", sampler, FLAGS.samples_2, FLAGS.dim_2)]
             for i in range(3, self.depth+1):
@@ -605,6 +632,7 @@ class gnn:
                                         adj_info,
                                         minibatch.deg,
                                         concat=self.concat,
+                                        multilevel_concat=self.multilevel_concat,
                                         geto_loss=self.geto_loss,
                                         jumping_knowledge=FLAGS.jumping_knowledge,
                                         jump_type = self.jump_type,
@@ -616,7 +644,8 @@ class gnn:
                                         model_size=FLAGS.model_size,
                                         sigmoid_loss=FLAGS.sigmoid,
                                         identity_dim=FLAGS.identity_dim,
-                                        logging=True)
+                                        logging=True,
+                                        total_sublevel_sets = minibatch.total_sublevel_sets )
 
         elif FLAGS.model == 'graphsage_meanpool':
             sampler = UniformNeighborSampler(adj_info)
@@ -933,6 +962,10 @@ class gnn:
         # Initialize session
         sess = tf.Session(config=config)
 
+        # for Debugging
+        '''sess = tf_debug.TensorBoardDebugWrapperSession(sess, "Multivax:7000")'''
+
+
         merged = tf.compat.v1.summary.merge_all()
         summary_writer = tf.compat.v1.summary.FileWriter(self.log_dir(), sess.graph)
 
@@ -953,6 +986,7 @@ class gnn:
         epoch_val_costs = []
 
         train_adj_info = tf.assign(adj_info, minibatch.adj)
+        #sub_adj_info   = tf.assign(subadj_info, minibatch.subadj_list)
         val_adj_info = tf.assign(adj_info, minibatch.test_adj,name='adj_assign')
         if self.use_geto:
             train_geto_adj_info = tf.assign(geto_adj_info, minibatch.geto_adj)
@@ -962,8 +996,11 @@ class gnn:
             num_sublevel_sets = minibatch.total_sublevel_sets
         else:
             num_sublevel_sets = 1
+        
+        switch_level_set = FLAGS.sublevel_init_epochs#FLAGS.epochs//partition for partition in range(1,num_sublevel_sets+2)]
 
         start_time = time.time()
+
         for epoch in range(FLAGS.epochs):
             minibatch.shuffle()
 
@@ -971,8 +1008,8 @@ class gnn:
 
             if self.sublevel_sets:
                 total_sublevel_sets = minibatch.total_sublevel_sets
-                if epoch%(FLAGS.epochs//(num_sublevel_sets+1)) == 0:
-                    #FLAGS.weight_decay *= 1e-2
+                # if epoch%(FLAGS.epochs//(num_sublevel_sets+1)) == 0:
+                if epoch in switch_level_set and self.sublevel_sets:
                     minibatch.update_sublevel_training_set()
 
 
@@ -980,38 +1017,50 @@ class gnn:
             while not minibatch.end():
                 # Construct feed dictionary
                 feed_dict, labels = minibatch.next_minibatch_feed_dict()
+                # if epoch%4 == 0 and FLAGS.dropout != 0.:
+                #     FLAGS.dropout -= 0.1
+                #     if FLAGS.dropout <= 0:
+                #         FLAGS.dropout = 0.0
+                #     pout(["DROPOUT", FLAGS.dropout])
                 feed_dict.update({placeholders['dropout']: FLAGS.dropout})
+                feed_dict.update({placeholders['subcomplex_weight']: 1.0})
                 if self.sublevel_sets:
                     sublevel_set_id = minibatch.sublevel_set_id
                     total_sublevel_sets = minibatch.total_sublevel_sets
                     if sublevel_set_id > total_sublevel_sets:
-                        feed_dict.update({placeholders['subgraph_weight']:1.0})
+                        feed_dict.update({placeholders['subcomplex_weight']:1.0})
                     else:
-                        feed_dict.update({placeholders['subgraph_weight']:100.0})#FLAGS.subgraph_weight})
-
+                        feed_dict.update({placeholders['subcomplex_weight']:2.0})#FLAGS.subgraph_weight})
+                    #feed_dict.update({placeholders['sub_ids']:minibatch.observed_sublevel_sets})
                 t = time.time()
                 # Training step
-                outs = sess.run([merged, model.opt_op, model.loss, model.preds],
+                # sub_outs = sess.run([merged, model.sub_opt_op, model.sub_loss, model.sub_preds],
+                #                     feed_dict=feed_dict)
+                outs = sess.run([merged,model.sub_opt_op, model.sub_loss, model.sub_preds,
+                                 model.opt_op, model.loss, model.preds],
                                 feed_dict=feed_dict)
-                if self.geto_loss and "hidden" in self.FLAGS.model:
-                    geto_outs = sess.run([merged, model.geto_opt_op, model.geto_loss, model.geto_preds],
-                                    feed_dict=feed_dict)
-                    geto_train_cost = geto_outs[2]
-                train_cost = outs[2]
+
+                train_cost = outs[-2]
+                sub_train_cost = outs[2]
 
                 preds = self.pred_values(outs[-1])
                 minibatch.update_batch_prediction(preds)
 
+                summary_writer.add_summary(outs[0], total_steps)
+
                 if iter % FLAGS.validate_iter == 0:
                     # Validation
                     sess.run(val_adj_info.op)
+                    feed_dict.update({placeholders['subcomplex_weight']: -1})
                     if FLAGS.validate_batch_size == -1:
                         val_cost, val_f1_mic, val_f1_mac, duration = self.incremental_evaluate(sess, model,
                                                                                                minibatch,
-                                                                                          FLAGS.batch_size)
+                                                                                          FLAGS.batch_size,
+                                                                                               sup_only=True)
                     else:
                         val_cost, val_f1_mic, val_f1_mac, duration = self.evaluate(sess, model, minibatch,
                                                                               FLAGS.validate_batch_size)
+                    feed_dict.update({placeholders['subcomplex_weight']: 1.0})
                     sess.run(train_adj_info.op)
                     epoch_val_costs[-1] += val_cost
 
@@ -1029,22 +1078,14 @@ class gnn:
                     train_f1_mic, train_f1_mac = self.calc_f1(labels, outs[-1])
                     print("Iter:", '%04d' % iter,
                           "train_loss=", "{:.5f}".format(train_cost),
+                          "sub_train_loss=", "{:.5f}".format(sub_train_cost),
                           "train_f1_mic=", "{:.5f}".format(train_f1_mic),
                           "train_f1_mac=", "{:.5f}".format(train_f1_mac),
                           "val_loss=", "{:.5f}".format(val_cost),
                           "val_f1_mic=", "{:.5f}".format(val_f1_mic),
                           "val_f1_mac=", "{:.5f}".format(val_f1_mac),
                           "time=", "{:.5f}".format(avg_time))
-                    if self.geto_loss and "hidden" in self.FLAGS.model:
-                        geto_train_f1_mic, geto_train_f1_mac = self.calc_f1(labels, geto_outs[-1])
-                        print("Iter:", '%04d' % iter,
-                              "geto_train_loss=", "{:.5f}".format(geto_train_cost),
-                              "geto_train_f1_mic=", "{:.5f}".format(geto_train_f1_mic),
-                              "geto_train_f1_mac=", "{:.5f}".format(geto_train_f1_mac))
-                              #"val_loss=", "{:.5f}".format(val_cost),
-                              #"val_f1_mic=", "{:.5f}".format(val_f1_mic),
-                              #"val_f1_mac=", "{:.5f}".format(val_f1_mac),
-                              #"time=", "{:.5f}".format(avg_time))
+
 
                 iter += 1
                 total_steps += 1
@@ -1058,12 +1099,14 @@ class gnn:
 
         print("Optimization Finished!")
         sess.run(val_adj_info.op)
-        val_cost, val_f1_mic, val_f1_mac, duration = self.incremental_evaluate(sess, model, minibatch, FLAGS.batch_size)
+        val_cost, val_f1_mic, val_f1_mac, duration = self.incremental_evaluate(sess, model, minibatch,
+                                                                               FLAGS.batch_size,sup_only=True)
         print("Full validation stats:",
               "loss=", "{:.5f}".format(val_cost),
               "f1_micro=", "{:.5f}".format(val_f1_mic),
               "f1_macro=", "{:.5f}".format(val_f1_mac),
-              "time=", "{:.5f}".format(duration))
+              "time=", "{:.5f}".format(duration),
+              "avg_train_time=", "{:.5f}".format(avg_time))
         with open(self.log_dir() + "val_stats.txt", "w") as fp:
             fp.write("loss={:.5f} f1_micro={:.5f} f1_macro={:.5f} time={:.5f}".
                      format(val_cost, val_f1_mic, val_f1_mac, duration))
@@ -1075,7 +1118,7 @@ class gnn:
         s = time.time()
 
         val_cost, val_f1_mic, val_f1_mac, duration = self.incremental_evaluate(sess, model, minibatch, FLAGS.batch_size,
-                                                                          test=True)
+                                                                          test=True,sup_only=True)
         t = time.time()
         self.pred_time = t-s
 

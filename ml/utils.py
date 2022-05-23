@@ -360,7 +360,7 @@ def get_merged_features(model):
 
 
 def pout(show=None):
-    if isinstance(show, list):
+    if isinstance(show, list) or isinstance(show, tuple):
         print("    *")
         for elm in show:
             if isinstance(elm, str):
@@ -368,13 +368,11 @@ def pout(show=None):
             else:
                 print("    * ", str(elm))
         print("    *")
-    else:
-        print("    *")
-        if isinstance(show, str):
-            print("    * ", show)
-        else:
-            print("    * ", str(show))
-        print("    *")
+def pouts(**show):
+    print("    *")
+    for item_name, item in show.items():
+        print("    *", str(item))
+    print("    *")
 
 def gather_neighbors(adj, indices, num_samples):
     adj_lists_T = tf.transpose(adj)

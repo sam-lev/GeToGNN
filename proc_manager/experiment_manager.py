@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 
 
 from getograph import Attributes
+import getograph as ggraph
 from ml.Random_Forests import RandomForest
 from ml.MLP import mlp
 from ml.UNet import UNetwork
@@ -82,7 +83,7 @@ class runner:
                       'foam0235_828_846.raw',
                       'maxdiadem_o_1170_1438.raw',
                       'berghia_o_891_896.raw'][self.sample_idx]  # neuron1
-        self.label_file = ['im0236_la2_700_605.raw.labels_2.txt',
+        self.label_file = ['im0236_la2_700_605.raw.labels_4.txt', # og lab is 2
                       'MAX_neuron_640_640.raw.labels_3.txt',
                       'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_4.txt',
                       'sub_CMC_example_l1_969_843.raw.labels_0.txt',
@@ -94,6 +95,7 @@ class runner:
                            'maxdiadem_m1g1_1170_1438.raw.labels_4.txt',
                            'berghia_s5ipr_891_896.raw.labels_4.txt'][self.sample_idx]  # neuron1
 
+        self.labels_subcomplex = ['im0236_la2_700_605.raw.labels_1.txt'][self.sample_idx]
 
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
@@ -139,7 +141,7 @@ class runner:
 
 
 
-    def start(self, model='getognn', boxes=None,dims=None, learning='supervised'):
+    def start(self, model='getognn', boxes=None,dims=None, learning='supervised', compute_complex=False):
 
 
         if model == 'getognn':
@@ -148,7 +150,8 @@ class runner:
             elif learning == 'unsupervised':
                 self.run_unsupervised_getognn(self.multi_run)
             elif learning == 'subcomplex':
-                self.run_subcomplex_informed_getognn(boxes=boxes, dims=dims)
+                self.run_subcomplex_informed_getognn(boxes=boxes, dims=dims,
+                                                     compute_complex=compute_complex)
         if model == 'mlp':
             self.run_mlp( boxes=boxes, dims=dims, flavor=learning )
         if model == 'random_forest':
@@ -1484,7 +1487,7 @@ class runner:
 #
 #     Simply Informed
 #
-    def run_subcomplex_informed_getognn(self, boxes=None,  dims=None):
+    def run_subcomplex_informed_getognn(self, boxes=None,  dims=None, compute_complex = False):
 
 
         from getognn import supervised_getognn
@@ -1500,6 +1503,9 @@ class runner:
         COMPUTE_GETO_FEATURES       = self.compute_geto_features
         FEATS_INDEPENDENT           = self.feats_independent
         run_feat_importance = 1
+
+        persistence_subcomplex_max = 1.5
+        persistence_subcomplex_med = 0
 
         for gr in range(len(growth_regions)):
 
@@ -1575,36 +1581,85 @@ class runner:
                 sup_getognn.getognn.params['geto_as_feat'] = True
                 sup_getognn.getognn.params['load_geto_attr'] = False
 
-            sublevel_msc = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
-                                                                           persistence=[1.5],
-                                                                           sigma=[2],
-                                                                           X=sup_getognn.getognn.X,
-                                                                           Y=sup_getognn.getognn.Y
-                                                                           )
+            if compute_complex:
+                pout(["COMPUTING SUBCOMPLEX"])
+                pout(['sublevel graph epoch growth ', sup_getognn.getognn.params['sublevel_init_epochs']])
 
-            gid_gnode_dict, gid_edge_dict = sup_getognn.getognn.map_to_priors_graph(msc=sublevel_msc)
+                sublevel_priors_graph_max = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
+                                                                               persistence=[persistence_subcomplex_max],
+                                                                               sigma=[2],
+                                                                               X=sup_getognn.getognn.X,
+                                                                               Y=sup_getognn.getognn.Y
+                                                                               )
+                if persistence_subcomplex_med:
+                    sublevel_priors_graph_med = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
+                                                                                            persistence=[
+                                                                                                persistence_subcomplex_med],
+                                                                                            sigma=[2],
+                                                                                            X=sup_getognn.getognn.X,
+                                                                                            Y=sup_getognn.getognn.Y
+                                                                                            )
+            else:
+                pout(["LOADING PRECOMPUTED/LABELED SUBCOMPLEX"])
+                f_path = self.image_path
+                seg_folder = os.path.dirname(os.path.abspath(f_path))
+                if not os.path.exists(os.path.join(seg_folder, 'geomsc')):
+                    os.makedirs(os.path.join(seg_folder, 'geomsc'))
+                write_path = os.path.join(seg_folder, 'geomsc')
+                if '/' in self.image_path:
+                    image_no_path_name = self.image_path.split(os.path.dirname(self.image_path))[-1].split('/')[-1]
+                else:
+                    image_no_path_name = self.image_path
+                fname_raw = os.path.join(write_path, image_no_path_name)
+                label_subcomplex = os.path.join(write_path, self.labels_subcomplex)
+                pout(["labels files", label_subcomplex])
+                #fname_raw += 'PERS'+str(persistence_subcomplex)+'_smoothed.raw'
+                sublevel_priors_graph_max = ggraph.GeToGraph(geomsc_fname_base=fname_raw,
+                                                   label_file=label_subcomplex)
+            # if using old msc (.nodes.txt file and .arcs.txt)
+            # gid_gnode_dict, gid_edge_dict = sup_getognn.getognn.map_to_priors_graph(msc=sublevel_msc)
 
-            sup_getognn.getognn.gid_gnode_dict, sup_getognn.getognn.gid_edge_dict = sup_getognn.getognn.mark_sublevel_set(gid_edge_dict,
-                                                  gid_gnode_dict,
-                                                  X=sup_getognn.getognn.X,
-                                                  Y=sup_getognn.getognn.Y,
-                                                  union_radius=0,
-                                                  union_thresh=0.1)
+            gid_gnode_dict_max = sublevel_priors_graph_max.gid_gnode_dict
+            gid_edge_dict_max  = sublevel_priors_graph_max.gid_edge_dict
+            sublevel_priors_graph_labels = sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
+            sup_getognn.getognn.gid_gnode_dict, sup_getognn.getognn.gid_edge_dict = sup_getognn.getognn.mark_sublevel_set(
+                gid_edge_dict_max,
+                gid_gnode_dict_max,
+                X=sup_getognn.getognn.X,
+                Y=sup_getognn.getognn.Y,
+                union_radius=None,
+                union_thresh=0.2, sublevel_labels=sublevel_priors_graph_labels)
 
-            superlevel_training_set, sublevel_training_set = sup_getognn.getognn.complex_sublevel_training_set()
-            # sublevel_training_set = [gnode.gid for gnode in sup_getognn.getognn.gid_gnode_dict.values() if
-            #                          sup_getognn.getognn.node_gid_to_partition[gnode.gid] == 'training' and gnode.sublevel_set]
-            #
-            # superlevel_training_set = [gnode.gid for gnode in sup_getognn.getognn.gid_gnode_dict.values() if
-            #                            sup_getognn.getognn.node_gid_to_partition[gnode.gid] == 'training']
-            pout(["len sub", len(sublevel_training_set)])
+            superlevel_training_set_max, sublevel_training_set_max = sup_getognn.getognn.complex_sublevel_training_set()
+
+            pout(["len sub max", len(sublevel_training_set_max)])
+
+            sup_getognn.getognn.draw_segmentation(dirpath=os.path.join(self.input_path, 'geomsc'),
+                                                  draw_sublevel_set=True, name='persistence_' + str(
+                    persistence_subcomplex_max))
+
+            if persistence_subcomplex_med:
+                gid_gnode_dict_med = sublevel_priors_graph_med.gid_gnode_dict
+                gid_edge_dict_med = sublevel_priors_graph_med.gid_edge_dict
+                sublevel_priors_graph_labels = sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
+                sup_getognn.getognn.gid_gnode_dict, sup_getognn.getognn.gid_edge_dict = sup_getognn.getognn.mark_sublevel_set(
+                    gid_edge_dict_med,
+                    gid_gnode_dict_med,
+                    X=sup_getognn.getognn.X,
+                    Y=sup_getognn.getognn.Y,
+                    union_radius=None,
+                    union_thresh=0.2, sublevel_labels=sublevel_priors_graph_labels)
+
+                superlevel_training_set_med, sublevel_training_set_med = sup_getognn.getognn.complex_sublevel_training_set()
+
+                pout(["len sub med", len(sublevel_training_set_med)])
+
 
             sup_getognn.getognn.draw_segmentation(dirpath=os.path.join(self.input_path,'geomsc'),
-                                                  draw_sublevel_set=True)
+                                                  draw_sublevel_set=True, name='persistence_'+str(persistence_subcomplex_max)+'_union_'+str(persistence_subcomplex_med))
 
-
-
-            sup_getognn.getognn.get_complex_informed_subgraph_split(sublevel_training_sets=[sublevel_training_set],
+            sublevel_training_sets = [sublevel_training_set_max,sublevel_training_set_med] if persistence_subcomplex_med else [sublevel_training_set_max]
+            sup_getognn.getognn.get_complex_informed_subgraph_split(sublevel_training_sets=sublevel_training_sets,
                                                                     collect_validation=False,
                                                                     validation_hops=1,
                                                                     validation_samples=1)

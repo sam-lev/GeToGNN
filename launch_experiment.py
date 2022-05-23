@@ -58,14 +58,15 @@ dim_image = [[700,605],                      # 0
 batch         =         0
 plot_only     =         0
 overide_plots =         0
-region_thresh =         0
-break_training_thresh = 60 #60 45,57
+region_thresh =         5
+break_training_thresh = 25 #60 45,57
 #feat control
 load_features              = 1
 compute_features           = 0
 load_geto_features         = 0
 compute_geto_features      = 0              # !!!!
 feats_independent          = 1# geom / std separate # mlp unet and random need to node_gid_to_standard_feature
+compute_complex = True
 clear_runs = True if not plot_only else False
 
 experiments = [ #      "UNet",
@@ -130,7 +131,10 @@ def unit_run():
                 boxes = box_list[dataset_idx]
                 dims = dim_image[dataset_idx]
 
-                exp_runner.start(model, boxes=boxes, dims=dims, learning=learn_type)
+
+
+                exp_runner.start(model, boxes=boxes, dims=dims, learning=learn_type,
+                                 compute_complex=compute_complex)
 
             current_exp = exp
 

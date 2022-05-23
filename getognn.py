@@ -268,6 +268,7 @@ class GeToGNN(MLGraph):
                            nx_idx_to_getoelm_idx=nx_idx_to_getoelm_idx,#self.lin_adj_idx_to_getoelm_idx,
                            geto_elements=self.getoelms,
                            epochs=self.params['epochs'],
+                           sublevel_init_epochs=self.params['sublevel_init_epochs'],
                            batch_size=self.params['batch_size'],
                            weight_decay=self.params['weight_decay'],
                            polarity=self.params['polarity'],
@@ -281,6 +282,7 @@ class GeToGNN(MLGraph):
                            hidden_dim_2=self.params['hidden_dim_2'],
                            use_embedding=None,
                            sigmoid=False,
+                           dropout=self.params['dropout'],
                            positive_class_weight=wp,
                            degree_l1=self.params['degree_l1'],
                            degree_l2=self.params['degree_l2'],
@@ -288,6 +290,7 @@ class GeToGNN(MLGraph):
                            dim_1=self.params['out_dim_1'],
                            dim_2=self.params['out_dim_2'],
                            concat=self.params['concat'],
+                           multilevel_concat=self.params['multilevel_concat'],
                            jumping_knowledge=self.params['jumping_knowledge'],
                            jump_type=self.params['jump_type'],
                            sublevel_sets=self.params['sublevel_sets'])
