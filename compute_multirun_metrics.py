@@ -856,7 +856,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
                         # 'Random_Forest_MSC_Geom',
                         'MLP_MSC',
                         'GNN',
-                        'GNN_Geom',
+                        #'GNN_Geom',
                         'GNN_SUB'
                         ]
     legend_order = ['RF-Pixel', 'MLP-Pixel', 'U-Net' , 'RF-Priors', 'MLP-Priors', 'GNN','GNN-Geom']

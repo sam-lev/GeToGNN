@@ -34,6 +34,8 @@ class GeToElement:
     def read_line(self, line, labeled=False):
         tmplist = line.split(" ")
         self.gid = int(tmplist[0])
+        # if self.gid == -1:
+        #     self.gid += self.multiplicity_count
         self.dim = int(tmplist[1])
         self.points = [
                 i for i in self.__group_xy([float(i) for i in tmplist[2:]])
@@ -62,6 +64,7 @@ class GeTogNode(GeToElement):
         self.z = 0
         self.edge_gids = []
         self.sublevel_set = False
+        self.level_id = 0
 
     def make_id(self):
         self.key = (self.gid,) + tuple(self.edge_gids) + (len(self.points),)
@@ -77,8 +80,9 @@ class GeTogNode(GeToElement):
         getoelm = GeToElement(dim=1, gid = self.gid, points=self.points)
         return GeTogNode(getoelm)
 
-    def is_sublevel_set(self):
+    def is_sublevel_set(self, level_id):
         self.sublevel_set = True
+        self.level_id = level_id
 
 
 class GeToEdge(GeToElement):
@@ -92,6 +96,7 @@ class GeToEdge(GeToElement):
         self.gnode_gids = []
         self.key = None
         self.sublevel_set = False
+        self.level_id = 0
 
     def make_id(self):
         self.key = (self.gid,) + tuple(self.gnode_gids)
@@ -105,8 +110,9 @@ class GeToEdge(GeToElement):
     def add_node(self,v):
         self.gnode_gids.append(v)
 
-    def is_sublevel_set(self):
+    def is_sublevel_set(self, level_id):
         self.sublevel_set = True
+        self.level_id = level_id
 
 
 
@@ -144,7 +150,8 @@ class GeToGraph(Attributes):
         self.val_size = 0
         self.polyline_point_training_size = 0
 
-
+        self.geomsc_fname_base = geomsc_fname_base
+        self.label_file = label_file
         #
         # read pre-computed MSC
         #
@@ -160,15 +167,17 @@ class GeToGraph(Attributes):
         seg_folder = os.path.dirname(os.path.abspath(f_path))
         if not os.path.exists(os.path.join(seg_folder,'geomsc')):
             os.makedirs(os.path.join(seg_folder,'geomsc'))
-        write_path = os.path.join(seg_folder,'geomsc')
+        if not os.path.exists(os.path.join(seg_folder,'geomsc',str(persistence[0]))):
+            os.makedirs(os.path.join(seg_folder,'geomsc',str(persistence[0])))
+        write_path = os.path.join(seg_folder,'geomsc',str(persistence[0]))
 
-        msc = compute_geomsc( persistence_values=persistence, blur_sigmas=sigma,
+        msc, msc_fname= compute_geomsc( persistence_values=persistence, blur_sigmas=sigma,
                 data_buffer = None, data_path = f_path, segmentation_path=seg_folder,
                 write_path =write_path , labeled_segmentation=None, label=False,
                 save=False, save_binary_seg=False, number_images=None,
                               X=X,Y=Y,
                 persistence_cardinality = None, valley=polyline_graph, ridge=polyline_graph)
-        return msc
+        return msc, msc_fname
 
     def map_to_priors_graph(self, msc):
         gid_gnode_dict = {}
@@ -194,7 +203,7 @@ class GeToGraph(Attributes):
         return gid_gnode_dict, gid_edge_dict
 
     def mark_sublevel_set(self, sublevel_edges, sublevel_nodes,
-                          X, Y,
+                          X, Y, sublevel_label_dict, level_id=1,
                           union_radius=None, union_thresh=0,
                           sublevel_labels=False):
 
@@ -203,29 +212,52 @@ class GeToGraph(Attributes):
         i_x = 1
         i_y = 0
 
+        sup_gid_to_sub_dict = {}
+
         for gid, gedge in sublevel_edges.items():
+            gid_temp = gid if gid is not None else 0
+            gid_temp = 0 if gid < -1 else 0
+            gedge.is_sublevel_set(level_id)
+            gedge.sublevel_set = True
             sub_points = gedge.points
             sub_points = [tuple(map(round, p)) for p in sub_points]
             for xy in sub_points:
-                xy = (xy[i_x], xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
+                xy = (xy[i_x], xy[i_y])
+
+                point_map_sub[xy] = gid#_temp
+
+        arc_point_to_gid_sub = {}
+        for gid, gnode_sub in sublevel_nodes.items():
+            gid_temp = gid if gid is not None else 0
+            gid_temp = 0 if gid < -1 else 0
+            gnode_sub.is_sublevel_set(level_id)
+            gnode_sub.sublevel_set = True
+            sub_points = gnode_sub.points
+            sub_points = [tuple(map(round, p)) for p in sub_points]
+            for xy in sub_points:
+                xy = (xy[i_x], xy[i_y])  # if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
                 point_map_sub[xy] = gid
-            
+                arc_point_to_gid_sub[xy] = gid_temp
+
         for gid, gedge_super in self.gid_edge_dict.items():
             sup_points = gedge_super.points
             sup_points = [tuple(map(round, p)) for p in sup_points]
 
             cardinality_intersect = 0
+            xy_init = None
             for xy in sup_points:
-                xy = (xy[i_x],xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
-                gid_sub = -2 if point_map_sub[xy] == -2 else point_map_sub[xy]
+                xy = (xy[i_x],xy[i_y])
+
                 if point_map_sub[xy] >= -1:
+                    if xy_init is None:
+                        xy_init = xy
                     cardinality_intersect += 1
                     if union_thresh == 0:
                         intersects = cardinality_intersect > union_thresh * len(sup_points)
                     else:
                         intersects = cardinality_intersect >= union_thresh * len(sup_points)
                     if intersects:
-                        gedge_super.is_sublevel_set()
+                        gedge_super.is_sublevel_set(level_id)
                         gedge_super.sublevel_set = True
                         #if sublevel_labels:
                         #    sub_node_label = sublevel_labels[gid_sub]
@@ -256,24 +288,20 @@ class GeToGraph(Attributes):
             else:
                 intersects = cardinality_intersect >= union_thresh * len(sup_points)
             if intersects:
-                gedge_super.is_sublevel_set()
+                gedge_super.is_sublevel_set(level_id)
                 gedge_super.sublevel_set = True
+
+                #sup_gid_to_sub_dict[gid] = point_map_sub[xy_init]
                 for ngid in gedge_super.gnode_gids:
                     gn = self.gid_gnode_dict[ngid]
-                    gn.is_sublevel_set()
+                    gn.is_sublevel_set(level_id)
                     # if sublevel_labels:
                     #     self.node_gid_to_label[ngid] = sublevel_labels[gid_sub]
+                    # sup_gid_to_sub_dict[ngid] = point_map_sub[xy_init]
             self.gid_edge_dict[gid] = gedge_super
 
 
-        arc_point_to_gid_sub = {}
-        for gid, gnode_sub in sublevel_nodes.items():
-            sub_points = gnode_sub.points
-            sub_points = [tuple(map(round, p)) for p in sub_points]
-            for xy in sub_points:
-                xy = (xy[i_x], xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
-                point_map_sub[xy] = gid
-                arc_point_to_gid_sub[xy] = gid
+
 
         for gid, gnode_super in self.gid_gnode_dict.items():
             sup_points = gnode_super.points
@@ -281,10 +309,18 @@ class GeToGraph(Attributes):
 
             cardinality_intersect = 0
             gid_sub = -2
+            xy_init = None
             for xy in sup_points:
                 xy = (xy[i_x],xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
+                # if xy_init is None:
+                #     xy_init = xy
+
+                sup_gid_to_sub_dict[gid] = point_map_sub[xy]
+
                 if point_map_sub[xy] >= -1:
                     gid_sub = point_map_sub[xy] #take gid of interesecting node
+                    if xy_init is None:
+                        xy_init = xy
                 if point_map_sub[xy] >= -1:
                     cardinality_intersect += 1
                     # if union_thresh == 0:
@@ -325,17 +361,36 @@ class GeToGraph(Attributes):
             else:
                 intersects = cardinality_intersect >= union_thresh * len(sup_points)
             if intersects:
-                gnode_super.is_sublevel_set()
+                gnode_super.is_sublevel_set(level_id)
                 gnode_super.sublevel_set = True
-                if sublevel_labels:
-                    self.node_gid_to_label[gid] = sublevel_labels[gid_sub]
+                # if sublevel_labels:
+                #     self.node_gid_to_label[gid] = sublevel_labels[gid_sub]
+
+                sup_gid_to_sub_dict[gid] = point_map_sub[xy_init]
+
                 incident_edge = gnode_super.edge_gids
                 for egid in incident_edge:
                     edge = self.gid_edge_dict[egid]
-                    edge.is_sublevel_set()
+                    edge.is_sublevel_set(level_id)
+
+                    #sup_gid_to_sub_dict[egid] = point_map_sub[xy_init]
+                observed_subgids = []
+                last_p = sup_points[-1]
+                for xy in sup_points:
+                    xy_og = xy
+                    xy = (xy[i_x], xy[i_y])
+                    sub_gid =point_map_sub[xy]
+                    observed_subgids.append(sub_gid)
+                    if sub_gid <= -1:
+                        if last_p == xy_og and -1 in observed_subgids:
+                            sub_gid = -1
+                        else:
+                            continue
+                    sup_gid_to_sub_dict[gid] = sub_gid
+                    sublevel_label_dict[sub_gid] = self.node_gid_to_label[gid]
 
             self.gid_gnode_dict[gid] = gnode_super
-        return self.gid_gnode_dict, self.gid_edge_dict
+        return self.gid_gnode_dict, self.gid_edge_dict, sublevel_label_dict, sup_gid_to_sub_dict
 
 
     def update_max_degree(self, gnode1, gnode2):

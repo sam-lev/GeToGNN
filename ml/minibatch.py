@@ -267,11 +267,13 @@ class NodeMinibatchIterator(object):
     batch_size -- size of the minibatches
     max_degree -- maximum size of the downsampled adjacency lists
     """
-    def __init__(self, G, id2idx, 
-            placeholders, label_map, num_classes,
+
+    def __init__(self, G, id2idx,
+                 placeholders, label_map, num_classes,
                  nx_idx_to_getoelm_idx=None,
-            batch_size=100, max_degree=25, train=True,
-            **kwargs):
+                 batch_size=100, max_degree=25, train=True,
+                 subgraph_dict=None,
+                 **kwargs):
 
         self.G = G
         self.nodes = G.nodes()
@@ -282,6 +284,8 @@ class NodeMinibatchIterator(object):
         self.batch_size = batch_size
         self.max_degree = max_degree
         self.batch_num = 0
+
+        self.subgraph_dict = subgraph_dict
 
 
         self.label_map = label_map
@@ -302,50 +306,79 @@ class NodeMinibatchIterator(object):
         # don't train on nodes that only have edges to test set
         self.train_nodes = [n for n in self.train_nodes if self.deg[id2idx[n]] > 0]
 
-        self.sublevel_sets = [n for n in self.G.nodes() if self.G.node[n]['sublevel_set_id'][1] != -1]
-        self.level_set_nodes = self.sublevel_sets
+        self.total_train_nodes = len(self.train_nodes)
 
-        pout(["len sublevelnodes",len(self.sublevel_sets)])
-        if len(self.sublevel_sets) != 0:
+        self.training_sublevel_sets = [n for n in self.G.nodes() if self.G.node[n]['sublevel_set_id'][1] != -1 and self.G.node[n]['train']]
+        self.all_sublevel_sets = [n for n in self.G.nodes() if self.G.node[n]['sublevel_set_id'][1] != -1 ]
+        self.level_set_nodes = self.training_sublevel_sets
+        self.all_levelset_node_lists = []
+        self.observed_sublevel_sets = []
+        self.sub_ids = []
+
+        pout(["len sublevelnodes", len(self.training_sublevel_sets)])
+        if len(self.training_sublevel_sets) != 0:
             self.sublevel_set_id = 0
             self.observed_sublevel_set_ids = []
-            self.total_sublevel_sets = self.G.node[self.sublevel_sets[0]]['sublevel_set_id'][0]
+            self.total_sublevel_sets = self.G.node[self.training_sublevel_sets[0]]['sublevel_set_id'][0]
             pout(["total sublevel sets", self.total_sublevel_sets])
             self.levelset_batch_nums = np.zeros(self.total_sublevel_sets, dtype=np.int32)
             self.levelset_node_lists = []
             self.subadj_list = []#len(self.id2idx) * np.ones((self.total_sublevel_sets,len(self.id2idx) + 1, self.max_degree))
-            for sub_id in range(1,self.total_sublevel_sets+1):
-                sublevel_i= [n for n in self.sublevel_sets if self.G.node[n]['sublevel_set_id'][1] == sub_id]
-                sublevel_i = [n for n in sublevel_i if self.deg[self.id2idx[n]] > 0]
+            self.all_subadj_list = []
+            for sub_id in range(self.total_sublevel_sets):
+                sublevel_i= [n for n in self.training_sublevel_sets if self.G.node[n]['sublevel_set_id'][1] == sub_id and self.G.node[n]['train']]
+                sublevel_i = [n for n in sublevel_i if self.deg[self.id2idx[n]] > 0]# and len(self.G.neighbors(n))>0]
                 self.levelset_node_lists.append(sublevel_i)
-                sub_adj, sub_deg, sub_geto_adj = self.construct_subgraph_adj(sublevel_i)
+
+                subcomplex_i = None
+                if self.subgraph_dict is not None:
+                    subcomplex_i = self.subgraph_dict['subgraph_'+str(sub_id)]
+                sub_adj, sub_deg, sub_geto_adj = self.construct_subgraph_adj(subgraph_ids=sublevel_i,
+                                                                             subgraph=subcomplex_i)
                 self.subadj_list.append(sub_adj)#[sub_id-1,:,:] = sub_adj
+
+                #all subadj nodes
+                sublevel_i_all = [n for n in self.all_sublevel_sets if
+                              self.G.node[n]['sublevel_set_id'][1] == sub_id]
+                self.all_levelset_node_lists.append(sublevel_i_all)
+                sub_adj, sub_deg, sub_geto_adj = self.construct_subgraph_adj(subgraph_ids=sublevel_i_all,
+                                                                             subgraph=subcomplex_i)
+                self.all_subadj_list.append(sub_adj)
+
             self.subadj_list.append(self.adj)#[-1,:,:]= self.adj
             self.subadj_list =  np.array(self.subadj_list).astype(dtype=np.int32)
+
+            self.all_subadj_list.append(self.adj)  # [-1,:,:]= self.adj
+            self.all_subadj_list = np.array(self.all_subadj_list).astype(dtype=np.int32)
             self.update_sublevel_training_set()
+
+            # # for inf over all
+            # self.total_levelset_node_lists = []
+            # self.total_subadj_list = []  # len(self.id2idx) * np.ones((self.total_sublevel_sets,len(self.id2idx) + 1, self.max_degree))
+            # for sub_id in range(self.total_sublevel_sets):
+            #     sublevel_i = [n for n in self.all_sublevel_sets if self.G.node[n]['sublevel_set_id'][1] == sub_id]
+            #     sublevel_i = [n for n in sublevel_i if self.deg[self.id2idx[n]] > 0]  # and len(self.G.neighbors(n))>0]
+            #     self.total_levelset_node_lists.append(sublevel_i)
+            #     sub_adj, sub_deg, sub_geto_adj = self.construct_subgraph_adj(sublevel_i)
+            #     self.total_subadj_list.append(sub_adj)
+            # self.total_subadj_list = np.array(self.total_subadj_list).astype(dtype=np.int32)
+
 
 
     def update_sublevel_training_set(self):
 
         self.sublevel_set_id += 1
         self.observed_sublevel_set_ids.append(self.sublevel_set_id)
-        if self.sublevel_set_id == 1:
-            #self.train_nodes = []
-            self.observed_sublevel_sets = []
-        if self.sublevel_set_id <= self.total_sublevel_sets:
-            self.hier_superlevel_nodes = []
-            for sub_i in range(self.sublevel_set_id):
-                self.hier_superlevel_nodes += self.levelset_node_lists[sub_i]#[n for n in self.sublevel_sets if self.G.node[n]['sublevel_set_id'][1] in self.observed_sublevel_set_ids ]
-            # don't train on nodes that only have edges to test set
-            #self.hier_superlevel_nodes = [n for n in self.hier_superlevel_nodes if self.deg[self.id2idx[n]] > 0]
-            pout(["adding sublevel nodes ",len(self.hier_superlevel_nodes)])
+
+        for sublevel_set_node_list in self.levelset_node_lists:
+            pout(["adding sublevel nodes ",len(sublevel_set_node_list)])
             #self.train_nodes = self.hier_superlevel_nodes
-            self.observed_sublevel_set1 = self.hier_superlevel_nodes
-            self.observed_sublevel_sets.append(self.hier_superlevel_nodes)
-        else:
-            self.train_nodes = set(self.G.nodes()).difference(self.no_train_nodes_set)
-            # don't train on nodes that only have edges to test set
-            self.train_nodes = [n for n in self.train_nodes if self.deg[self.id2idx[n]] > 0]
+            self.observed_sublevel_set1 = sublevel_set_node_list
+            self.observed_sublevel_sets.append(sublevel_set_node_list)
+        # else:
+        #     self.train_nodes = set(self.G.nodes()).difference(self.no_train_nodes_set)
+        #     # don't train on nodes that only have edges to test set
+        #     self.train_nodes = [n for n in self.train_nodes if self.deg[self.id2idx[n]] > 0]
         pout(['updating training subgraph', 'length_training',len(self.train_nodes),'length observed sublevel',
               len(self.observed_sublevel_set1)])
 
@@ -425,14 +458,12 @@ class NodeMinibatchIterator(object):
         # print(">>>>")
         return adj, deg, geto_adj
 
-    def construct_subgraph_adj(self, subgraph_ids):
+    def construct_subgraph_adj(self, subgraph_ids, subgraph, train=True):
 
-        # degree_dict = {}
-        # for i in range(1000):
-        #    degree_dict[i] = 0
-        def row_major_index(row, col, num_col):
-            lin_index = row * num_col + col
-            return lin_index
+        id2idx = self.id2idx
+        if subgraph is not None:
+            id2idx = subgraph.nx_idx_to_feat_idx
+            sub_G = subgraph.G
 
         adj = len(self.id2idx) * np.ones((len(self.id2idx) + 1, self.max_degree))
 
@@ -442,12 +473,30 @@ class NodeMinibatchIterator(object):
             geto_adj = None
         # id2idx graph_id to feat_idx
         deg = np.zeros((len(self.id2idx),))
-        for nodeid in self.G.nodes():
+        for nodeid in subgraph_ids:
             if self.G.node[nodeid]['test'] or self.G.node[nodeid]['val']:
                 continue
-            neighbor_ids = np.array([neighbor
+
+            neighbor_ids = [neighbor
                                      for neighbor in self.G.neighbors(nodeid)
-                                     if ((not self.G[nodeid][neighbor]['train_removed']) and (neighbor in subgraph_ids)  )])
+                                     if ((not self.G[nodeid][neighbor]['train_removed']) and (neighbor in subgraph_ids)  )]
+            self_samp = 0
+            if len(neighbor_ids) == 0:
+                neighbor_ids = [nodeid]
+                self_samp = 1
+            missing_neighs = [neighbor
+                                     for neighbor in self.G.neighbors(nodeid)
+                                     if ((not self.G[nodeid][neighbor]['train_removed']) and (neighbor not in subgraph_ids)  )]
+            if len(missing_neighs) != 0:
+                resamp_neighs = np.random.choice(range(len(neighbor_ids)),
+                                                       len(missing_neighs)-self_samp, replace=True)
+                added_neighs = [neighbor_ids[resamp] for resamp in resamp_neighs]
+
+                neighbor_ids += added_neighs
+                neighbor_ids = np.array(neighbor_ids)
+            else:
+                neighbor_ids = np.array(neighbor_ids)
+
             neighbors_feats = np.array([self.id2idx[neighbor]
                                         for neighbor in neighbor_ids])
             if self.use_geto:
@@ -531,7 +580,7 @@ class NodeMinibatchIterator(object):
 
         batch1id = batch_nodes
 
-        if sup_only:
+        if False:#sup_only:
 
             superlevel_batch = [n for n in batch1id]
             level_id = 0
@@ -547,50 +596,72 @@ class NodeMinibatchIterator(object):
             sub_feed_dict.update({self.placeholders['sub_batch0_size']: sub_level_bs})
             sub_feed_dict.update({self.placeholders['sub_batch0']: sub_batch0})
             sub_feed_dict.update({self.placeholders['sub_batch0_labels']: levelset_labels})
+            sub_feed_dict.update({self.placeholders['sub_batch0_pollen']: 0})
         else:
 
-            superlevel_batch = [n for n in batch1id if n not in self.level_set_nodes]
+            super_ni_sub_level_batch = [n for n in batch1id if n not in self.level_set_nodes]
+            super_in_sub_level_batch = [n for n in batch1id if n in self.level_set_nodes]
             # level_id = 0
             # sublevel_batch1   = [n for n in batch1id if n in self.levelset_node_lists[level_id]]
             # order added matters, see call to sample / build
             # for sample, to order level set batches to preserve nbr ordering and labels
             # for build for label ordering
-            full_batch = superlevel_batch
+            full_batch = super_ni_sub_level_batch#+super_in_sub_level_batch
+            full_level_set_batch = []
+            full_levelset_labels = []
 
-            for level_id, level_set in enumerate(self.observed_sublevel_sets):
+            for level_id, level_set in enumerate(self.levelset_node_lists):
                 level_set_batch = [n for n in batch1id if n in level_set]
+                missing_level_set_batch = [n for n in batch1id if n not in level_set]
                 level_set_name = "sub_batch" + str(level_id)
+
+                pollen_name = level_set_name+"_pollen"
+                # sublevel samples in orginal superlevel batch sample
+                pollen = len(level_set_batch)
+
+                # pout(("levelset", level_id, "size ", len(level_set)))
 
                 level_set_size_name = level_set_name+'_size'
 
-                new_levelset_samples, new_levelset_labels = self.next_levelset_minibatch(level_id=level_id,
-                                                                                         batch_size=len(
-                                                                                             superlevel_batch))
+                if len(missing_level_set_batch) != 0:
+                    new_levelset_samples, new_levelset_labels = self.next_levelset_minibatch(level_id=level_id,
+                                                                                             batch_size=len(
+                                                                                                 missing_level_set_batch))
+                else:
+                    new_levelset_samples = []
+                    new_levelset_labels  = []
                 level_set_batch_i = new_levelset_samples + level_set_batch
-                full_batch += level_set_batch
+
+                full_level_set_batch.append(level_set_batch_i)
+                full_levelset_labels.append(np.vstack([self._make_label_vec(node) for node in level_set_batch_i]))
+
+
+                #full_batch += level_set_batch_i
                 sub_batch_i = [self.id2idx[n] for n in level_set_batch_i]
+                if len(sub_batch_i) == 0:
+                    pout(['level id', level_id, 'num level sets',len(self.levelset_node_lists)])
+                    pout(("len each level set", str([(id, len(lset)) for id, lset in enumerate(self.levelset_node_lists)])))
+
                 levelset_labels_i = np.vstack([self._make_label_vec(node) for node in level_set_batch_i])
+
+
                 level_set_batch_size = len(level_set_batch_i)
                 level_set_label_name = level_set_name+'_labels'
 
                 sub_feed_dict.update({self.placeholders[level_set_name]: sub_batch_i})
                 sub_feed_dict.update({self.placeholders[level_set_size_name]: level_set_batch_size})
+                sub_feed_dict.update({self.placeholders[pollen_name]: pollen})
                 sub_feed_dict.update({self.placeholders[level_set_label_name]: levelset_labels_i})
 
             # order added matters, see call to sample / build
 
+            full_batch += super_in_sub_level_batch
             super_level_bs = int(len(full_batch)) if len(full_batch) > 0 else int(0)
             batch1 = [self.id2idx[n] for n in full_batch]  # superlevel_batch]
             self.current_batch = full_batch
             full_labels = np.vstack([self._make_label_vec(node) for node in full_batch])
-            # levelset_labels_init = [self._make_label_vec(node) for node in sublevel_batch1]
-            # # pout(['SUB BATCH SIZE', len(sublevel_batch1), 'sublevellabels0', len(levelset_labels)])
-            # new_levelset_samples, new_levelset_labels = self.next_levelset_minibatch(level_id=level_id,
-            #                                                                          batch_size=len(superlevel_batch))
-            # pout(['levelsetsamps',len(new_levelset_samples)])
-            # sublevel_batch_sampled0 = new_levelset_samples + sublevel_batch1
-            # levelset_labels = [self._make_label_vec(node) for node in sublevel_batch_sampled0]#new_levelset_labels + levelset_labels
 
+            self.current_levelset_batch = full_level_set_batch
 
             #levelset_labels = np.vstack(levelset_labels)
 
@@ -617,8 +688,8 @@ class NodeMinibatchIterator(object):
         feed_dict.update({self.placeholders['labels']: full_labels})
         # feed_dict.update({self.placeholders['sub_batch0_id']: self.sublevel_set_id-1})
         #feed_dict.update({self.placeholders['sub_batch0_labels']: levelset_labels})
-        feed_dict.update({self.placeholders['subcomplex_weight']: 1.0})
-        return feed_dict, full_labels
+        #feed_dict.update({self.placeholders['subcomplex_weight']: 1.0})
+        return feed_dict, full_labels, full_levelset_labels
 
     def next_levelset_minibatch(self, level_id, batch_size):
         start_idx = self.levelset_batch_nums[level_id]
@@ -644,20 +715,23 @@ class NodeMinibatchIterator(object):
 
 
 
-    def update_batch_prediction(self, preds):
+    def update_batch_prediction(self, sup_preds=None, sub_preds=None):
         batch1id = self.current_batch
         a = b = c = 0
-        for i, n in enumerate(batch1id):
-            self.G.node[n]['prediction'] = preds[i]
-        #labels = np.vstack([self._make_label_vec(node) for node in batch1id])
-        #feed_dict = dict()
-        #feed_dict.update({self.placeholders['batch_size']: len(batch1)})
-        #feed_dict.update({self.placeholders['batch']: batch1})
-        #feed_dict.update({self.placeholders['labels']: labels})
+        if sup_preds is not None:
+            for i, n in enumerate(batch1id):
+                self.G.node[n]['prediction'] = sup_preds[i]
+        if sub_preds is not None:
+            for sub_batch, sub_p in zip(self.current_levelset_batch, sub_preds):
+                for i, n in enumerate(sub_batch):
+
+
+
+                    self.G.node[n]['prediction'] = sub_p[i]
 
         #return feed_dict, labels
 
-    def node_val_feed_dict(self, size=None, test=False, sup_only=True):
+    def node_val_feed_dict(self, size=None, test=False, sup_only=False):
         if test:
             val_nodes = self.test_nodes
             # self.current_batch = self.test_nodes
@@ -670,12 +744,14 @@ class NodeMinibatchIterator(object):
         self.current_batch=val_nodes
         # add a dummy neighbor
         ret_val = self.batch_feed_dict(val_nodes, sup_only=sup_only)
-        ret_val[0].update({self.placeholders['subcomplex_weight']: -1})
-        return ret_val[0], ret_val[1]
+        # ret_val[0].update({self.placeholders['subcomplex_weight']: -1})
+        return ret_val[0], ret_val[1], ret_val[2]
 
-    def incremental_node_val_feed_dict(self, size, iter_num, test=False, sup_only=True):
+    def incremental_node_val_feed_dict(self, size, iter_num, test=False, test_sub=False, sup_only=False):
         if test:
             val_nodes = self.all_nodes#test_nodes
+        elif test_sub:
+            val_nodes = self.levelset_node_lists[-1]
         else:
             val_nodes = self.val_nodes
         val_node_subset = val_nodes[iter_num*size:min((iter_num+1)*size, 
@@ -683,8 +759,8 @@ class NodeMinibatchIterator(object):
 
         # add a dummy neighbor
         ret_val = self.batch_feed_dict(val_node_subset, sup_only=sup_only)
-        ret_val[0].update({self.placeholders['subcomplex_weight']: -1})
-        return ret_val[0], ret_val[1], (iter_num+1)*size >= len(val_nodes), val_node_subset
+        # ret_val[0].update({self.placeholders['subcomplex_weight']: -1})
+        return ret_val[0], ret_val[1],  ret_val[2],  (iter_num+1)*size >= len(val_nodes), val_node_subset
 
     def num_training_batches(self):
         return len(self.train_nodes) // self.batch_size + 1
@@ -711,3 +787,10 @@ class NodeMinibatchIterator(object):
         """
         self.train_nodes = np.random.permutation(self.train_nodes)
         self.batch_num = 0
+
+        shuffled_levelset_node_lists = []
+        for level_id, level_set in enumerate(self.levelset_node_lists):
+            shuffled_level_set = list(np.random.permutation(level_set))
+            shuffled_levelset_node_lists.append(shuffled_level_set)
+            self.levelset_batch_nums[level_id] = 0
+        self.levelset_node_lists = shuffled_levelset_node_lists

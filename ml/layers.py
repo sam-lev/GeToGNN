@@ -42,16 +42,19 @@ class Layer(object):
     def __init__(self, **kwargs):
         allowed_kwargs = {'name','name_weights', 'logging', 'model_size', 'jump_type', 'jumping_knowledge',
                           'hidden_dim_1','hidden_dim_2', 'geto_dims','geto_vec_dim','use_geto',
-                          'subcomplex_weights'}
+                          'subcomplex_weight'}
         for kwarg in kwargs.keys():
             assert kwarg in allowed_kwargs, 'Invalid keyword argument: ' + kwarg
         name = kwargs.get('name')
         if not name:
             layer = self.__class__.__name__.lower()
             name = layer + '_' + str(get_layer_uid(layer))
+        name_w = kwargs.get('name_weights')
+        if name_w:
+            name = name+name_w
         self.name = name
         self.vars = {}
-        self.geto_vars = {}
+        # self.sub_vars = {}
         self.grad_free_vars = {}
         logging = kwargs.get('logging', False)
         self.logging = logging
@@ -73,12 +76,15 @@ class Layer(object):
         for var in self.vars:
             tf.summary.histogram(self.name + '/vars/' + var, self.vars[var])
 
+        # for var in self.sub_vars:
+        #     tf.summary.histogram(self.name + '/sub_vars/' + var, self.sub_vars[var])
+
 
 class Dense(Layer):
     """Dense layer."""
     def __init__(self, input_dim, output_dim, dropout=0., 
                  act=tf.nn.relu, placeholders=None, bias=True, featureless=False, 
-                 sparse_inputs=False, use_geto=False, name_weights='weights',**kwargs):
+                 sparse_inputs=False, use_geto=False,**kwargs):
         super(Dense, self).__init__(**kwargs)
 
         self.dropout = dropout

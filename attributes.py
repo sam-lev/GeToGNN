@@ -35,6 +35,9 @@ class Attributes(object):
         self.feature_names = []
         self.idx_to_feat = {}
 
+
+        self.sup_gid_to_sub_dict = None
+
         #
         # Write Paths
         #

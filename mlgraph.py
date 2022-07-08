@@ -588,19 +588,59 @@ class MLGraph(GeToFeatureGraph):
         end_time = time.time()
         return (self.G_dict, self.node_gid_to_feat_idx , self.node_gid_to_label, self.features)
 
-    def complex_sublevel_training_set(self):
+    def complex_sublevel_training_set(self, level_id, subgraph=None):
         # #for gnode in self.gid_gnode_dict.values():
         #
         #     partition = self.node_gid_to_partition[gnode.gid]
         #
-        sublevel_training_set = [gnode.gid for gnode in self.gid_gnode_dict.values() if self.node_gid_to_partition[gnode.gid] == 'train' and gnode.sublevel_set]
+        sublevel_training_set = [gnode.gid for gnode in self.gid_gnode_dict.values() if self.node_gid_to_partition[gnode.gid] == 'train' and (gnode.sublevel_set and (0 < gnode.level_id <= level_id))]
+
+        sublevel_set = [gnode.gid for gnode in self.gid_gnode_dict.values() if gnode.sublevel_set and (0 < gnode.level_id <= level_id)]
         #     if gnode.sublevel_set:# and partition == 'train':
         #         sublevel_training_set.append(gnode.gid)
         superlevel_training_set = [gnode.gid for gnode in self.gid_gnode_dict.values() if self.node_gid_to_partition[gnode.gid] == 'train']
         #     if partition == 'train':#not gnode.sublevel_set and partition == 'train':
         #         superlevel_training_set.append(gnode.gid)
 
-        return superlevel_training_set, sublevel_training_set
+        # mark train then remainder test
+        for sup_gid in sublevel_set:
+            sub_gid = subgraph.sup_gid_to_sub_dict[sup_gid]
+            nx_gid = subgraph.node_gid_to_graph_idx[sub_gid]
+            node = subgraph.G.node[nx_gid]
+
+            sub_gnode = subgraph.gid_gnode_dict[sub_gid]
+            #
+            # node["features"] =  features#gnode.features.tolist()
+
+            node["gid"] = sub_gnode.gid
+            # getoelm = self.gid_geto_elm_dict[gnode.gid]
+            # polyline = getoelm.points
+            # node["geto_elm"] = polyline
+            node["key"] = sub_gnode.key
+            node["box"] = sub_gnode.box
+            sup_partition = self.node_gid_to_partition[sup_gid]
+            node["partition"] = sup_partition
+            # assign partition to node
+            node["train"] = sup_partition == 'train'
+
+            # sublevel_id = -1
+            # for id, sublevel_set in enumerate(sublevel_training_sets):
+            #     if gnode.gid in sublevel_set:  # and partition=='train':
+            #         sublevel_id = id if sublevel_id == -1 else sublevel_id
+            #
+            # node["sublevel_set_id"] = [len(sublevel_training_sets), sublevel_id]
+            node["test"] = sup_partition == 'test'
+            node["val"] = sup_partition == 'val'
+            node["label"] = [
+                    int(sup_gid in self.negative_arc_ids),
+                    int(sup_gid in self.positive_arc_ids)
+                ]
+
+            node["prediction"] = []
+
+            # subgraph.node_gid_to_label[sub_gid] = node["label"]
+
+        return superlevel_training_set, sublevel_set, subgraph.G
 
     def get_complex_informed_subgraph_split(self, sublevel_training_sets,
                                                           validation_hops=1,
@@ -616,6 +656,10 @@ class MLGraph(GeToFeatureGraph):
         sublevel_training_set = sublevel_training_sets[0] # change to iterate when have more complexes
         sublevel_training_set_id = 0
 
+
+        pout(("NUMBER SUBLEVEL SETS in ml grpah get somplex informed", total_sublevel_sets))
+        for j,i in enumerate(sublevel_training_sets):
+            pout(("len "+str(j), len(i)))
         collect_validation = False
         if collect_validation:
 
@@ -691,10 +735,12 @@ class MLGraph(GeToFeatureGraph):
             node["partition"] = partition
             # assign partition to node
             node["train"] = partition == 'train'
+
             sublevel_id = -1
             for id, sublevel_set in enumerate(sublevel_training_sets):
-                if gnode.gid in sublevel_set and partition=='train':
-                    sublevel_id = id + 1 if sublevel_id == -1 else sublevel_id
+                if gnode.gid in sublevel_set:# and partition=='train':
+                    sublevel_id = id  if sublevel_id == -1 else sublevel_id
+
             node["sublevel_set_id"] = [len(sublevel_training_sets), sublevel_id]
             node["test"] = partition == 'test'
             node["val"] = partition == 'val'

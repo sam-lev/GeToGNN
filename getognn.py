@@ -9,7 +9,7 @@ import datetime
 from data_ops.utils import compute_features
 from ml import supervised_gnn
 from ml import unsupervised_gnn
-from ml.utils import format_data
+from ml.utils import format_data, format_gnn_dicts
 from ml.LinearRegression import LinearRegression
 from ml.utils import random_walk_embedding
 from ml.utils import pout
@@ -187,6 +187,11 @@ class GeToGNN(MLGraph):
             self.params[arg] = kwargs[arg]
 
         pout(["using sublevel sets", self.params['sublevel_sets']])
+
+        subgraph_dict = kwargs.get('subgraph_dict')
+        if not subgraph_dict:
+            subgraph_dict = None
+
         wp=1.0
         if self.params['getognn_class_weights']:
             positive_sample_count = 0
@@ -252,6 +257,26 @@ class GeToGNN(MLGraph):
                               scheme_required=True,
                               load_walks=False)
 
+            if subgraph_dict is not None:
+                for sub_name, subcomplex in subgraph_dict.items():
+                    sub_nx_idx_to_feat_idx = {subcomplex.node_gid_to_graph_idx[gid]: feat for gid, feat
+                                          in subcomplex.node_gid_to_feat_idx.items()}
+                    sub_nx_idx_to_label_idx = {subcomplex.node_gid_to_graph_idx[gid]: label for gid, label
+                                           in subcomplex.node_gid_to_label.items()}
+                    sub_G, sub_features, sub_nx_idx_to_feat_idx, sub_nx_idx_to_label_idx \
+                        = format_gnn_dicts(dual=subcomplex.G,
+                                      features=subcomplex.features,
+                                      # node_id=nx_idx_to_feat_idx,
+                                      id_map=sub_nx_idx_to_feat_idx,
+                                      node_classes=sub_nx_idx_to_label_idx,
+                                      train_or_test='',
+                                      scheme_required=True,
+                                      load_walks=False)
+                    subcomplex.G = sub_G
+                    subcomplex.features = sub_features
+                    subcomplex.nx_idx_to_feat_idx =  sub_nx_idx_to_feat_idx
+                    subcomplex.nx_idx_to_label_idx = sub_nx_idx_to_label_idx
+                    subgraph_dict[sub_name] = subcomplex
 
             self.gnn = supervised_gnn.gnn(aggregator=self.params['aggregator'],
                                           env=self.params['env'],
@@ -293,7 +318,8 @@ class GeToGNN(MLGraph):
                            multilevel_concat=self.params['multilevel_concat'],
                            jumping_knowledge=self.params['jumping_knowledge'],
                            jump_type=self.params['jump_type'],
-                           sublevel_sets=self.params['sublevel_sets'])
+                           sublevel_sets=self.params['sublevel_sets'],
+                           subgraph_dict = subgraph_dict)
             self.train_time = self.gnn.train_time
             self.ped_time = self.gnn.pred_time
 
@@ -996,7 +1022,7 @@ class supervised_getognn:
                 self.getognn.write_geto_features(self.getognn.session_name)
         '''
 
-    def train(self, getognn=None, run_num=1, sublevel_sets=False):
+    def train(self, getognn=None, run_num=1, sublevel_sets=False, subgraph_dict=None):
         if getognn is not None:
             self.getognn = getognn
         # self.X_BOX = self.getognn.X_BOX
@@ -1004,7 +1030,7 @@ class supervised_getognn:
         # self.Y_BOX = self.getognn.Y_BOX
         #training
 
-        self.getognn.supervised_train(sublevel_sets=sublevel_sets)
+        self.getognn.supervised_train(sublevel_sets=sublevel_sets, subgraph_dict=subgraph_dict)
 
         self.pred_time = self.getognn.pred_time
         self.train_time = self.getognn.train_time
@@ -1051,7 +1077,7 @@ class unsupervised_getognn:
         else:
             self.getognn.load_gnode_features()
         if self.getognn.params['write_features']:
-            self.getognn.write_gnode_features(self.getognn.session_name)
+            self.getognn.write_gnode_features()#self.getognn.session_name)
         if self.getognn.params['write_feature_names']:
             self.getognn.write_feature_names()
 

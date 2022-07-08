@@ -170,6 +170,9 @@ class GeToFeatureGraph(GeToGraph):
         max_val = np.max(self.image)
         min_val = np.min(self.image)
         self.image = (self.image - min_val) / (max_val - min_val)
+
+        self.thirty_percent_image_intensity_range = 0.33*(max_val - min_val)
+
         #self.image = self.image if len(self.image.shape) == 2 else np.transpose(np.mean(self.image, axis=1), (1, 0))
 
         self.X = self.image.shape[0]
@@ -179,6 +182,8 @@ class GeToFeatureGraph(GeToGraph):
         #
         self.features = None
         self.feature_ops = {}
+
+        self.feature_comp_time = 0
 
         #
         # build feature graph
@@ -225,6 +230,31 @@ class GeToFeatureGraph(GeToGraph):
                         self.G.add_edge(nx_gid, adj_gnode_nx_id)
 
         return self.G.copy()
+
+    def build_subgraph(self, gid_gnode_dict, gid_edge_dict):
+        G = nx.Graph()
+        nx_node_idx = 0
+        node_gid_to_graph_idx = {}
+        graph_idx_to_gid = {}
+        for gnode in gid_gnode_dict.values():
+            gid = gnode.gid
+            G.add_node(
+                nx_node_idx, edges=gnode.edge_gids, size=len(gnode.points)
+            )
+            node_gid_to_graph_idx[gid] = nx_node_idx
+            graph_idx_to_gid[nx_node_idx] = gid
+            nx_node_idx += 1
+
+        for nx_gid, node in list(G.nodes_iter(data=True)):
+
+            for adj_edge in node["edges"]:
+                for adj_gnode_gid in gid_edge_dict[adj_edge].gnode_gids:
+                    node_gid = graph_idx_to_gid[nx_gid]
+                    adj_gnode_nx_id = node_gid_to_graph_idx[adj_gnode_gid]
+                    if adj_gnode_gid != node_gid:
+                        G.add_edge(nx_gid, adj_gnode_nx_id)
+
+        return G.copy(), graph_idx_to_gid, node_gid_to_graph_idx
 
     #@profile
     def build_geto_adj_list(self, influence_type='weighted'):
@@ -879,18 +909,25 @@ class GeToFeatureGraph(GeToGraph):
                     'feat-func_10_mode','feat-func_8_mode','feat-func_14_mode',
                     'feat-func_20_mode']
 
+        start_time = time.time()
+
         for gnode in self.gid_gnode_dict.values():
 
             gnode_feature_row = []
 
-
             if include_generic_feat:
-                for image_name, im in self.images.items():
+                # pout((gnode.points, "gnodepoints"))
+                gnode_points = np.round(np.array(gnode.points, dtype=float)).astype(int)
+                # pout((gnode_points[:,1], "gnode   sdgf 1 points"))
+                # pout((self.feature_image.shape, "feat im shape"))
+                gnode_aug_imstack = self.feature_image[gnode_points[:, 1], gnode_points[:, 0], :]
+                # pout((gnode_aug_im_pixels.shape, "gnode_aug im shape"))
+                # aug_im_names = list(self.images.keys())
+                for im_idx in range(self.feature_image.shape[2]):
+                    # for image_name, im in self.images.items():
+                    image_name = self.feature_im_names[im_idx]
 
-                    #if i not in arc_pixel_map:
-                    #    arc_pixel_map[i] = get_pixel_values_from_arcs([arc], im, sampled=False)
-
-                    gnode_pixels = get_pixel_values_from_vertices([gnode], im)
+                    gnode_pixels = gnode_aug_imstack[:, im_idx]  # get_pixel_values_from_vertices([gnode], im)
 
                     for function_name, foo in self.feature_ops.items():
                         aug_name = image_name + "_" + function_name
@@ -903,8 +940,7 @@ class GeToFeatureGraph(GeToGraph):
                                 feature_order += 1
                 self.node_gid_to_standard_feature[gnode.gid] = gnode_feature_row
 
-
-            #if include_geto:
+            # if include_geto:
             #    gnode_feature_row = np.array(gnode_feature_row)
             #    gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
             #    gnode_feature_row = np.hstack((gnode_feature_row, self.getoelms[gnode_nx_idx,:]))
@@ -913,32 +949,21 @@ class GeToFeatureGraph(GeToGraph):
             self.node_gid_to_feature[gnode.gid] = np.array(gnode_feature_row).astype(dtype=np.float32)
             self.node_gid_to_feat_idx[gnode.gid] = feature_idx
 
-
-
-
             feature_idx += 1
 
+        end_time = time.time()
 
+        self.feature_comp_time += end_time - start_time
 
         gnode_features = np.array(gnode_features).astype(dtype=np.float32)
 
-        #if include_geto:
+        # if include_geto:
         #    gnode_features = np.hstack((gnode_features, self.getoelms))
 
         self.number_features = len(feature_names)
 
-        dbgprint(len(feature_names), 'len names')
-        if self.getoelms is not None:
-            dbgprint(self.getoelms.shape, 'geto elm shape')
-        dbgprint(gnode_features.shape, '    * feature shape')
-
-        self.feature_names = feature_names #if not include_geto else feature_names + self.geto_attr_names
-
-        dbgprint(len(self.feature_names), 'len names after')
+        self.feature_names = feature_names
         self.features = gnode_features
-        end_time = time.time()
-
-        print('..Time to compute features: ', end_time - start_time)
 
         if return_labels:
             print(">>>> returning with labels")
@@ -949,83 +974,131 @@ class GeToFeatureGraph(GeToGraph):
             self.compiled_data = gnode_features
             return gnode_features
 
+    def construct_feature_ops(self):
+        self.feature_ops = {}
+        self.feature_ops["min"] = lambda pixels: np.min(pixels)
+        self.feature_ops["max"] = lambda pixels: np.max(pixels)
+        self.feature_ops["median"] = lambda pixels: np.median(pixels)
+        # self.feature_ops["mode"] = lambda pixels: scipy.stats.mode(np.round(pixels, 2))[0][0]
+        # self.feature_ops["mean"] = lambda pixels: gaussian_fit(pixels)[0]
+
+        self.feature_ops["std"] = lambda pixels: gaussian_fit(pixels)[1]
+        # self.feature_ops["var"] = lambda pixels: gaussian_fit(pixels)[2]
+
+        # self.feature_ops["skew"] = lambda pixels: scipy.stats.skew(pixels)
+        # self.feature_ops["kurtosis"] = lambda pixels: scipy.stats.kurtosis(pixels)
+        # self.feature_ops["range"] = lambda pixels: np.max(pixels) - np.min(pixels)
+
     def set_default_features(self):
 
         image = self.image
         min_number_features = self.params['min_number_features']
         number_features = self.params['number_features']
 
-        image_og = copy.deepcopy(image)
-        image_c = copy.deepcopy(image)
+        image_og = image  # copy.deepcopy(image)
+        # image_c = copy.deepcopy(image)
         self.images = {}
+        self.feature_image = np.expand_dims(image, axis=-1)
+        self.feature_im_names = []
+        self.feature_im_names.append('identity')
 
-        feature_scope = [2**nf for nf in range(min_number_features, number_features + 1)]
+        def add_feat_im(image, name):
+            image = np.expand_dims(image, axis=-1)
+            self.feature_image = np.concatenate((self.feature_image, image), axis=2)
+            self.feature_im_names.append(name)
+            return self.feature_image, self.feature_im_names
+
+        feature_scope = [2 ** nf for nf in range(min_number_features, number_features + 1)]
 
         print("Feature scales: ", feature_scope)
 
         # Functions to apply to the pixels of an arc
-        self.feature_ops["min"] = lambda pixels: np.min(pixels)
-        self.feature_ops["max"] = lambda pixels: np.max(pixels)
-        self.feature_ops["median"] = lambda pixels: np.median(pixels)
-        self.feature_ops["mode"] = lambda pixels: scipy.stats.mode(np.round(pixels, 2))[0][0]
-        #self.feature_ops["mean"] = lambda pixels: gaussian_fit(pixels)[0]
+        self.construct_feature_ops()
 
-        self.feature_ops["std"] = lambda pixels: gaussian_fit(pixels)[1]
-        self.feature_ops["var"] = lambda pixels: gaussian_fit(pixels)[2]
+        start_time = time.time()
 
-        #self.feature_ops["skew"] = lambda pixels: scipy.stats.skew(pixels)
-        #self.feature_ops["kurtosis"] = lambda pixels: scipy.stats.kurtosis(pixels)
-        #self.feature_ops["range"] = lambda pixels: np.max(pixels) - np.min(pixels)
-
-
-
-        self.images["identity"] = image
+        # self.images["identity"] = image
 
         sigma_min = 1
         sigma_max = 64
         features_func = partial(multiscale_basic_features,
-                                intensity=True, edges=False, texture=True,
+                                intensity=True, edges=True, texture=True,
                                 sigma_min=sigma_min, sigma_max=sigma_max,
                                 multichannel=False)
-        image_c = copy.deepcopy(image_og)
+
+        image_c = image_og  # copy.deepcopy(image_og)
+
         features = features_func(image_c)
-        skip_exp = ['feat-func_20', 'feat-func_17', 'feat-func_14', 'feat-func_19',
-                    'feat-func_11', 'feat-func_13', 'feat-func_16']
+        self.feature_image = np.concatenate((self.feature_image, features), axis=2)
+
+        # skip_exp = ['feat-func_20', 'feat-func_17', 'feat-func_14', 'feat-func_19',
+        #             'feat-func_11', 'feat-func_13', 'feat-func_16']
         for i in range(features.shape[2]):
             # skip powers which have 0 feature importance (20, 17, 14, 19, 11, 13, 16)
             # if i not in skip_exp:
-            self.images['feat-func_'+str(i)] = features[:,:,i]
+            self.feature_im_names.append('feat-func_' + str(i))
+            # self.images['feat-func_'+str(i)] = features[:,:,i]
 
-        image_c = copy.deepcopy(image_og)
-        self.images["sobel"] = sobel_filter(image_c)
-        image_c = copy.deepcopy(image_og)
+        image_c = image_og  # copy.deepcopy(image_og)
+        # self.images["sobel"] = sobel_filter(image_c)
+        sob_im = sobel_filter(image_c)
+        self.feature_image, self.feature_im_names = add_feat_im(sob_im, 'sobel')
+        image_c = image_og  # copy.deepcopy(image_og)
 
         for i in feature_scope:
-            pow1 = 2*i #2 ** (i - 1)
+            pow1 = 2 * i  # 2 ** (i - 1)
             pow2 = i
-            #if i >= 3:
-            #    self.images["laplacian"] = laplacian_filter(image_c, size=i)
-            #    image_c = copy.deepcopy(image_og)
-            #self.images["mean_{}".format(i)] = mean_filter(image_c, i)
-            #image_c = copy.deepcopy(image_og)
-            self.images["variance_{}".format(i)] = variance_filter(
+
+            # self.images["variance_{}".format(i)] = \
+            var_filt_i = variance_filter(
                 image_c, i
             )
-            image_c = copy.deepcopy(image_og)
-            self.images["median_{}".format(i)] = median_filter(image_c, i)
-            image_c = copy.deepcopy(image_og)
-            self.images["min_{}".format(i)] = minimum_filter(image_c, i)
-            image_c = copy.deepcopy(image_og)
-            self.images["max_{}".format(i)] = maximum_filter(image_c, i)
-            image_c = copy.deepcopy(image_og)
-            self.images["gauss_{}".format(pow2)] = gaussian_blur_filter(
+            self.feature_image, self.feature_im_names = add_feat_im(var_filt_i, 'variance_' + str(i))
+            # image_c = image_og#copy.deepcopy(image_og)
+
+            # self.images["median_{}".format(i)] = \
+            med_i = median_filter(image_c, i)
+            self.feature_image, self.feature_im_names = add_feat_im(med_i, 'median_' + str(i))
+            # image_c = image_og#copy.deepcopy(image_og)
+
+            # self.images["min_{}".format(i)] = \
+            min_i = minimum_filter(image_c, i)
+            # image_c = image_og#copy.deepcopy(image_og)
+            self.feature_image, self.feature_im_names = add_feat_im(min_i, 'min_' + str(i))
+
+            # self.images["max_{}".format(i)] = \
+            max_i = maximum_filter(image_c, i)
+            self.feature_image, self.feature_im_names = add_feat_im(max_i, 'max_' + str(i))
+            # image_c = image_og#copy.deepcopy(image_og)
+            '''
+            # self.images["gauss_{}".format(pow2)] = \
+            gauss_i = gaussian_blur_filter(
                 image_c, pow2
             )
-            image_c = copy.deepcopy(image_og)
-            self.images[
-                "delta_gauss_{}_{}".format(pow1, pow2)
-            ] = difference_of_gaussians_filter(image_c, pow1, pow2)
-            image_c = copy.deepcopy(image_og)
+            self.feature_image, self.feature_im_names = add_feat_im(gauss_i, 'gauss_'+str(i))
+            # image_c = image_og#copy.deepcopy(image_og)
+
+            # self.images[
+            #     "delta_gauss_{}_{}".format(pow1, pow2)
+            # ] = \
+            delta_gauss_i = difference_of_gaussians_filter(image_c, pow1, pow2)
+            image_c = image_og#copy.deepcopy(image_og)
+            self.feature_image, self.feature_im_names = add_feat_im(delta_gauss_i, 'delta_gauss_'+str(i))
+            '''
+
+        end_time = time.time()
+
+        self.feature_comp_time += end_time - start_time
+
+        self.save_feature_images()
+        self.write_feature_image_names()
+
+        # for name, im in self.images.items():
+        #     # pout(("image shape",im.shape))
+        #     if name == 'identity':
+        #         continue
+        #     im = np.expand_dims(im, axis=-1)
+        #     self.feature_image = np.concatenate((self.feature_image,im), axis=2)
 
         if self.params['save_filtered_images']:
             for name, image in self.images.items():
@@ -1050,6 +1123,112 @@ class GeToFeatureGraph(GeToGraph):
                 #     os.makedirs(os.path.join(self.experiment_folder, 'filtered_images'))
                 # #Img.save(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), quality=90)
                 # imageio.imsave(os.path.join(self.experiment_folder, 'filtered_images', name+'.tif'), image)
+    def compile_subgraph_features(self, image=None, return_labels=False, include_geto=False,
+                         include_generic_feat = True, gid_gnode_dict = None,
+                         save_filtered_images=False,
+                         min_number_features=1, number_features=5, selection=None):
+
+        start_time = time.time()
+
+        # self.set_default_features()
+
+        # if include_geto:
+        #     if self.getoelms is None:
+        #         self.getoelms = self.build_geto_adj_list(influence_type=self.params['geto_influence_type'])
+
+
+        gnode_features = []
+        feature_names = []
+        feature_idx = 0
+        feature_order = 0
+
+        node_gid_to_standard_feature = {}
+        node_gid_to_feature = {}
+        node_gid_to_feat_idx = {}
+
+        # Functions to apply to the pixels of an arc
+        self.construct_feature_ops()
+
+        pout(("FEATRE IMAGE NAMES:", self.feature_im_names))
+
+
+
+        check = 0
+        # skip powers
+        skip_exp = ['feat-func_19_var','variance_2_mode','feat-func_19_mode',
+                    'feat-func_17_var','feat-func_17_mode','feat-func_16_var',
+                    'feat-func_16_mode','feat-func_20_var','feat-func_14_var',
+                    'feat-func_13_var','feat-func_13_mode','feat-func_11_mode',
+                    'feat-func_10_mode','feat-func_8_mode','feat-func_14_mode',
+                    'feat-func_20_mode']
+
+        start_time = time.time()
+
+        for gnode in gid_gnode_dict.values():
+
+            gnode_feature_row = []
+
+            if include_generic_feat:
+                # pout((gnode.points, "gnodepoints"))
+                gnode_points = np.round(np.array(gnode.points, dtype=float)).astype(int)
+                # pout((gnode_points[:,1], "gnode   sdgf 1 points"))
+                # pout((self.feature_image.shape, "feat im shape"))
+                gnode_aug_imstack = self.feature_image[gnode_points[:, 1], gnode_points[:, 0], :]
+                # pout((gnode_aug_im_pixels.shape, "gnode_aug im shape"))
+                # aug_im_names = list(self.images.keys())
+                for im_idx in range(self.feature_image.shape[2]):
+                    pout((im_idx))
+                    # for image_name, im in self.images.items():
+
+                    image_name = self.feature_im_names[im_idx]
+
+                    gnode_pixels = gnode_aug_imstack[:, im_idx]  # get_pixel_values_from_vertices([gnode], im)
+
+                    for function_name, foo in self.feature_ops.items():
+                        aug_name = image_name + "_" + function_name
+                        if aug_name not in skip_exp:
+                            attribute = foo(gnode_pixels)
+                            gnode_feature_row.append(attribute)
+                            if len(gnode_features) == 0:
+                                feature_names.append(image_name + "_" + function_name)
+                                # self.fname_to_featidx[image_name + "_" + function_name] = feature_order
+                                feature_order += 1
+                node_gid_to_standard_feature[gnode.gid] = gnode_feature_row
+
+            # if include_geto:
+            #    gnode_feature_row = np.array(gnode_feature_row)
+            #    gnode_nx_idx = self.node_gid_to_graph_idx[gnode.gid]
+            #    gnode_feature_row = np.hstack((gnode_feature_row, self.getoelms[gnode_nx_idx,:]))
+            gnode_features.append(gnode_feature_row)
+            gnode.features = np.array(gnode_feature_row).astype(dtype=np.float32)
+            node_gid_to_feature[gnode.gid] = np.array(gnode_feature_row).astype(dtype=np.float32)
+            node_gid_to_feat_idx[gnode.gid] = feature_idx
+
+            feature_idx += 1
+
+        end_time = time.time()
+
+        # self.feature_comp_time += end_time - start_time
+
+        gnode_features = np.array(gnode_features).astype(dtype=np.float32)
+
+        # if include_geto:
+        #    gnode_features = np.hstack((gnode_features, self.getoelms))
+
+        # self.number_features = len(feature_names)
+
+        # self.feature_names = feature_names
+        # self.features = gnode_features
+
+        # if return_labels:
+        #     print(">>>> returning with labels")
+        #     return gnode_features, feature_names
+        # else:
+        #     # print(" returning without labels")
+        #     # self.features = gnode_features
+        #     # self.compiled_data = gnode_features
+        return gnode_features, node_gid_to_feature, node_gid_to_feat_idx
+
 
     def load_json_feature_graph(self):
         graph_path = os.path.join(self.pred_run_path, self.msc_graph_name)
@@ -1057,22 +1236,30 @@ class GeToFeatureGraph(GeToGraph):
             , negative_sample_count \
             , positive_sample_count = load_data(prefix=graph_path)
 
-    def write_gnode_features(self, filename):
+    def write_gnode_features(self, filename='', gid_gnode_dict = None,
+                             node_gid_to_graph_idx=None, node_gid_to_standard_feature=None):
+        if gid_gnode_dict is None:
+            gid_gnode_dict = self.gid_gnode_dict
+            #if node_gid_to_graph_idx is None:
+            node_gid_to_graph_idx = self.node_gid_to_graph_idx
+            #if node_gid_to_standard_feature is None:
+            node_gid_to_standard_feature = self.node_gid_to_standard_feature
+
         if not os.path.exists(os.path.join(self.experiment_folder,'features')):
             os.makedirs(os.path.join(self.experiment_folder,'features'))
-        msc_feats_file = os.path.join(self.experiment_folder,'features', "feats.txt")
-        msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', "gid_graph_idx.txt")#"gid_feat_idx.txt")
+        msc_feats_file = os.path.join(self.experiment_folder,'features', filename+"feats.txt")
+        msc_gid_to_feats_file = os.path.join(self.experiment_folder, 'features', filename+"gid_graph_idx.txt")#"gid_feat_idx.txt")
         print("&&&& writing features in: ", msc_feats_file)
         feats_file = open(msc_feats_file, "w+")
         gid_feats_file = open(msc_gid_to_feats_file, "w+")
         lines = 1
 
-        check = len(self.gid_gnode_dict.keys())
-        for gnode in self.gid_gnode_dict.values():
-            nl = '\n' if lines != len(self.gid_gnode_dict) else ''
-            gid_feats_file.write(str(gnode.gid)+' '+str( self.node_gid_to_graph_idx[gnode.gid])+nl)
+        check = len(gid_gnode_dict.keys())
+        for gnode in gid_gnode_dict.values():
+            nl = '\n' if lines != len(gid_gnode_dict) else ''
+            gid_feats_file.write(str(gnode.gid)+' '+str( node_gid_to_graph_idx[gnode.gid])+nl)
             #str(self.node_gid_to_feat_idx[gnode.gid])+nl)
-            feature_vec = self.node_gid_to_standard_feature[gnode.gid]
+            feature_vec = node_gid_to_standard_feature[gnode.gid]
             feats_file.write(str(gnode.gid)+ ' ')
             for f in feature_vec[0:-1]:
                 feats_file.write(str(f)+' ')
@@ -1130,6 +1317,13 @@ class GeToFeatureGraph(GeToGraph):
         for fname in self.feature_names:
             feats_file.write(fname + "\n")
         feats_file.close()
+    def write_feature_image_names(self):
+        msc_feats_file = os.path.join(self.experiment_folder,'features', "feature_image_names.txt")
+        print("&&&& writing feature namesin: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "w+")
+        for fname in self.feature_im_names:
+            feats_file.write(fname + "\n")
+        feats_file.close()
 
     def write_geto_feature_names(self):
         if self.getoelms is not None:
@@ -1151,6 +1345,17 @@ class GeToFeatureGraph(GeToGraph):
         #print(self.feature_names)
         feats_file.close()
         return self.feature_names
+    def load_feature_image_names(self):
+        msc_feats_file = os.path.join(self.experiment_folder, 'features', "feature_image_names.txt")
+        print("&&&& Reading feature names from: ", msc_feats_file)
+        feats_file = open(msc_feats_file, "r")
+        feat_lines = feats_file.readlines()
+        self.feature_im_names = []
+        for f in feat_lines:
+            self.feature_names.append(f)
+        #print(self.feature_names)
+        feats_file.close()
+        return self.feature_im_names
 
     def load_geto_feature_names(self):
         msc_feats_file = os.path.join(self.experiment_folder, 'features', "geto_featnames.txt")
@@ -1164,8 +1369,27 @@ class GeToFeatureGraph(GeToGraph):
         feats_file.close()
         return self.geto_attr_names
 
-    def load_gnode_features(self):
-        msc_feats_file = os.path.join( self.experiment_folder,'features', "feats.txt")
+    def load_gnode_features(self, filename=None, gid_gnode_dict=None,
+                            node_gid_to_standard_feature={},
+                            node_gid_to_feat_idx={},
+                            node_gid_to_graph_idx = {},
+                            features=None):
+        if gid_gnode_dict is None:
+            gid_gnode_dict = self.gid_gnode_dict
+            # if not node_gid_to_standard_feature:
+            node_gid_to_standard_feature = self.node_gid_to_standard_feature
+            # if not node_gid_to_feat_idx:
+            node_gid_to_feat_idx = self.node_gid_to_feat_idx
+            # if features is None:
+            features = self.features
+            # if not node_gid_to_graph_idx:
+            node_gid_to_graph_idx = self.node_gid_to_graph_idx
+        if filename is None:
+            filename = ''
+
+
+
+        msc_feats_file = os.path.join( self.experiment_folder,'features', filename+"feats.txt")
         print("&&&& Reading features from: ", msc_feats_file)
         feats_file = open(msc_feats_file, "r")
         feat_lines = feats_file.readlines()
@@ -1176,9 +1400,9 @@ class GeToFeatureGraph(GeToGraph):
         for v in feat_lines:
             gid_feats = v.split(' ')
             gid = int(gid_feats[0])
-            gnode = self.gid_gnode_dict[gid]
-            gnode.features = np.array(gid_feats[1:])
-            self.node_gid_to_standard_feature[gid] = gid_feats[1:]
+            # gnode = gid_gnode_dict[gid]
+            # gnode.features = np.array(gid_feats[1:])
+            node_gid_to_standard_feature[gid] = gid_feats[1:]
             #self.node_gid_to_feature[gid] = np.array(gid_feats[1:])
             features.append(np.array(gid_feats[1:]))
             # if check < 3:
@@ -1186,9 +1410,9 @@ class GeToFeatureGraph(GeToGraph):
             # elif check > len(feat_lines) - 2:
             #     pout(["feat load begin", gid_feats[1:]])
             check -= 1
-            self.node_gid_to_feat_idx[gid] = feat_idx
+            node_gid_to_feat_idx[gid] = feat_idx
             feat_idx += 1
-        self.features = np.array(features).astype(dtype=np.float32)
+        features = np.array(features).astype(dtype=np.float32)
 
         # nx_idx_to_feat_idx = {self.node_gid_to_graph_idx[gid]: feat for gid, feat
         #                       in self.node_gid_to_feat_idx.items()}
@@ -1199,15 +1423,17 @@ class GeToFeatureGraph(GeToGraph):
 
         feats_file.close()
 
-        gid_to_feats_file = os.path.join(self.experiment_folder, 'features',"gid_graph_idx.txt")
+        gid_to_feats_file = os.path.join(self.experiment_folder, 'features',filename+"gid_graph_idx.txt")
         print("&&&& reading gid to graph id in: ", gid_to_feats_file)
         feats_file = open(gid_to_feats_file, "r")
         feat_lines = feats_file.readlines()
         feats_file.close()
         for l in feat_lines:
             gid_featidx = l.split(' ')
-            self.node_gid_to_graph_idx[int(gid_featidx[0])] = int(gid_featidx[1])
+            node_gid_to_graph_idx[int(gid_featidx[0])] = int(gid_featidx[1])
             #self.node_gid_to_feat_idx[int(gid_featidx[0])] = int(gid_featidx[1])
+
+        return features, node_gid_to_standard_feature, node_gid_to_feat_idx, node_gid_to_graph_idx
 
     def load_geto_features(self):
         self.getoelms = []
@@ -1286,6 +1512,20 @@ class GeToFeatureGraph(GeToGraph):
             lines += 1
         feats_file.close()
 
+    def save_feature_images(self):
+        if not os.path.exists(os.path.join(self.experiment_folder,'features')):
+            os.makedirs(os.path.join(self.experiment_folder,'features'))
+        feat_im_file = os.path.join(self.experiment_folder,'features', 'feature_image.npy')
+        feat_im_file_shape = os.path.join(self.experiment_folder, 'features', 'feature_image_shape.npy')
+        np.save(feat_im_file_shape, self.feature_image.shape)
+        np.save(feat_im_file, self.feature_image)
+    def load_feature_images(self):
+        feat_im_file = os.path.join(self.experiment_folder, 'features', 'feature_image.npy')
+        feat_im_file_shape = os.path.join(self.experiment_folder, 'features', 'feature_image_shape.npy')
+        self.feature_image = np.load(feat_im_file)
+        feat_im_shape = np.load(feat_im_file_shape)
+        self.feature_image = self.feature_image.reshape(feat_im_shape)
+
     def read_gnode_spherical_coordinates(self):
         #if not os.path.exists(os.path.join(self.experiment_folder,'features')):
         #    os.makedirs(os.path.join(self.experiment_folder,'features'))
@@ -1319,3 +1559,14 @@ class GeToFeatureGraph(GeToGraph):
         feats_file.close()
         embedding_coords = np.array(embedding_coords).astype(dtype=np.float32)
         return embedding_coords, gid_sphereical_embed_row
+
+    def write_feature_comp_time(self):
+        msc_feats_file = os.path.join(self.pred_session_run_path, 'featcomp_time.txt')
+        feats_time_file = open(msc_feats_file, "w+")
+        feats_time_file.write(str(self.feature_comp_time)+'\n')
+        feats_time_file.close()
+
+        msc_feats_file = os.path.join(self.experiment_folder, 'features', 'featcomp_time.txt')
+        feats_time_file = open(msc_feats_file, "w+")
+        feats_time_file.write(str(self.feature_comp_time) + '\n')
+        feats_time_file.close()

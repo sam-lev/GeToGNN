@@ -224,6 +224,7 @@ def format_data(dual=None, features=None, node_id=None, id_map=None
     if normalize and feats is not None and test_graph:
         from sklearn.preprocessing import StandardScaler
         test_ids = np.array([id_map[n] for n in G.nodes() if G.node[n]['test']])
+        pout(("ID MAP IN UTILS", id_map, "features in utils", feats))
         test_feats = feats[test_ids]
         scaler = StandardScaler()
         scaler.fit(test_feats)
@@ -236,6 +237,33 @@ def format_data(dual=None, features=None, node_id=None, id_map=None
                 walks.append(map(conversion, line.split()))
 
     return G, feats, id_map, walks, class_map, negative_sample_count, positive_sample_count
+
+def format_gnn_dicts(dual=None,
+                     features=None,
+                     # node_id=nx_idx_to_feat_idx,
+                     id_map=None,
+                     node_classes=None,
+                     train_or_test='',
+                     scheme_required=True,
+                     load_walks=False):
+    #(node_gid_to_graph_idx, node_gid_to_feat_idx, node_gid_to_label, G, features):
+    # nx_idx_to_feat_idx = {node_gid_to_graph_idx[gid]: feat for gid, feat
+    #                       in node_gid_to_feat_idx.items()}
+    # nx_idx_to_label_idx = {node_gid_to_graph_idx[gid]: label for gid, label
+    #                        in node_gid_to_label.items()}
+    # nx_idx_to_getoelm_idx = {self.node_gid_to_graph_idx[gid]: getoelm_idx for gid, getoelm_idx
+    #                          in self.gid_to_getoelm_idx.items()} if self.getoelms is not None else None
+
+    G, features, nx_idx_to_feat_idx, _, nx_idx_to_label_idx, _, _ \
+        = format_data(dual=dual,
+                      features=features,
+                      # node_id=nx_idx_to_feat_idx,
+                      id_map=id_map,
+                      node_classes=node_classes,
+                      train_or_test='',
+                      scheme_required=True,
+                      load_walks=False)
+    return G, features, nx_idx_to_feat_idx, nx_idx_to_label_idx
 
 def run_random_walks(G, nodes, num_walks=N_WALKS, walk_len = WALK_LEN):
     print("... Doing walks")
@@ -373,6 +401,41 @@ def pouts(**show):
     for item_name, item in show.items():
         print("    *", str(item))
     print("    *")
+
+def get_subgraph_attr(sublevel_samples_dict, subadj_idx, labels=False):
+    #for subadj_idx in sublevel_ids:
+    sb_name = 'sub_batch' + str(subadj_idx)
+    sb_sz_name = sb_name + '_size'
+    sb_lb_name = sb_name + '_labels'
+    subsamples_i = sublevel_samples_dict[sb_name]
+    # self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
+    if not labels:
+        return subsamples_i
+    else:
+        subsamples_labels_i = sublevel_samples_dict[sb_lb_name]
+        return subsamples_i, subsamples_labels_i
+
+def append_subgraph_attr(sublevel_samples_dict, x, subadj_idx):#, labels=False):
+    #for subadj_idx in sublevel_ids:
+    sb_name = 'sub_batch' + str(subadj_idx)
+    sb_sz_name = sb_name + '_size'
+    sb_lb_name = sb_name + '_labels'
+    subsamples_i = sublevel_samples_dict[sb_name]
+    # self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
+    subsamples_i.append(x)
+    sublevel_samples_dict[sb_name] = subsamples_i
+    return sublevel_samples_dict
+
+def map_fn_subgraph_attr(sublevel_samples_dict, fn, subadj_idx):#, labels=False):
+    #for subadj_idx in sublevel_ids:
+    sb_name = 'sub_batch' + str(subadj_idx)
+    sb_sz_name = sb_name + '_size'
+    sb_lb_name = sb_name + '_labels'
+    subsamples_i = sublevel_samples_dict[sb_name]
+    # self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
+    subsamples_i_out = fn(subsamples_i)
+    sublevel_samples_dict[sb_name] = subsamples_i_out
+    return sublevel_samples_dict
 
 def gather_neighbors(adj, indices, num_samples):
     adj_lists_T = tf.transpose(adj)

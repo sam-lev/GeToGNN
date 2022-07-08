@@ -267,7 +267,7 @@ def compute_features(model=None):
     # features
     if model.params['collect_features'] and not model.params['load_features']:
         model.compile_features(include_geto=model.params['geto_as_feat'])
-        model.write_gnode_features(model.session_name)
+        model.write_gnode_features()#model.session_name)
         model.write_feature_names()
     elif model.params['load_features']:
         model.load_gnode_features()
@@ -357,18 +357,62 @@ def compute_features(model=None):
             feat_idx += 1
         model.features = np.array(features)
 
-def get_subgraph_samples(subadj_idx, sublevel_samples_dict, labels=False):
-    #for subadj_idx in sublevel_ids:
-    sb_name = 'sub_batch' + str(subadj_idx)
-    sb_sz_name = sb_name + '_size'
-    sb_lb_name = sb_name + '_labels'
-    subsamples_i = sublevel_samples_dict[sb_name]
-    # self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
-    if not labels:
-        return subsamples_i
-    else:
-        subsamples_labels_i = sublevel_samples_dict[sb_lb_name]
-        return subsamples_i, subsamples_labels_i
+
+def compute_subgraph_features(gid_gnode_dict, subgraph_name, node_gid_to_graph_idx, collect_features=False, model=None):
+
+    # features
+    if collect_features:# and not model.params['load_features']:
+
+        features, node_gid_to_feature, node_gid_to_feat_idx = model.compile_subgraph_features(
+            gid_gnode_dict=gid_gnode_dict,
+            include_geto=False)  # model.params['geto_as_feat'])
+        model.write_gnode_features(filename=subgraph_name, gid_gnode_dict=gid_gnode_dict,
+                                   node_gid_to_graph_idx=node_gid_to_graph_idx,
+                                   node_gid_to_standard_feature=node_gid_to_feature),
+
+        # model.write_feature_names()
+    else:#if model.params['load_features']:
+
+        features, node_gid_to_feature, node_gid_to_feat_idx, node_gid_to_graph_idx = model.load_gnode_features(
+            gid_gnode_dict=gid_gnode_dict,
+            filename=subgraph_name)
+
+        # model.load_feature_names()
+
+    # geto feat
+    # if model.params['load_geto_attr']:
+    #     #if 'geto' in self.getognn.params['aggregator']:
+    #     model.load_geto_features()
+    #     model.load_geto_feature_names()
+    # elif model.params['geto_as_feat'] and not model.params['load_geto_attr']:
+    #     #if 'geto' in self.getognn.params['aggregator']:
+    #     model.build_geto_adj_list(influence_type=model.params['geto_influence_type'])
+    #     model.write_geto_features(model.session_name)
+    #     model.write_geto_feature_names()
+    #     include_generic_feat = model.params['collect_features'] or model.params['load_features']
+    #     model.compile_features(include_geto=model.params['geto_as_feat'],
+    #                            include_generic_feat=include_generic_feat)
+
+    #
+    pout(["Feature collection done, now setting up feature handling"])
+    #
+    #if (model.params['collect_features'] or model.params['load_features']) and not (model.params['geto_as_feat'] or model.params['load_geto_attr']):
+    pout(["STD features only"])
+    features = []
+    feat_idx = 0
+    for gid, gnode in gid_gnode_dict.items():
+        feats = node_gid_to_feature[gid]
+        #geomfeats = model.node_gid_to_geom_feature[gid]
+        #combined_feats = feats + geomfeats
+        # node_gid_to_feature[gid] = None# np.array(feats)
+        gnode.features = None#np.array(feats)
+        features.append(feats)
+        node_gid_to_feat_idx[gid] = feat_idx
+        feat_idx += 1
+    subgraph_features = np.array(features)
+        # model.getoelms = None
+
+    return subgraph_features, node_gid_to_feature, node_gid_to_feat_idx, node_gid_to_graph_idx
 
 def pout(show=None):
     if isinstance(show, list):

@@ -58,11 +58,11 @@ dim_image = [[700,605],                      # 0
 batch         =         0
 plot_only     =         0
 overide_plots =         0
-region_thresh =         5
-break_training_thresh = 25 #60 45,57
+region_thresh =         5#40
+break_training_thresh = 40#60 45,57
 #feat control
-load_features              = 1
-compute_features           = 0
+load_features              = 0
+compute_features           = 1
 load_geto_features         = 0
 compute_geto_features      = 0              # !!!!
 feats_independent          = 1# geom / std separate # mlp unet and random need to node_gid_to_standard_feature
@@ -87,14 +87,14 @@ models      = [ #    'unet',
                 #    'mlp',
                 #    'mlp'
                 ]
-datasets    = [ 0 ]
+datasets    = [ 2 ]
 
 plot_experiments = [  "UNet",
                       "Random_Forest_Pixel",
                       "Random_Forest_MSC",
                       #'Random_Forest_MSC_Geom',
                       'GNN',
-                      'GNN_Geom',
+                      #'GNN_Geom',
                       'GNN_SUB',
                       'MLP_MSC',
                       'MLP_Pixel'

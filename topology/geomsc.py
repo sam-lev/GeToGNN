@@ -196,7 +196,7 @@ def call_geomscsegmentation( image_filename=None
             except Exception as e:
                 print(e)
 
-    return geomsc
+    return geomsc, fname_raw
 
 
 
@@ -327,7 +327,7 @@ def compute_geomsc( persistence_values, blur_sigmas,X=None,Y=None
                 if X is None or Y is None:
                     X = int(im_path.split('_')[-2])
                     Y = int(im_path.split('_')[-1].split('.')[0])
-                geomsc = call_geomscsegmentation(image_filename =  image_name_and_path
+                geomsc, fname_raw = call_geomscsegmentation(image_filename =  image_name_and_path
                                            ,image=image
                                            ,X=X, Y=Y
                                            ,geomsc_exec_path=None#os.path.join(LocalSetup.project_base_path,'..')
@@ -381,7 +381,7 @@ def compute_geomsc( persistence_values, blur_sigmas,X=None,Y=None
     #                                     ,segmentations_))
     #     return data_buffer_with_msc
     # else:
-    return msc_segmentations[0]
+    return msc_segmentations[0], fname_raw
 
 
 class MSCNode:

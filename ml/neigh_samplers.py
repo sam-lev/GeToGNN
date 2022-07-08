@@ -29,7 +29,7 @@ class UniformNeighborSampler(Layer):
         self.max_degree = max_degree
 
     def _call(self, inputs):
-        ids, num_samples, _, _, _, _, _, bs_w_sup, k, sublevel_ids, sub_sample_ids_dict, shuffled_idx = inputs
+        ids, num_samples, bs_w_sup, k, sublevel_ids, sub_sample_ids_dict, shuffled_idx = inputs
 
         # def combine_ids():
         #     adj_lists_cat = tf.concat([ids, sub_sample_ids_dict], axis=0)
@@ -66,7 +66,6 @@ class UniformNeighborSampler(Layer):
 
 
         # sample sub input neighbors
-        subadj_idx = sublevel_ids[0]
         for subadj_idx in sublevel_ids:
             sb_name = 'sub_batch'+str(subadj_idx)
             sb_sz_name = sb_name+'_size'
@@ -86,6 +85,13 @@ class UniformNeighborSampler(Layer):
             subadj_lists = tf.slice(subadj_lists, [0, 0], [-1, num_samples], name=self.name)
             subadj_lists = tf.reshape(subadj_lists, [bs_w_sup, ])
             sub_sample_ids_dict[sb_name].append(subadj_lists)
+
+            pollenators_to_zero = tf.cast(tf.subtract(adj_lists, subadj_lists), tf.bool)
+            non_pollenators = tf.zeros(tf.shape(subadj_lists), dtype=tf.int32)
+            pollen = tf.ones(tf.shape(subadj_lists), dtype=tf.int32)
+            pollenators = tf.where(pollenators_to_zero, non_pollenators, pollen)#subadj_lists)
+
+            sub_sample_ids_dict[sb_name+'_pollen'].append(pollenators)
 
         # sub_adj_info = tf.nn.embedding_lookup(self.subadj_info, subadj_idx)
         # subadj_lists = tf.nn.embedding_lookup(sub_adj_info, sub_sample_ids_dict, name=self.name)

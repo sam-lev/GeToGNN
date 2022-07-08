@@ -6,7 +6,7 @@ import numpy as np
 
 from .layers import *
 from .metrics import *
-from ml.utils import pout,
+from ml.utils import pout, get_subgraph_attr, append_subgraph_attr
 
 from .prediction import BipartiteEdgePredLayer
 from .aggregators import MeanAggregator, MaxPoolingAggregator, \
@@ -24,7 +24,8 @@ FLAGS = flags.FLAGS
 class Model(object):
     def __init__(self, **kwargs):
         allowed_kwargs = {'name', 'logging', 'model_size', 'jumping_knowledge', 'concat',
-                          'jump_type', 'hiddin_dim_1','hiddin_dim_2','geto_loss'}
+                          'jump_type', 'hiddin_dim_1','hiddin_dim_2','geto_loss',
+                          'total_sublevel_sets','lr_decay_step', 'epsilon'}
         for kwarg in kwargs.keys():
             assert kwarg in allowed_kwargs, 'Invalid keyword argument: ' + kwarg
         name = kwargs.get('name')
@@ -45,13 +46,33 @@ class Model(object):
         self.outputs = None
 
         self.loss = 0
-        self.sub_loss = 0
+        # self.sub_loss = 0
+        self.total_sublevel_sets = kwargs.get('total_sublevel_sets')
+        self.sub_ids = np.arange(self.total_sublevel_sets)
+        self.subbatch_dict = {}
+        for sub in self.sub_ids:
+            sub_name = 'sub_batch'+str(sub)
+            self.subbatch_dict[sub_name+'_loss'] = 0
+
+        self.sup_on_sub_dict = {}
+        for sub in self.sub_ids:
+            sub_name = 'sub_batch' + str(sub)
+            self.sup_on_sub_dict[sub_name + '_loss'] = 0
+
         self.weight_loss = 0
         self.geto_loss = 0
         self.accuracy = 0
         self.optimizer = None
+        self.sub_optimizer = None
         self.opt_op = None
-        self.geto_opt_op = None
+        self.sub_opt_op = None
+        self.collected_sub_gradients = []
+        self.collected_sub_preds     = []
+        self.collected_sub_losses    = []
+        self.collected_sup_on_sub_losses = []
+        self.collected_sup_on_sub_gradients = []
+        self.collected_sub_gradients = []
+        self.global_step = tf.Variable(0, trainable=False)
 
     def _build(self):
         raise NotImplementedError
@@ -77,12 +98,31 @@ class Model(object):
         self._accuracy()
 
         self.opt_op = self.optimizer.minimize(self.loss)
-        self.geto_opt_op = self.optimizer.minimize(self.geto_loss)
 
-    def predict(self):
+        self.multi_sub_opt_op = []
+        for sub in self.sub_ids:
+            sub_name = 'sub_batch'+str(sub)
+            sub_loss = self.subbatch_dict[sub_name+'_loss']
+            sub_opt_op = self.sub_optimizer.minimize(sub_loss)
+            self.multi_sub_opt_op.append(sub_opt_op)
+
+        self.multi_sup_on_sub_opt = []
+        for sub in self.sub_ids:
+            sub_name = 'sub_batch' + str(sub)
+            sub_loss = self.sup_on_sub_dict[sub_name + '_loss']
+            sub_opt_op = self.optimizer.minimize(sub_loss)
+            self.multi_sup_on_sub_opt.append(sub_opt_op)
+
+        self.increment_global_step = tf.assign(self.global_step, self.global_step + 1)
+
+    def predict(self, preds = None):
         pass
 
-    def _loss(self):
+    def _loss(self, sup_on_sub_preds = None, sub_preds=None, sup_on_sub_loss = None,
+                   sub_loss = None, sub_labels = None, sub_name = None):
+        raise NotImplementedError
+
+    def _subloss(self, sub_loss, sub_node_preds, sub_labels, sub_name):
         raise NotImplementedError
 
     def _accuracy(self):
@@ -180,7 +220,7 @@ class MLP(Model):
                                  dropout=self.placeholders['dropout'],
                                  logging=self.logging))
 
-    def predict(self):
+    def predict(self, preds = None):
         return tf.nn.softmax(self.outputs)
 
 class GeneralizedModel(Model):
@@ -193,6 +233,35 @@ class GeneralizedModel(Model):
 
     def __init__(self, **kwargs):
         super(GeneralizedModel, self).__init__(**kwargs)
+        self.sub_ids = np.arange(int(kwargs['total_sublevel_sets']))
+        self.subbatch_dict = {}
+        self.collected_sub_losses = []
+        for sub_idx in self.sub_ids:
+            sb_name = 'sub_batch' + str(sub_idx)
+            sb_sz_name = sb_name + '_size'
+            sb_lb_name = sb_name + '_labels'
+            sb_loss_name = sb_name + '_loss'
+            self.subbatch_dict[sb_name] = None
+            self.subbatch_dict[sb_sz_name] = None
+            self.subbatch_dict[sb_lb_name] = None
+            self.subbatch_dict[sb_loss_name] = 0
+            self.collected_sub_losses.append(self.subbatch_dict[sb_loss_name])
+
+        self.sup_on_sub_dict = {}
+        self.collected_sup_on_sub_losses = []
+        for sub_idx in self.sub_ids:
+            sb_name = 'sub_batch' + str(sub_idx)
+
+            sb_sz_name = sb_name + '_size'
+            sb_lb_name = sb_name + '_labels'
+            sb_loss_name = sb_name + '_loss'
+            self.sup_on_sub_dict[sb_name] = None
+            self.sup_on_sub_dict[sb_sz_name] = None
+            self.sup_on_sub_dict[sb_lb_name] = None
+            self.sup_on_sub_dict[sb_loss_name] = 0
+            self.collected_sup_on_sub_losses.append( self.sup_on_sub_dict[sb_loss_name])
+
+        self.global_step = tf.Variable(0, trainable=False)
         
 
     def build(self):
@@ -206,10 +275,29 @@ class GeneralizedModel(Model):
 
         # Build metrics
         self._loss()
+        self._subloss()
         self._accuracy()
 
         self.opt_op = self.optimizer.minimize(self.loss)
-        self.geto_opt_op = self.optimizer.minimize(self.geto_loss)
+
+        self.multi_sub_opt_op = []
+        for sub in self.sub_ids:
+            sub_name = 'sub_batch' + str(sub)
+            sub_loss = self.subbatch_dict[sub_name + '_loss']
+            sub_opt_op = self.sub_optimizer.minimize(sub_loss)
+            self.multi_sub_opt_op.append(sub_opt_op)
+
+        self.multi_sup_on_sub_opt = []
+        for sub in self.sub_ids:
+            sub_name = 'sub_batch' + str(sub)
+            sub_loss = self.sup_on_sub_dict[sub_name + '_loss']
+            sub_opt_op = self.optimizer.minimize(sub_loss)
+            self.multi_sup_on_sub_opt.append(sub_opt_op)
+
+        self.increment_global_step = tf.assign(self.global_step, self.global_step + 1)
+
+
+
 
 # SAGEInfo is a namedtuple that specifies the parameters 
 # of the recursive GraphSAGE layers
@@ -230,10 +318,10 @@ class SampleAndAggregate(GeneralizedModel):
                  geto_elements=None, geto_weights = None,
                  concat=True, jumping_knowledge=False, jump_type=None,
                  multilevel_concat = False,
-                 aggregator_type="mean",
+                 aggregator_type="mean", total_sublevel_sets=1,
             model_size="small", identity_dim=0, geto_loss=False,
                  hidden_dim_1_agg=None, hidden_dim_2_agg=None,
-                 hidden_dim_1=None, hidden_dim_2=None,
+                 lr_decay_step=None,
             **kwargs):
         '''
         Args:
@@ -281,7 +369,7 @@ class SampleAndAggregate(GeneralizedModel):
         self.inputs1 = placeholders["batch1"]
         self.inputs2 = placeholders["batch2"]
 
-        self.subcomplex_weights = placeholders['subcomplex_weight']
+        self.subcomplex_weight = placeholders['subcomplex_weight']
         self.sub_batch0 = placeholders['sub_batch0']
         # self.sub_batch1 = placeholders['sub_batch1']
         self.model_size = model_size
@@ -346,9 +434,58 @@ class SampleAndAggregate(GeneralizedModel):
 
         self.sampler_type = layer_infos[0].neigh_sampler.name
 
-        #lr = tf.get_variable('learning_rate', initializer=FLAGS.learning_rate, trainable=False)
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
 
+        self.global_step = tf.Variable(0, trainable=False)
+
+        epsilon = kwargs['epsilon']
+
+        pout((" Epsilon ", epsilon))
+
+        if lr_decay_step is not None:
+            lr_start = FLAGS.learning_rate
+            step_rate = lr_decay_step
+            learning_rate = tf.compat.v1.train.exponential_decay(lr_start,
+                                                                 self.global_step,
+                                                                 step_rate, 0.95, staircase=True)
+            self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
+                                                    epsilon=epsilon)
+            self.sub_optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
+                                                    epsilon=epsilon)
+        else:
+            self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate,
+                                                    epsilon=epsilon)
+            self.sub_optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate,
+                                                    epsilon=epsilon)
+        ###############################################
+
+        self.sub_ids = np.arange(int(kwargs['total_sublevel_sets']))
+        self.subbatch_dict = {}
+        self.collected_sub_losses = []
+        for sub_idx in self.sub_ids:
+            sb_name = 'sub_batch' + str(sub_idx)
+            sb_sz_name = sb_name + '_size'
+            sb_lb_name = sb_name + '_labels'
+            sb_loss_name = sb_name + '_loss'
+            self.subbatch_dict[sb_name] = placeholders[sb_name]
+            self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
+            self.subbatch_dict[sb_lb_name] = placeholders[sb_lb_name]
+            self.subbatch_dict[sb_loss_name] = 0
+            self.collected_sub_losses.append(self.subbatch_dict[sb_loss_name])
+
+        self.sup_on_sub_dict = {}
+        self.collected_sup_on_sub_losses = []
+        for sub_idx in self.sub_ids:
+            sb_name = 'sub_batch' + str(sub_idx)
+
+            sb_sz_name = sb_name + '_size'
+            sb_lb_name = sb_name + '_labels'
+            sb_loss_name = sb_name + '_loss'
+            self.sup_on_sub_dict[sb_name] = placeholders[sb_name]
+            self.sup_on_sub_dict[sb_sz_name] = placeholders[sb_sz_name]
+            self.sup_on_sub_dict[sb_lb_name] = placeholders[sb_lb_name]
+            self.sup_on_sub_dict[sb_loss_name] = 0
+            self.collected_sup_on_sub_losses.append(self.sup_on_sub_dict[sb_loss_name])
+        ################################################
         self.build()
 
 
@@ -384,11 +521,15 @@ class SampleAndAggregate(GeneralizedModel):
             sb_name = 'sub_batch'+str(sub_idx)
             sb_sz_name = sb_name+'_size'
             sb_lb_name = sb_name+'_labels'
-            sub_sample_dict[sb_name] = [sub_inputs[sb_name]]
-            # self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
-            # self.subbatch_dict[sb_lb_name] = placeholders[sb_lb_name]
+            sub_inputs[sb_name] = [sub_inputs[sb_name]]
 
+            # pout(("len ",sb_name," ",len(sub_inputs[sb_name])))
 
+            pollenators_to_zero = tf.cast(tf.subtract(sub_inputs[sb_name], inputs), tf.bool)
+            non_pollenators = tf.zeros(tf.shape(sub_inputs[sb_name]), dtype=tf.int32)
+            pollen = tf.ones(tf.shape(sub_inputs[sb_name]), dtype=tf.int32)
+            pollenators = tf.where(pollenators_to_zero, non_pollenators, pollen)# sub_inputs[sb_name])
+            sub_inputs[sb_name + '_pollen'] = [pollenators]
 
         # sub_samples = sub_sample_dict['sub_batch0']
 
@@ -407,6 +548,9 @@ class SampleAndAggregate(GeneralizedModel):
         def sub_only():
             return sub_inputs
 
+        # zero_neighs = [tf.zeros(tf.shape(inputs))]
+        # one_neighs = [tf.ones(tf.shape(inputs))]
+
         geto_samples = None if self.geto_adj_info is None else [geto_inputs]
         # size of convolution support at each layer per node
         sub_support_size = 1
@@ -416,19 +560,19 @@ class SampleAndAggregate(GeneralizedModel):
         for k in range(len(layer_infos)):
             t = len(layer_infos) - k - 1
             sub_support_size *= layer_infos[t].num_samples
-            sup_support_size = sup_support_size * layer_infos[t].num_samples
+            sup_support_size *= layer_infos[t].num_samples
 
             sampler = layer_infos[t].neigh_sampler
 
             full_bs_w_support = sup_support_size * sup_batch_size
 
             sample_input = (samples[k], layer_infos[t].num_samples,
-                            None, None , None, None, None, full_bs_w_support, k,
-                            sub_ids, sub_sample_dict, shuffled_idx)#, sup_samples[k])
+                            full_bs_w_support, k,
+                            sub_ids, sub_inputs, shuffled_idx)#, sup_samples[k])
 
             # if self.geto_adj_info is None:
 
-            node, _, suBnodes, shuffled_idx = sampler(sample_input)
+            node, _, sub_inputs, shuffled_idx = sampler(sample_input)
 
 
             # suBnodes = tf.reshape(suBnodes, [full_bs_w_support, ])
@@ -437,8 +581,13 @@ class SampleAndAggregate(GeneralizedModel):
             samples.append(node)
             # sub_samples.append(suBnodes)
 
+
+
             sup_support_sizes.append(sup_support_size)
             support_sizes.append(sub_support_size)
+
+            # one_neighs.append(tf.ones(tf.shape(node)))
+            # zero_neighs.append(tf.zeros(tf.shape(node)))
             # else:
             #     # would need to adjust geto return if using geto #!
             #     node, node_geto, suBnodes, shuffled_idx  = sampler(sample_input)
@@ -446,15 +595,16 @@ class SampleAndAggregate(GeneralizedModel):
             #     samples.append(tf.reshape(node, [sub_support_size * sup_batch_size, ]))
             #     sub_samples.append(tf.reshape(suBnodes, [sub_support_size * sub_batch0_size, ]))
             #     support_sizes.append(sub_support_size)
-        return samples, support_sizes, geto_samples, sub_sample_dict, sup_support_sizes, geto_samples
+        return samples, support_sizes, geto_samples, sub_inputs, sup_support_sizes, geto_samples#,zero_neighs, one_neighs
 
-    def aggregate(self, samples, input_features, dims, num_samples, support_sizes,
+    def aggregate(self, samples, input_features, dims, num_samples, support_sizes,sub_ids,
                   batch_size=None, aggregators=None, name=None, concat=False, model_size="small",
                   jumping_knowledge=False, jump_type=None, hidden_dim_1=None, hidden_dim_2=None,
                   hidden_geto=False, geto_dims=None, geto_elms=None, getosamples=None, geto_loss=False,
                   sub_samples_dict=None, geto_subsamples=None,
                   sub_batch0_size=None, geto_sub_batch0_size=None,
-                  sub_support_size=None, sub_ids = [0]
+                  sub_support_size=None,
+                  subgraph_dict=None,
                   ):
         """ At each layer, aggregate hidden representations of neighbors to compute the hidden representations 
             at next layer.
@@ -487,19 +637,24 @@ class SampleAndAggregate(GeneralizedModel):
         hidden = [tf.nn.embedding_lookup(input_features, node_samples) for node_samples in samples]
         hidden_geto_elm = None if geto_elms is None else [tf.nn.embedding_lookup(geto_elms, node_samples) for node_samples in getosamples]
 
-
         embedd_weight = self.placeholders['subcomplex_weight']
-        hidden_sub = [tf.nn.embedding_lookup(input_features, node_samples) for node_samples in sub_samples_dict]
+        hidden_sub = [tf.nn.embedding_lookup(input_features, node_samples) for node_samples in sub_samples_dict['sub_batch0']]
 
         hidden_sub_dict = {}
+        hidden_pollenators_dict = {}
         for sub_idx in sub_ids:
-            sb_name = 'sub_batch'+str(sub_idx)
-            sb_sz_name = sb_name+'_size'
-            sb_lb_name = sb_name+'_labels'
-            hidden_sub_dict[sb_name] = [tf.nn.embedding_lookup(input_features, node_samples) for node_samples in sub_samples_dict[sb_name]]
+            sb_name = 'sub_batch' + str(sub_idx)
+            sb_sz_name = sb_name + '_size'
+            sb_lb_name = sb_name + '_labels'
+            sub_input_features = input_features
+            if subgraph_dict is not None:
+                subgraph_i = subgraph_dict['subgraph_'+str(sub_idx)]
+                sub_input_features = subgraph_i.features
+            hidden_sub_dict[sb_name] = [tf.nn.embedding_lookup(sub_input_features, node_samples) for node_samples in
+                                        sub_samples_dict[sb_name]]
+
             # self.subbatch_dict[sb_sz_name] = placeholders[sb_sz_name]
             # self.subbatch_dict[sb_lb_name] = placeholders[sb_lb_name]
-
 
         new_agg = aggregators is None
 
@@ -507,47 +662,58 @@ class SampleAndAggregate(GeneralizedModel):
 
         if new_agg:
             aggregators = []
+            activations = []
+            multilevel_aggregators = []
         for layer in range(len(num_samples)):
             if new_agg:
+
+                #
+                # manage growing dim with concat/multilevelconcat
+                #
                 dim_mult = 2 if concat and (layer != 0) else 1
-                # dim_mult = 2 if concat and (layer != 0) else 1
                 dim_mult_geto = 2 if concat and (layer != 0) and self.hidden_geto_agg else 1
                 geto_dims_in = layer if self.hidden_geto_agg else 0
 
-                if self.multilevel_concat:
+                #  multilevel growth
+                #
+                if self.multilevel_concat:# and self.subcomplex_weight != -1:
                     dim_mult = dim_mult * 2 if (layer != 0) else dim_mult
                     dim_mult_geto = dim_mult_geto * 2 if (layer != 0) and self.hidden_geto_agg else dim_mult_geto
 
                 input_dim = dim_mult * dims[layer]
 
-                if self.concat and self.multilevel_concat:
-                    input_dim_sub = input_dim//2 if (layer != 0) else input_dim
+                #
+                # Dim growth sub
+                #
+                if False:#self.concat and self.multilevel_concat:# and self.subcomplex_weight != -1:
+                    input_dim_sub = input_dim // 2 if (layer != 0) else input_dim
                 else:
                     input_dim_sub = input_dim
-
 
                 batch_diff = 1
                 # aggregator at current layer
                 if layer == len(num_samples) - 1:
+                    activation = lambda x: x
                     aggregator = self.aggregator_cls(input_dim=input_dim,
                                                      input_dim_sub=input_dim_sub,
                                                      output_dim=dims[layer + 1],
-                                                     sub_ids = sub_ids,
-                                                     act=lambda x : x,
+                                                     sub_ids=sub_ids,
+                                                     act=lambda x: x,
                                                      dropout=self.placeholders['dropout'],
-                                                     subcomplex_weight = embedd_weight,
+                                                     subcomplex_weight=embedd_weight,
                                                      jumping_knowledge=jumping_knowledge,
                                                      jump_type=jump_type,
-                                                     multilevel_concat = self.multilevel_concat,
-                                                     hidden_dim_1 = hidden_dim_1, hidden_dim_2 = hidden_dim_2,
-                                                     name=name+str(layer), concat=concat, model_size=model_size,
+                                                     multilevel_concat=self.multilevel_concat if self.multilevel_concat else None,
+                                                     hidden_dim_1=hidden_dim_1, hidden_dim_2=hidden_dim_2,
+                                                     name=name + str(layer), concat=concat, model_size=model_size,
                                                      geto_loss=geto_loss,
-                                                     geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],
-                                                     geto_dims_out = geto_dims[layer+1],
-                                                     bs = batch_size,
-                                                     sub_bs = sub_batch0_size,
-                                                     diff_bs = batch_diff)
+                                                     geto_dims_in=dim_mult_geto * geto_dims[geto_dims_in],
+                                                     geto_dims_out=geto_dims[layer + 1],
+                                                     bs=batch_size,
+                                                     sub_bs=sub_batch0_size,
+                                                     diff_bs=batch_diff)
                 else:
+                    activation = tf.nn.relu
                     aggregator = self.aggregator_cls(input_dim=input_dim,
                                                      input_dim_sub=input_dim_sub,
                                                      output_dim=dims[layer + 1],
@@ -556,18 +722,20 @@ class SampleAndAggregate(GeneralizedModel):
                                                      subcomplex_weight=embedd_weight,
                                                      jumping_knowledge=jumping_knowledge,
                                                      jump_type=jump_type,
-                                                     multilevel_concat = self.multilevel_concat,
-                                                     hidden_dim_1 = hidden_dim_1, hidden_dim_2 = hidden_dim_2,
-                                                     name=name+str(layer), concat=concat, model_size=model_size,
-                                                     geto_dims_in= dim_mult_geto * geto_dims[geto_dims_in],
-                                                     geto_dims_out = geto_dims[layer+1],
+                                                     multilevel_concat=self.multilevel_concat if self.multilevel_concat else None,
+                                                     hidden_dim_1=hidden_dim_1, hidden_dim_2=hidden_dim_2,
+                                                     name=name + str(layer), concat=concat, model_size=model_size,
+                                                     geto_dims_in=dim_mult_geto * geto_dims[geto_dims_in],
+                                                     geto_dims_out=geto_dims[layer + 1],
                                                      bs=batch_size,
                                                      sub_bs=sub_batch0_size,
-                                                     diff_bs = batch_diff
+                                                     diff_bs=batch_diff
                                                      )
                 aggregators.append(aggregator)
+                activations.append(activation)
             else:
                 aggregator = aggregators[layer]
+                activation = activations[layer]
             # hidden representation at current layer for all support nodes that are various hops away
             next_hidden = []
             next_hidden_sub = []
@@ -580,37 +748,48 @@ class SampleAndAggregate(GeneralizedModel):
                 next_hidden_sub_dict[sb_name] = []
                 # as layer increases, the number of support nodes needed decreases
             for hop in range(len(num_samples) - layer):
+
+                #
+                # manage growing dim with concat/multilevelconcat
+                #
                 dim_mult = 2 if concat and (layer != 0) else 1
                 dim_mult_geto = 2 if concat and (layer != 0) and self.hidden_geto_agg else 1
                 geto_dims_in = layer if self.hidden_geto_agg else 0
 
-                if self.multilevel_concat:
+                #  multilevel growth
+                #
+                if self.multilevel_concat:# and self.subcomplex_weight != -1:
                     dim_mult = dim_mult * 2 if (layer != 0) else dim_mult
                     dim_mult_geto = dim_mult_geto * 2 if (layer != 0) and self.hidden_geto_agg else dim_mult_geto
 
-                if self.concat and self.multilevel_concat:
-                    dim_sub_neigh = dim_mult//2 * dims[layer] if (layer != 0) else dim_mult * dims[layer]
+                pout(('multilevel concat', self.multilevel_concat))
+                #
+                #  dim sub in
+                #
+                if False:# self.concat and self.multilevel_concat:# and self.subcomplex_weight != -1:
+                    dim_sub_neigh = dim_mult // 2 * dims[layer] if (layer != 0) else dim_mult * dims[layer]
                 else:
                     dim_sub_neigh = dim_mult * dims[layer]
 
                 def super_neighs():
                     self.scale_graph += 1
                     # pout(['super pesent agg'])
-                    include_sub_size = sub_batch0_size #if self.scale_graph == 1 or (layer == 0) else 0
+                    include_sub_size = sub_batch0_size  # if self.scale_graph == 1 or (layer == 0) else 0
                     init_cat_embeds = 1 if self.scale_graph == 1 or (layer == 0) else 0
                     neigh_dims = [batch_size * support_sizes[hop],
                                   num_samples[len(num_samples) - hop - 1],
-                                  dim_mult * dims[layer]]
-                    hidden_next_hop = hidden[hop + 1] #if self.scale_graph == 1 or (layer == 0) else hidden[hop + 1]
-                    hidden_target   =  hidden[hop]
+                                  dim_mult * dims[layer]]# add factor two per sublevel if concat
+                    hidden_next_hop = hidden[hop + 1]
+                    hidden_target = hidden[hop]
                     neigh_hop_reshaped = tf.reshape(hidden_next_hop,
-                                                                   neigh_dims)
+                                                    neigh_dims)
                     neigh_feat_reshaped = (hidden_target, neigh_hop_reshaped)
-                    #self.super_present = True
+                    # self.super_present = True
                     return neigh_feat_reshaped
+
                 def super_absent():
                     # pout(['super absent agg'])
-                    include_sub_size = sub_batch0_size #if self.scale_graph == 1 or (layer == 0) else 0
+                    include_sub_size = sub_batch0_size  # if self.scale_graph == 1 or (layer == 0) else 0
                     dims_agg_target = tf.shape(hidden[hop])
                     neigh_feat_reshaped = (tf.ones(dims_agg_target),
                                            tf.ones((batch_size * support_sizes[hop],
@@ -618,85 +797,89 @@ class SampleAndAggregate(GeneralizedModel):
                                                     dim_mult * dims[layer])))  # (None, None)#
                     return neigh_feat_reshaped
 
-
-                #if sublevel_present:
-
+                # if sublevel_present:
+                sub_hop_neigh = {}
                 def sub_neighs():
                     # pout(['sub pesent agg'])
                     sub_neigh_dims = [batch_size * sub_support_size[hop],
                                       num_samples[len(num_samples) - hop - 1],
                                       dim_sub_neigh]
-                    sub_neigh_feat_reshaped = (hidden_sub[hop], tf.reshape(hidden_sub[hop + 1],
-                                                                           sub_neigh_dims))
-                    #self.sub_present = True
-                    return sub_neigh_feat_reshaped
-                def sub_absent():
-                    # pout(['sub absent agg'])
-                    sub_neigh_feat_reshaped = (tf.ones(tf.shape(hidden_sub[hop])),
-                                               tf.ones((batch_size * sub_support_size[hop],#sub_batch0_size * sub_support_size[hop],
-                                               num_samples[len(num_samples) - hop - 1],
-                                               dim_sub_neigh)))
-                    return sub_neigh_feat_reshaped
+                    sub_hop_neighs = []
+                    for sub_idx in sub_ids:
+                        sb_name = 'sub_batch' + str(sub_idx)
+                        sb_sz_name = sb_name + '_size'
+                        sb_lb_name = sb_name + '_labels'
+                        hidden_sub_i = hidden_sub_dict[sb_name]
+                        sub_hop_i = (hidden_sub_i[hop], tf.reshape(hidden_sub_i[hop + 1],
+                                                                               sub_neigh_dims))
+                        sub_hop_neigh[sb_name] = sub_hop_i
+                        sub_hop_neighs.append(sub_hop_i)
 
-
-
-
-                # neigh_geto_dims = [batch_size * support_sizes[hop] ,
-                #                    num_samples[len(num_samples) - hop - 1],
-                #                     dim_mult_geto * geto_dims[geto_dims_in]]
-
-
-
+                    # sub_neigh_feat_reshaped = (hidden_sub[hop], tf.reshape(hidden_sub[hop + 1],
+                    #                                                        sub_neigh_dims))
+                    # self.sub_present = True
+                    return sub_hop_neigh
 
                 neigh_feat_reshaped = super_neighs()
                 # tf.cond(tf.not_equal(batch_size, 0),  # tf.constant(0)),
                 #                                  super_neighs,
                 #                                  super_absent)
 
+                sub_hop_neigh = sub_neighs()
+                # sub_neigh_feat_reshaped = sub_neighs()
 
 
 
-                sub_neigh_feat_reshaped = sub_neighs()
-                # tf.cond(tf.not_equal(sub_batch0_size, 0),
-                #                                   sub_neighs,
-                #                                   sub_absent)
+                # if geto_elms is None or not self.hidden_geto_agg:
 
+                def agg_sublevels():
+                    sup_h = None
+                    h = None
+                    # add factor two per sublevel if concat
+                    for sub_name, next_hidden_sub_i in next_hidden_sub_dict.items():
+                        node_and_neighbors = (neigh_feat_reshaped[0], neigh_feat_reshaped[1],
+                                                sub_hop_neigh[sub_name][0], sub_hop_neigh[sub_name][1],
+                                              sub_samples_dict[sub_name+'_pollen'][hop+1] ,
+                                              self.placeholders['subcomplex_weight'], sup_h)
 
-                # agg_feat_reshaped = neigh_feat_reshaped
+                        h, sub_h, sup_h = aggregator(node_and_neighbors)
 
-                if geto_elms is None:
-                    #if sub_complex_present and super_level_present:
-                    node_and_neighbors = (# agg_feat_reshaped[0],agg_feat_reshaped[1],
-                                          neigh_feat_reshaped[0], neigh_feat_reshaped[1],
-                                          sub_neigh_feat_reshaped[0], sub_neigh_feat_reshaped[1])
-                else:
-                    if self.hidden_geto_agg:
-                        node_and_neighbors = 1
-                    else:
-                        node_and_neighbors = (# agg_feat_reshaped[0],agg_feat_reshaped[1],
-                                              neigh_feat_reshaped[0], neigh_feat_reshaped[1],
-                                              sub_neigh_feat_reshaped[0], sub_neigh_feat_reshaped[1])
-                #) #tf.reshape(hidden_geto_elm[hop + 1], neigh_geto_dims)
-                if geto_elms is None or not self.hidden_geto_agg:
-                    h, sub_h = aggregator(node_and_neighbors)
-                    next_hidden.append(h)
-                    next_hidden_sub.append(sub_h)
-                    # next_hidden_agg.append(agg_h)
-                else:
-                    h, geto_h = aggregator(node_and_neighbors)
-                    next_hidden.append(h)
-                    next_geto_hidden.append(geto_h)
-                    # next_hidden_agg.append(agg_h)
+                        # next_hidden.append(h)
+                        next_hidden_sub.append(sub_h)
+                        next_hidden_sub_i.append(sub_h)
+                        next_hidden_sub_dict[sub_name] = next_hidden_sub_i
+                    return h, next_hidden_sub_dict
+                # def agg_sup_only():
+                #     node_and_neighbors = (neigh_feat_reshaped[0], neigh_feat_reshaped[1],
+                #                           neigh_feat_reshaped[0], neigh_feat_reshaped[1],
+                #                           None, None) # last arg None only sup embed updated
+                #
+                #     h, sub_h, sup_h = aggregator(node_and_neighbors)
+                #     next_hidden_sub_dict['sub_batch0'].append(sub_h)
+                #     return h, next_hidden_sub_dict
+
+                h, next_hidden_sub_dict =  agg_sublevels()
+                # tf.cond(tf.not_equal(self.placeholders['subcomplex_weight'], -1),
+                #                                    agg_sublevels,
+                #                                    agg_sup_only)
+
+                next_hidden.append(h)
+                # else:
+                #     h, geto_h = aggregator(node_and_neighbors)
+                #     next_hidden.append(h)
+                #     next_geto_hidden.append(geto_h)
+                #     # next_hidden_agg.append(agg_h)
             hidden = next_hidden
             hidden_sub = next_hidden_sub
+            hidden_sub_dict.update(next_hidden_sub_dict)
             # hidden_agg = next_hidden_agg
             hidden_geto_elm = next_geto_hidden if geto_elms is not None and self.hidden_geto_agg else hidden_geto_elm
 
         if self.jumping_knowledge and not new_agg:
-            rev_hidden = hidden#_agg#next_hidden
+            rev_hidden = hidden  # _agg#next_hidden
             rev_hidden.reverse()
-            #print(">>> rev hidden ", rev_hidden)
-            h_jump = rev_hidden[0]
+            # # aggregate output of each layer with pooling
+            # h_jump = rev_hidden[0]
             # for idx, l_vec in enumerate(rev_hidden[1:]):
             #     # if even jump every other so as to get to layer 1 and 2 hops
             #     # if odd do every third so as to get farthest and last two
@@ -709,28 +892,35 @@ class SampleAndAggregate(GeneralizedModel):
             #             h_next = tf.reduce_mean(hidden[idx + 1], axis=1)
             #         else:
             #             h_next = hidden[idx + 1]
-            #         from_h_next = h_next#tf.matmul(h_next, self.vars['neigh_weights'])
-            #         from_h = h_jump#tf.matmul(h_jump, self.vars["self_weights"])
+            #         from_h_next = tf.matmul(h_next, self.vars['neigh_weights'])
+            #         from_h = tf.matmul(h_jump, self.vars["self_weights"])
             #
             #         if 'cat' in self.jump_type:
             #             h_jump = tf.concat([from_h, from_h_next], axis=1)
             #         else:
             #             h_jump = tf.add_n([from_h, from_h_next])
+
+            # # aggregate only last and first(target) embeddings
             from_h_target = hidden[0]
-            from_h_last   = hidden[-1]
+            from_h_last = hidden[-1]
 
             if 'cat' in self.jump_type:
                 h_jump = tf.concat([from_h_target, from_h_last], axis=1)
             else:
                 h_jump = tf.add_n([from_h_target, from_h_last])
 
-
-            hidden[0] = h_jump
+            hidden = [h_jump]
 
         def _return_hidden_super():
             return hidden[0]
+
         def _return_hidden_sub():
-            return hidden_sub[0]
+            for sub_name,hidden_sub_i in hidden_sub_dict.items():
+                hidden_sub_i = hidden_sub_i[0]
+                hidden_sub_dict[sub_name] = hidden_sub_i
+                # sub_samples_dict[sub_name] = hidden_sub_i
+            return hidden_sub_dict#['sub_batch0'][0]
+
         def _return_empty():
             return tf.zeros((0))
 
@@ -746,7 +936,8 @@ class SampleAndAggregate(GeneralizedModel):
 
         if geto_elms is not None:
             if self.sampler_type == 'geto_informed':
-                self.hidden_geto_dict = {geto_id:hidden_rep for geto_id, hidden_rep in zip(getosamples,hidden_geto_elm)}
+                self.hidden_geto_dict = {geto_id: hidden_rep for geto_id, hidden_rep in
+                                         zip(getosamples, hidden_geto_elm)}
             return hidden[0], aggregators, hidden_geto_elm[0]
         else:
             return ret_hidden_super, ret_hidden_sub, aggregators, hidden_geto_elm
@@ -874,9 +1065,53 @@ class SampleAndAggregate(GeneralizedModel):
 
         # TF graph management
         self._loss()
+        #self._subloss()
         self._accuracy()
         self.loss = self.loss / tf.cast(self.batch_size, tf.float32)
-        self.sub_loss = self.sub_loss / tf.cast(self.batch_size, tf.float32)
+        #self.sub_loss = self.sub_loss / tf.cast(self.batch_size, tf.float32)
+
+
+        # for sb_idx, sb_name in enumerate(self.subbatch_dict.keys()):
+        #     sb_loss_name = sb_name + '_loss'
+        #     sb_loss = self.subbatch_dict[sb_loss_name]
+        #     self.subbatch_dict[sb_loss_name] = sb_loss / tf.cast(self.batch_size, tf.float32)
+        #
+        #     self.collected_sub_losses[sb_idx] = self.subbatch_dict[sb_loss_name]
+
+        self.multi_sub_opt_op = []
+        for sub_idx in self.sub_ids:
+            sb_name = 'sub_batch' + str(sub_idx)
+            sb_sz_name = sb_name + '_size'
+            sb_lb_name = sb_name + '_labels'
+            sb_loss_name = sb_name + '_loss'
+            sb_loss = self.subbatch_dict[sb_loss_name]
+            self.subbatch_dict[sb_loss_name] = sb_loss / tf.cast(self.batch_size, tf.float32)
+            self.collected_sub_losses[sub_idx] = self.subbatch_dict[sb_loss_name]
+
+            sub_grads_and_vars = self.sub_optimizer.compute_gradients( self.subbatch_dict[sb_loss_name])
+            sub_clipped_grads_and_vars = [(tf.clip_by_value(grad, -5.0, 5.0) if grad is not None else None, var)
+                                                                    for grad, var in sub_grads_and_vars]
+            sub_grad, _ = sub_clipped_grads_and_vars[0]
+            sub_opt = self.sub_optimizer.apply_gradients(sub_clipped_grads_and_vars)
+            self.multi_sub_opt_op.append(sub_opt)
+
+        self.multi_sup_on_sub_opt = []
+        for sub_idx in self.sub_ids:
+            sb_name = 'sub_batch' + str(sub_idx)
+            sb_sz_name = sb_name + '_size'
+            sb_lb_name = sb_name + '_labels'
+            sb_loss_name = sb_name + '_loss'
+            sb_loss = self.sup_on_sub_dict[sb_loss_name]
+            self.sup_on_sub_dict[sb_loss_name] = sb_loss / tf.cast(self.batch_size, tf.float32)
+            self.collected_sup_on_sub_losses[sub_idx] = self.sup_on_sub_dict[sb_loss_name]
+
+            sup_on_sub_grads_and_vars = self.optimizer.compute_gradients( self.sup_on_sub_dict[sb_loss_name])
+            sup_on_sub_clipped_grads_and_vars = [(tf.clip_by_value(grad, -5.0, 5.0) if grad is not None else None, var)
+                                                                    for grad, var in sup_on_sub_grads_and_vars]
+            sp_sb_grad, _ = sup_on_sub_clipped_grads_and_vars[0]
+            sp_sb_opt = self.optimizer.apply_gradients(sup_on_sub_clipped_grads_and_vars)
+            self.multi_sup_on_sub_opt.append(sp_sb_opt)
+
         self.weight_loss = self.weight_loss / tf.cast(self.batch_size, tf.float32)
         #self.loss = tf.divide(self.loss, tf.cast(self.batch_size, tf.float32), name="loss" )
         grads_and_vars = self.optimizer.compute_gradients(self.loss)
@@ -885,14 +1120,28 @@ class SampleAndAggregate(GeneralizedModel):
         self.grad, _ = clipped_grads_and_vars[0]
         self.opt_op = self.optimizer.apply_gradients(clipped_grads_and_vars)
 
-        if False:#self.geto_elements is not None and self.hidden_geto_agg:
-            self.geto_loss = self.geto_loss / tf.cast(self.batch_size, tf.float32)
-            # self.loss = tf.divide(self.loss, tf.cast(self.batch_size, tf.float32), name="loss" )
-            geto_grads_and_vars = self.optimizer.compute_gradients(self.geto_loss)
-            clipped_geto_grads_and_vars = [(tf.clip_by_value(grad, -5.0, 5.0) if grad is not None else None, var)
-                                      for grad, var in geto_grads_and_vars]
-            self.geto_grad, _ = clipped_geto_grads_and_vars[0]
-            self.geto_opt_op = self.optimizer.apply_gradients(clipped_geto_grads_and_vars)
+        ################
+        # self.sub_outputs1 = None
+        # self.see_grad_count = 0
+        #
+        # # def gradient_decent_for_sub_embeddings():
+        # self.sub_node_preds, self.sub_labels = None, None
+        # sub_grads_and_vars = self.optimizer.compute_gradients(self.sub_loss)
+        # sub_clipped_grads_and_vars = [(tf.clip_by_value(grad, -5.0, 5.0) if grad is not None else None, var)
+        #                           for grad, var in sub_grads_and_vars]
+        # self.sub_grad, _ = clipped_grads_and_vars[0]
+        # self.multi_opt_op = [self.optimizer.apply_gradients(sub_clipped_grads_and_vars)]
+        #
+        #
+        #
+        # self.aggregate_losses = tf.reduce_sum(self.collected_sub_losses)
+        #
+        #
+        #
+        # self.heirarchical_grads_vars = clipped_grads_and_vars
+        #
+        # self.increment_global_step = tf.assign(self.global_step, 0)
+        ###########
 
     def _loss(self):
         for aggregator in self.aggregators:

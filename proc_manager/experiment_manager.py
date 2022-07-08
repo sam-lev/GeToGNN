@@ -5,11 +5,13 @@ import matplotlib.pyplot as plt
 
 
 from getograph import Attributes
+import getograph
+from getofeaturegraph import GeToFeatureGraph
 import getograph as ggraph
+from data_ops.utils import compute_subgraph_features
 from ml.Random_Forests import RandomForest
 from ml.MLP import mlp
 from ml.UNet import UNetwork
-from ml.utils import get_train_test_val_partitions
 from ml.utils import get_partition_feature_label_pairs
 from ml.utils import get_merged_features, pout
 
@@ -83,19 +85,20 @@ class runner:
                       'foam0235_828_846.raw',
                       'maxdiadem_o_1170_1438.raw',
                       'berghia_o_891_896.raw'][self.sample_idx]  # neuron1
-        self.label_file = ['im0236_la2_700_605.raw.labels_4.txt', # og lab is 2
+        self.label_file = ['im0236_la2_700_605.raw.labels_0.txt', # og lab is _2
                       'MAX_neuron_640_640.raw.labels_3.txt',
-                      'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_4.txt',
+                      'MAX__0030_Image0001_01_s2_C001Z031_1737_1785.raw.labels_3.txt',
                       'sub_CMC_example_l1_969_843.raw.labels_0.txt',
                       'berghia_prwpr_e4_891_896.raw.labels_3.txt',
                       'att_L3_0_460_446_484.raw.labels_0.txt',
                       'diadem16_transforms_s1_1000_1000.raw.labels_14.txt',
                            'border1_636x2372.raw.labels_0.txt',
-                           'foam0235_fa_828_846.raw.labels_8.txt',
+                           'foam0235_fa_828_846.raw.labels_0.txt',
                            'maxdiadem_m1g1_1170_1438.raw.labels_4.txt',
                            'berghia_s5ipr_891_896.raw.labels_4.txt'][self.sample_idx]  # neuron1
 
-        self.labels_subcomplex = ['im0236_la2_700_605.raw.labels_1.txt'][self.sample_idx]
+
+        self.labels_subcomplex = self.label_file#'im0236_la2_700_605.raw.labels_0.txt'#][self.sample_idx]
 
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
                                 'input', self.label_file.split('raw')[0] + 'raw')
@@ -426,17 +429,19 @@ class runner:
                                                           name="GeToGNN" + '_' + sup_getognn.getognn.params['name'])
 
             # random walks
-            if not sup_getognn.getognn.params['load_preprocessed_walks']:
-                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
-                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
-                                                   'gnn')
-                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
-                sup_getognn.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
-            else:
-                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
-                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
-                                                   'gnn')
-                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+            # if not sup_getognn.getognn.params['load_preprocessed_walks']:
+            #     walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+            #                                        sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+            #                                        'gnn')
+            #     sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+            #     sup_getognn.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
+            # else:
+            #     walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+            #                                        sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+            #                                        'gnn')
+            #     sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+
+            sup_getognn.getognn.params['load_walks'] = False
 
 
             sup_getognn.compute_features()
@@ -1504,10 +1509,20 @@ class runner:
         FEATS_INDEPENDENT           = self.feats_independent
         run_feat_importance = 1
 
-        persistence_subcomplex_max = 1.5
+        if COMPUTE_FEATURES:
+            write_feat_comp_time = True
+        else:
+            write_feat_comp_time = False
+
+        persistence_subcomplex_max = 45#w/ lr 1e-3, sub/100 wd 1e-6 comb loss sep weights sep/shared mlp good results for low
         persistence_subcomplex_med = 0
+        persistence_subcomplex_maxypad = 0
+
+        union_thresh = 0
 
         for gr in range(len(growth_regions)):
+
+
 
 
 
@@ -1558,6 +1573,10 @@ class runner:
                                        Y_BOX=Y_BOX,
                                        regions=regions)
 
+            # persistence_subcomplex_med = sup_getognn.getognn.thirty_percent_image_intensity_range
+
+            pout(("ten percent image intensity", persistence_subcomplex_maxypad))
+
             if BEGIN_LOADING_FEATURES:
                 sup_getognn.getognn.params['load_features'] = True
                 sup_getognn.getognn.params['write_features'] = False
@@ -1581,16 +1600,47 @@ class runner:
                 sup_getognn.getognn.params['geto_as_feat'] = True
                 sup_getognn.getognn.params['load_geto_attr'] = False
 
+            subgraph_dict = {}
+            sup_gid_to_sub_dict = {}
+            # featureGraph = GeToFeatureGraph()
             if compute_complex:
                 pout(["COMPUTING SUBCOMPLEX"])
-                pout(['sublevel graph epoch growth ', sup_getognn.getognn.params['sublevel_init_epochs']])
+                #pout(['sublevel graph epoch growth ', sup_getognn.getognn.params['sublevel_init_epochs']])
 
-                sublevel_priors_graph_max = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
+                sublevel_priors_graph_max, msc_fname = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
                                                                                persistence=[persistence_subcomplex_max],
                                                                                sigma=[2],
                                                                                X=sup_getognn.getognn.X,
                                                                                Y=sup_getognn.getognn.Y
                                                                                )
+                # sublevel_priors_graph_max = getograph.GeToGraph(geomsc_fname_base=msc_fname)
+
+                # compute nx graph and idx info
+                sublevel_priors_graph_max.G, sublevel_priors_graph_max.graph_idx_to_gid, sublevel_priors_graph_max.node_gid_to_graph_idx = sup_getognn.getognn.build_subgraph(
+                    gid_gnode_dict = sublevel_priors_graph_max.gid_gnode_dict,
+                    gid_edge_dict = sublevel_priors_graph_max.gid_edge_dict)
+
+
+
+                sublevel_priors_graph_max.params['collect_features'] = COMPUTE_FEATURES
+                sublevel_priors_graph_max.params['load_features'] = BEGIN_LOADING_FEATURES
+
+                if sup_getognn.getognn.params['load_features']:
+                    sup_getognn.getognn.load_feature_images()
+                    sup_getognn.getognn.load_feature_image_names()
+
+
+
+                sublevel_priors_graph_max.features, sublevel_priors_graph_max.node_gid_to_feature, sublevel_priors_graph_max.node_gid_to_feat_idx, sublevel_priors_graph_max.node_gid_to_graph_idx = compute_subgraph_features(
+                    gid_gnode_dict=sublevel_priors_graph_max.gid_gnode_dict,
+                    node_gid_to_graph_idx=sublevel_priors_graph_max.node_gid_to_graph_idx,
+                    subgraph_name='0',
+                    collect_features=sublevel_priors_graph_max.params['collect_features'],
+                    model=sup_getognn.getognn)
+
+                # if node_gid_to_graph_idx is not None:
+                #     sublevel_priors_graph_max.node_gid_to_graph_idx = node_gid_to_graph_idx
+                subgraph_dict['subgraph_0'] = sublevel_priors_graph_max
                 if persistence_subcomplex_med:
                     sublevel_priors_graph_med = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
                                                                                             persistence=[
@@ -1599,38 +1649,66 @@ class runner:
                                                                                             X=sup_getognn.getognn.X,
                                                                                             Y=sup_getognn.getognn.Y
                                                                                             )
-            else:
-                pout(["LOADING PRECOMPUTED/LABELED SUBCOMPLEX"])
-                f_path = self.image_path
-                seg_folder = os.path.dirname(os.path.abspath(f_path))
-                if not os.path.exists(os.path.join(seg_folder, 'geomsc')):
-                    os.makedirs(os.path.join(seg_folder, 'geomsc'))
-                write_path = os.path.join(seg_folder, 'geomsc')
-                if '/' in self.image_path:
-                    image_no_path_name = self.image_path.split(os.path.dirname(self.image_path))[-1].split('/')[-1]
-                else:
-                    image_no_path_name = self.image_path
-                fname_raw = os.path.join(write_path, image_no_path_name)
-                label_subcomplex = os.path.join(write_path, self.labels_subcomplex)
-                pout(["labels files", label_subcomplex])
-                #fname_raw += 'PERS'+str(persistence_subcomplex)+'_smoothed.raw'
-                sublevel_priors_graph_max = ggraph.GeToGraph(geomsc_fname_base=fname_raw,
-                                                   label_file=label_subcomplex)
-            # if using old msc (.nodes.txt file and .arcs.txt)
-            # gid_gnode_dict, gid_edge_dict = sup_getognn.getognn.map_to_priors_graph(msc=sublevel_msc)
+                    subgraph_dict['subgraph_1'] = sublevel_priors_graph_med
+                if persistence_subcomplex_maxypad:
+                    sublevel_priors_graph_maxypad = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
+                                                                                            persistence=[
+                                                                                                persistence_subcomplex_maxypad],
+                                                                                            sigma=[2],
+                                                                                            X=sup_getognn.getognn.X,
+                                                                                            Y=sup_getognn.getognn.Y
+                                                                                            )
+                    subgraph_dict['subgraph_2'] = sublevel_priors_graph_maxypad
+            # elif persistence_subcomplex_max:
+            #     pout(["LOADING PRECOMPUTED/LABELED SUBCOMPLEX"])
+            #     f_path = self.image_path
+            #     seg_folder = os.path.dirname(os.path.abspath(f_path))
+            #     if not os.path.exists(os.path.join(seg_folder, 'geomsc')):
+            #         os.makedirs(os.path.join(seg_folder, 'geomsc'))
+            #     write_path = os.path.join(seg_folder, 'geomsc')
+            #     if '/' in self.image_path:
+            #         image_no_path_name = self.image_path.split(os.path.dirname(self.image_path))[-1].split('/')[-1]
+            #     else:
+            #         image_no_path_name = self.image_path
+            #     fname_raw = os.path.join(write_path, image_no_path_name)
+            #     label_subcomplex = os.path.join(write_path, self.labels_subcomplex)
+            #     pout(["labels files", label_subcomplex])
+            #     #fname_raw += 'PERS'+str(persistence_subcomplex)+'_smoothed.raw'
+            #     sublevel_priors_graph_max = ggraph.GeToGraph(geomsc_fname_base=fname_raw,
+            #                                        label_file=label_subcomplex)
+            #     # if using old msc (.nodes.txt file and .arcs.txt)
+            #     # gid_gnode_dict, gid_edge_dict = sup_getognn.getognn.map_to_priors_graph(msc=sublevel_msc)
+            # else:
+            #     sublevel_priors_graph_max = sup_getognn.getognn
+            #     sublevel_priors_graph_max.node_gid_to_label = sup_getognn.getognn.node_gid_to_label
+            #     sublevel_priors_graph_max.gid_gnode_dict = sup_getognn.getognn.gid_gnode_dict
+            #     sublevel_priors_graph_max.gid_edge_dict =  sup_getognn.getognn.gid_edge_dict
 
             gid_gnode_dict_max = sublevel_priors_graph_max.gid_gnode_dict
             gid_edge_dict_max  = sublevel_priors_graph_max.gid_edge_dict
-            sublevel_priors_graph_labels = sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
-            sup_getognn.getognn.gid_gnode_dict, sup_getognn.getognn.gid_edge_dict = sup_getognn.getognn.mark_sublevel_set(
+
+            sublevel_priors_graph_labels =  False#sup_getognn.getognn.node_gid_to_label#sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
+
+            #mark sublevel
+            sup_getognn.getognn.gid_gnode_dict,sup_getognn.getognn.gid_edge_dict, sublevel_priors_graph_max.node_gid_to_label, sublevel_priors_graph_max.sup_gid_to_sub_dict = sup_getognn.getognn.mark_sublevel_set(
                 gid_edge_dict_max,
                 gid_gnode_dict_max,
                 X=sup_getognn.getognn.X,
                 Y=sup_getognn.getognn.Y,
+                sublevel_label_dict=subgraph_dict['subgraph_0'].node_gid_to_label,
                 union_radius=None,
-                union_thresh=0.2, sublevel_labels=sublevel_priors_graph_labels)
+                union_thresh=union_thresh, sublevel_labels=sublevel_priors_graph_labels,
+                level_id=persistence_subcomplex_max)
 
-            superlevel_training_set_max, sublevel_training_set_max = sup_getognn.getognn.complex_sublevel_training_set()
+
+
+            superlevel_training_set_max, sublevel_training_set_max, sublevel_priors_graph_max.G = sup_getognn.getognn.complex_sublevel_training_set(level_id=persistence_subcomplex_max, subgraph=sublevel_priors_graph_max)
+
+            subgraph_dict['subgraph_0'] = sublevel_priors_graph_max
+
+
+            if not persistence_subcomplex_max:
+                sublevel_training_set_max = superlevel_training_set_max
 
             pout(["len sub max", len(sublevel_training_set_max)])
 
@@ -1641,24 +1719,56 @@ class runner:
             if persistence_subcomplex_med:
                 gid_gnode_dict_med = sublevel_priors_graph_med.gid_gnode_dict
                 gid_edge_dict_med = sublevel_priors_graph_med.gid_edge_dict
-                sublevel_priors_graph_labels = sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
-                sup_getognn.getognn.gid_gnode_dict, sup_getognn.getognn.gid_edge_dict = sup_getognn.getognn.mark_sublevel_set(
+                sublevel_priors_graph_labels = False # sup_getognn.getognn.node_gid_to_label#sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
+                # mark sublevel
+                sup_getognn.getognn.gid_gnode_dict, sup_getognn.getognn.gid_edge_dict, subgraph_dict['subgraph_1'].node_gid_to_label = sup_getognn.getognn.mark_sublevel_set(
                     gid_edge_dict_med,
                     gid_gnode_dict_med,
                     X=sup_getognn.getognn.X,
                     Y=sup_getognn.getognn.Y,
+                    sublevel_label_dict=subgraph_dict['subgraph_1'].node_gid_to_label,
                     union_radius=None,
-                    union_thresh=0.2, sublevel_labels=sublevel_priors_graph_labels)
+                    union_thresh=union_thresh, sublevel_labels=sublevel_priors_graph_labels,
+                    level_id=persistence_subcomplex_med)
 
-                superlevel_training_set_med, sublevel_training_set_med = sup_getognn.getognn.complex_sublevel_training_set()
+                superlevel_training_set_med, sublevel_training_set_med = sup_getognn.getognn.complex_sublevel_training_set(level_id=persistence_subcomplex_med)
+
+                sup_getognn.getognn.draw_segmentation(dirpath=os.path.join(self.input_path, 'geomsc'),
+                                                      draw_sublevel_set=True, name='persistence_' + str(
+                        persistence_subcomplex_med))
 
                 pout(["len sub med", len(sublevel_training_set_med)])
+            if persistence_subcomplex_maxypad:
+                gid_gnode_dict_maxypad = sublevel_priors_graph_maxypad.gid_gnode_dict
+                gid_edge_dict_maxypad = sublevel_priors_graph_maxypad.gid_edge_dict
+                sublevel_priors_graph_labels = False #sup_getognn.getognn.node_gid_to_label#sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
+                # mark sublevel
+                sup_getognn.getognn.gid_gnode_dict,sup_getognn.getognn.gid_edge_dict,subgraph_dict['subgraph_2'].node_gid_to_label = sup_getognn.getognn.mark_sublevel_set(
+                    gid_edge_dict_maxypad,
+                    gid_gnode_dict_maxypad,
+                    X=sup_getognn.getognn.X,
+                    Y=sup_getognn.getognn.Y,
+                    sublevel_label_dict=subgraph_dict['subgraph_2'].node_gid_to_label,
+                    union_radius=None,
+                    union_thresh=union_thresh, sublevel_labels=sublevel_priors_graph_labels,
+                    level_id=persistence_subcomplex_maxypad)
+
+                superlevel_training_set_maxypad, sublevel_training_set_maxypad = sup_getognn.getognn.complex_sublevel_training_set(level_id=persistence_subcomplex_maxypad)
+
+                pout(["len sub maxy", len(sublevel_training_set_maxypad)])
 
 
-            sup_getognn.getognn.draw_segmentation(dirpath=os.path.join(self.input_path,'geomsc'),
-                                                  draw_sublevel_set=True, name='persistence_'+str(persistence_subcomplex_max)+'_union_'+str(persistence_subcomplex_med))
+                sup_getognn.getognn.draw_segmentation(dirpath=os.path.join(self.input_path,'geomsc'),
+                                                      draw_sublevel_set=True, name='persistence_'+str(persistence_subcomplex_maxypad))
 
-            sublevel_training_sets = [sublevel_training_set_max,sublevel_training_set_med] if persistence_subcomplex_med else [sublevel_training_set_max]
+
+
+            sublevel_training_sets = [sublevel_training_set_max]
+            if persistence_subcomplex_med:
+                sublevel_training_sets.append(sublevel_training_set_med)
+            if persistence_subcomplex_maxypad:
+                sublevel_training_sets.append(sublevel_training_set_maxypad)
+
             sup_getognn.getognn.get_complex_informed_subgraph_split(sublevel_training_sets=sublevel_training_sets,
                                                                     collect_validation=False,
                                                                     validation_hops=1,
@@ -1669,18 +1779,19 @@ class runner:
                                                    name="GeToGNN" + '_' + sup_getognn.getognn.params['name'])
 
             # random walks
-            if not sup_getognn.getognn.params['load_preprocessed_walks']:
-                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
-                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
-                                                   'gnn')
-                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
-                sup_getognn.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
-            else:
-                walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
-                                                   sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
-                                                   'gnn')
-                sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+            # if not sup_getognn.getognn.params['load_preprocessed_walks']:
+            #     walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+            #                                        sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+            #                                        'gnn')
+            #     sup_getognn.getognn.params['load_walks'] = walk_embedding_file
+            #     sup_getognn.getognn.run_random_walks(walk_embedding_file=walk_embedding_file)
+            # else:
+            #     walk_embedding_file = os.path.join(sup_getognn.getognn.LocalSetup.project_base_path, 'datasets',
+            #                                        sup_getognn.getognn.params['write_folder'], 'walk_embeddings',
+            #                                        'gnn')
+            #     sup_getognn.getognn.params['load_walks'] = walk_embedding_file
 
+            sup_getognn.getognn.params['load_walks'] = False
             sup_getognn.compute_features()
 
 
@@ -1695,7 +1806,7 @@ class runner:
 
 
 
-            getognn = sup_getognn.train(run_num=str(percent), sublevel_sets=True)
+            getognn = sup_getognn.train(run_num=str(percent), sublevel_sets=True, subgraph_dict=subgraph_dict)
 
             #getognn.update_run_info(batch_multi_run=str(percent))
             getognn.run_num = percent
@@ -1704,7 +1815,9 @@ class runner:
             if not os.path.exists(out_folder):
                 os.makedirs(out_folder)
 
-
+            if write_feat_comp_time:
+                getognn.write_feature_comp_time()
+                write_feat_comp_time = False
             #
 
             #
@@ -1753,8 +1866,9 @@ class runner:
             # Perform remainder of runs and don't need to read feats again
             #
 
+            # !!! called twice
+            # getognn.supervised_train()
 
-            getognn.supervised_train()
             getognn.record_time(round(getognn.train_time, 4),
                                    dir=getognn.pred_session_run_path,
                                    type='train')
