@@ -81,17 +81,19 @@ def collect_run_metrics(run_path=None, metric=None, runs_folder=None,
     runs_folder.sort()
     for idx, run in enumerate(sorted(runs_folder)):
         # for metric in metrics:
-        if metric != 'time':
+        if metric in ['f1', 'precision', 'recall']:
             metric_file = os.path.join(run_path, str(run), str(metric) + '.txt')
-        else:
+        elif metric == 'time':
             metric_file = os.path.join(run_path, str(run), 'train_'+str(metric) + '.txt')
+        elif metric == 'homophily':
+            metric_file = os.path.join(run_path, str(run),  "homophily_ratio.txt")
         # if batch_of_batch:
         #    metric_file = os.path.join(run_path, str(run),str(metric), 'metric_averages' + '.txt')
         f = open(metric_file, 'r')
         result_lines = f.readlines()
         f.close()
         # for metric_subtype in results_dict.keys():
-        if metric != 'time':
+        if metric == 'f1':
             micro = 0
             macro = 0
             for result in result_lines:
@@ -234,6 +236,40 @@ def collect_run_metrics(run_path=None, metric=None, runs_folder=None,
             pred_t = float(lines[0])  # [-1].split(' ')[1])
 
             run_region_percent[run] = (train_t, pred_t, f1)
+        if metric == 'homophily':
+            # if batch_multi_run:
+            f1_f = _file = os.path.join(run_path, str(run), "f1.txt")
+            # else:
+            #    window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
+            #                                    str(args.exp_folder),  str(run),str(run), "region_percents.txt")
+            f = open(f1_f, 'r')
+            lines = f.readlines()
+            f.close()
+            f1 = float(lines[-1].split(' ')[1])
+
+            train_f = os.path.join(run_path, str(run), "homophily_ratio.txt")
+            # else:
+            #    window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
+            #                                    str(args.exp_folder),  str(run),str(run), "region_percents.txt")
+            h_train = open(train_f, 'r')
+            lines = h_train.readlines()
+            h_train.close()
+
+            train_h_sup = float(lines[1].split(' ')[1])  # superlevel homophily
+            train_h_sub = float(lines[3].split(' ')[1])  # sublevel homophily
+
+            cbal_f = _file = os.path.join(run_path, str(run), "class_balance.txt")
+            # else:
+            #    window_f = _file = os.path.join(str(LS.project_base_path), 'datasets', str(args.data_folder),
+            #                                    str(args.exp_folder),  str(run),str(run), "region_percents.txt")
+            t_cbal = open(cbal_f, 'r')
+            lines = t_cbal.readlines()
+            t_cbal.close()
+
+            cbal_t_sup = float(lines[3].split(' ')[1])  #class balance super train
+            cbal_t_sub = float(lines[9].split(' ')[1])
+
+            run_region_percent[run] = (train_h_sup, train_h_sub, cbal_t_sup, cbal_t_sub, f1)
 
     return results_dict, attributes_dict, run_region_dict, run_result_dict, run_region_percent
 
@@ -501,6 +537,95 @@ def plot_region_to_f1(run_region_dict=None, run_percentage_dict=None, results_di
     return x, y_class
 
 
+def plot_homophily_to_f1(run_region_dict=None, run_percentage_dict=None, results_dict=None, run_result_dict=None,
+                    metric=None,
+                    plt_title='',
+                    write_folder=None,
+                    exp_name='', batch_of_batch=False,
+                    plot_each=True
+                    ):
+
+    x_sub = np.zeros(len(run_percentage_dict.keys()))# - 2)
+    x_sup = np.zeros(len(run_percentage_dict.keys()))# - 2)
+    x_list = []
+    y = np.zeros(len(run_percentage_dict.keys()))# - 2)
+
+    percent_regions_metrics = {}
+
+
+
+    del run_region_dict['X']
+    del run_region_dict['Y']
+    sorted_runs = sorted(list(map(int, list(run_percentage_dict.keys()))))
+    for idx, run_num in enumerate(sorted_runs):  # range(len(run_region_dict)-2):
+        # if batch_of_batch:
+        run_result_num = run_num
+        # else:
+        #    run_result_num = idx
+
+        if run_num == 'X_BOX' or run_num == 'Y_BOX' or \
+                run_num == 'X' or run_num == 'Y':
+            continue
+
+        # cleaned_run_num = cleaned_run_num - 4
+
+
+
+
+        # percent_region = 100.0 * (subsection_area / (float(X)*float(Y)))
+        train_h_sup, train_h_sub, cbal_t_sup, cbal_t_sub, f1 = run_percentage_dict[run_num]
+
+
+
+        run_num = int(run_num)
+        x_sub[idx] = train_h_sub
+        x_sup[idx] = train_h_sup
+        # percent_regions_metrics[idx] = (percent_region, macro_f1, micro_f1, class_f1)
+        y[idx] = f1
+
+    # p_regions =  sorted(percent_regions_metrics.items(), key=lambda x: x[1][0])
+    # p_regions = dict(p_regions)
+    # x = [ i[1][0] for i in p_regions]
+    # x = x[1:]    #x       = x[1:]#-1]
+    # y_macro =  [ i[1][1] for i in p_regions][1:]#y_macro[1:]#-1]
+    # y_micro =  [ i[1][2] for i in p_regions][1:]#y_micro[1:]#-1]
+    # y_class =  [ i[1][3] for i in p_regions][1:]#y_class[1:]#-1]
+
+    if plot_each:
+        fig, ax = plt.subplots()
+        # fig = plt.figure(figsize=(10, 10))
+        colors = plt.cm.get_cmap('Dark2')
+
+        # ax.scatter(x,y_macro, color=colors(0), label='Macro F1',
+        #            marker="d", s=10, edgecolors=colors(1), linewidths=0.75)
+        # ax.scatter(x, y_micro, color=colors(2), label='Micro F1',
+        #            marker="s", s=10, edgecolors=colors(3), linewidths=0.75)
+
+        # ax.scatter(x, y, color=colors(2),
+        #            marker="s", s=10, edgecolors=colors(3), linewidths=0.75)
+        ax.scatter(x_sub, y, color=colors(1), label='subgraph')
+        ax.scatter(x_sup, y, color=colors(2), label='supergraph')
+        ax.legend(loc='lower right',fontsize=11)
+        # ax.plot(x_sub, y, color=colors(1) , label='subgraph')
+        # ax.plot(x_sup, y, color=colors(2), label = 'supergraph')
+        # ax.legend(loc='lower right')
+        ax.set(
+               xlabel='Homophily Training Subgraph', ylabel='F1 Score vs Homophily Training Subgraph')
+        # plt.yscale('log')
+
+        fig.tight_layout()
+        plt.savefig(os.path.join(write_folder, plt_title + '.png'))
+        plt.close(fig)
+
+    # names = results_dict.keys()
+    # metric_results = map(lambda res_list: np.array(res_list), results_dict.values())
+    # for name, result in zip(names, metric_results):
+    #     plot_region_results()
+    x_list.append(x_sub)
+    x_list.append(x_sup)
+    return x_list, y
+
+
 def average_metric_score(results_dict=None,
                          metric=None,
                          write_folder=None,
@@ -725,7 +850,7 @@ def multi_run_metrics(model, exp_folder, bins=None, runs='runs', plt_title='', a
 
 def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', data_name='',
                         plt_title='', avg_multi=False,
-                        batch_of_batch=False, batch_multi_run=False, metric='f1'):
+                        batch_of_batch=False, batch_multi_run=False, metric='f1', plot_experiments = None):
     model_statistics = {}
 
     for model, exp_folder in zip(models, exp_dirs):
@@ -750,10 +875,12 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
         if not os.path.exists(metric_plot_folder):
             os.makedirs(metric_plot_folder)
 
-        if metric != 'time':
+        if metric == 'f1':
             metrics = ['precision', 'recall', 'f1']
-        else:
+        elif metric == 'time':
             metrics = ['time']
+        else:
+            metrics = ['homophily']
 
         if not avg_multi:
             for metric in metrics:
@@ -816,7 +943,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
         dataset = str(exp_folder).split('/')[-2]
         dataset = dataset.replace('_', ' ')
 
-        if metric != 'time':
+        if metric == 'f1':
             x, y = plot_region_to_f1(run_region_dict=run_region_dict,
                                      run_percentage_dict=run_percent_dict,
                                      batch_of_batch=avg_multi,
@@ -824,7 +951,8 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
                                      run_result_dict=idx_run_dict,
                                      write_folder=metric_subfolder,
                                      plt_title=model_type + ' ' + dataset)
-        else:
+            model_statistics[model] = [x, y]
+        elif metric == 'time':
             x, y = plot_time_to_f1(run_region_dict=run_region_dict,
                                    run_percentage_dict=run_percent_dict,
                                    batch_of_batch=avg_multi,
@@ -832,33 +960,50 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
                                    run_result_dict=idx_run_dict,
                                    write_folder=metric_subfolder,
                                    plt_title=model_type + ' ' + dataset)
-
-        model_statistics[model] = [x, y]
+            model_statistics[model] = [x, y]
+        else:
+            x_list, y = plot_homophily_to_f1(run_region_dict=run_region_dict,
+                                   run_percentage_dict=run_percent_dict,
+                                   batch_of_batch=avg_multi,
+                                   results_dict=results_dict,
+                                   run_result_dict=idx_run_dict,
+                                   write_folder=metric_subfolder,
+                                   plt_title=model_type + ' ' + dataset)
+            plot_experiments = []
+            model_statistics = {}
+            for sub_idx in range(len(x_list)):
+                model_statistics[model+' sub G '+str(sub_idx)] = [x_list[sub_idx], y]
+                plot_experiments.append(model+' sub G '+str(sub_idx))
+            # model_statistics[model] = [x_list[0], y]
+        # model_statistics[model] = [x, y]
 
     exp_name = data_name.replace('_', ' ').replace('2', '').title()
 
     if metric == 'time':
         title = exp_name + ' Training Time log(s) to F1'
         xlab = 'Time log(s) Taken to Train'
-    else:
+    elif metric == 'f1':
         title = exp_name + ' F1 to Percent Training Size'
         xlab = 'Percent Sub-Region Used for Training'
+    else:
+        title = exp_name + ' F1 to Homophily of Training Graph'
+        xlab = 'Homophily of Graph Used for Training'
 
     fig, ax = plt.subplots()
     # fig = plt.figure(figsize=(10, 10))
     colors = plt.cm.get_cmap('Dark2')
-
-    plot_experiments = [
-                        "Random_Forest_Pixel",
-                        'MLP_Pixel',
-                        "UNet",
-                        "Random_Forest_MSC",
-                        # 'Random_Forest_MSC_Geom',
-                        'MLP_MSC',
-                        'GNN',
-                        #'GNN_Geom',
-                        'GNN_SUB'
-                        ]
+    c_list = ['red' 'seagreen', 'blueviolet','darkorange' ,'goldenrod']
+    # plot_experiments = [
+    #                     "Random_Forest_Pixel",
+    #                     'MLP_Pixel',
+    #                     "UNet",
+    #                     "Random_Forest_MSC",
+    #                     # 'Random_Forest_MSC_Geom',
+    #                     'MLP_MSC',
+    #                     'GNN',
+    #                     #'GNN_Geom',
+    #                     'GNN_SUB'
+    #                     ]
     legend_order = ['RF-Pixel', 'MLP-Pixel', 'U-Net' , 'RF-Priors', 'MLP-Priors', 'GNN','GNN-Geom']
     #for model_name, stats in model_statistics.items():
     print("    * ","plotting models")
@@ -885,9 +1030,14 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
             formatter0 = EngFormatter(unit='s')
             ax.xaxis.set_major_formatter(formatter0)
-        else:
+        elif metric == 'f1':
             formatter0 = PercentFormatter()
             ax.xaxis.set_major_formatter(formatter0)
+        elif metric == 'homophily':
+            # ax.set_xscale('log')
+            ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
+            # formatter0 = EngFormatter(unit='s')
+            # ax.xaxis.set_major_formatter(formatter0)
         if model_name=='UNet':
             model_name = 'U-Net'
             c = 'blue'
@@ -930,23 +1080,35 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             lw = 2.0
         if 'MSC' in model_name and 'MLP' in model_name:
             model_name = 'MLP Priors'
-            c =  'darkorange'# for pixel chartreuse
+            c =  'darkorange' # for pixel chartreuse
             lstyle = (0, (5, 1))#(0, (1, 1))  #(0, (3, 5, 1, 5))#'dashdotted'
             lw = 2.0
         if 'GNN' in model_name and 'SUB' in model_name:
-            model_name = 'GNN Complex Informed'
-            c = 'orchid'#
-            lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
-            lw = 2.0
-        ax.plot(x, y,color=c, label=model_name, linestyle=lstyle, linewidth=lw)
+            if 'sub G' in model_name:
+                sub_id = model_name.split(' ')[-1]
+                model_name = 'subgraph '+str(sub_id)#'GNN Complex Informed'
+                c = 'orchid'#
+                lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
+                lw = 2.0
+            else:
+                model_name =  'Hierarchical GNN'
+                c = 'orchid'#
+                lstyle = (0, (5, 1))  # dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
+                lw = 2.0
+        if metric == 'f1':
+            ax.plot(x, y,color=c, label=model_name, linestyle=lstyle, linewidth=lw)
+        else:
+            ax.scatter(x, y, marker='s', color=c, label=model_name, linestyle=lstyle, linewidth=lw)
     plt.xticks(fontsize=15)
     plt.yticks(fontsize=15)
     if 'retinal' in data_name:
         ax.legend(loc='lower right',fontsize=11)
-        if metric != 'time':
+        if metric == 'f1':
             plt.xlabel("Percent Sub-Set Used for Training",fontsize=17)
-        else:
+        elif metric == 'time':
             plt.xlabel("Time log(s) Taken to Train",fontsize=17)
+        else:
+            plt.xlabel("Homophily of Graph Used for Training", fontsize=17)
     else:
         plt.xlabel(" ")
         plt.ylabel(" ")
@@ -963,7 +1125,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
     #ax.set_yticklabels(y, fontsize=5)
     ax.set_axisbelow(True)
     ax.yaxis.grid(color='gray', linestyle='dashed')
-    if metric != 'time':
+    if metric == 'f1':
         ax.xaxis.grid(color='gray', linestyle='dashed')
     print("    * : placing plots in ", write_folder)
     plt.savefig(os.path.join(write_folder, data_name + '_multi_model_performance_' + metric + '.png'))

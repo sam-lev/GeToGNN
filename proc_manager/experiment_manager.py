@@ -34,7 +34,8 @@ class runner:
                  load_features = True, compute_features = False, load_geto_features = False,
                  feats_independent=False,
                  compute_geto_features = False,
-                 sample_idx=2, multi_run = True, parameter_file_number = 1):
+                 sample_idx=2, multi_run = True, parameter_file_number = 1,
+                 load_subgraph_labels=False):
 
         # base attributes shared between models
         self.attributes = Attributes()
@@ -97,7 +98,20 @@ class runner:
                            'maxdiadem_m1g1_1170_1438.raw.labels_4.txt',
                            'berghia_s5ipr_891_896.raw.labels_4.txt'][self.sample_idx]  # neuron1
 
-
+        if load_subgraph_labels:
+            self.subgraph_labels = ['im0236_la2_700_605.raw.labels_0.txt',  # og lab is _2
+                               'MAX_neuron_640_640.raw.labels_3.txt',
+                               ['.labels_0.txt'],
+                               'sub_CMC_example_l1_969_843.raw.labels_0.txt',
+                               'berghia_prwpr_e4_891_896.raw.labels_3.txt',
+                               'att_L3_0_460_446_484.raw.labels_0.txt',
+                               'diadem16_transforms_s1_1000_1000.raw.labels_14.txt',
+                               'border1_636x2372.raw.labels_0.txt',
+                               'foam0235_fa_828_846.raw.labels_0.txt',
+                               'maxdiadem_m1g1_1170_1438.raw.labels_4.txt',
+                               'berghia_s5ipr_891_896.raw.labels_4.txt'][self.sample_idx]
+        else:
+            self.subgraph_labels = None
         self.labels_subcomplex = self.label_file#'im0236_la2_700_605.raw.labels_0.txt'#][self.sample_idx]
 
         self.msc_file = os.path.join(LocalSetup.project_base_path, 'datasets', self.name,
@@ -144,7 +158,13 @@ class runner:
 
 
 
-    def start(self, model='getognn', boxes=None,dims=None, learning='supervised', compute_complex=False):
+    def start(self, model='getognn',
+              boxes=None,
+              dims=None,
+              learning='supervised',
+              compute_complex=False,
+              persistences = None,
+              subgraph_labels=None):
 
 
         if model == 'getognn':
@@ -153,8 +173,11 @@ class runner:
             elif learning == 'unsupervised':
                 self.run_unsupervised_getognn(self.multi_run)
             elif learning == 'subcomplex':
-                self.run_subcomplex_informed_getognn(boxes=boxes, dims=dims,
-                                                     compute_complex=compute_complex)
+                self.run_subcomplex_informed_getognn(boxes=boxes,
+                                                     dims=dims,
+                                                     compute_complex=compute_complex,
+                                                     persistence_subgraphs = persistences,
+                                                     subgraph_labels=self.subgraph_labels)
         if model == 'mlp':
             self.run_mlp( boxes=boxes, dims=dims, flavor=learning )
         if model == 'random_forest':
@@ -162,7 +185,7 @@ class runner:
         if model == 'unet':
             self.run_unet(self.multi_run, boxes=boxes, dims=dims)
 
-    def multi_model_metrics(self, models, exp_dirs, write_dir, metric='f1'):
+    def multi_model_metrics(self, models, exp_dirs, write_dir, metric='f1', plot_experiments = None):
         experiment_folders = []
         models = []
         for exp in exp_dirs:
@@ -176,7 +199,8 @@ class runner:
         print(experiment_folders)
         write_dir =  os.path.join(LocalSetup.project_base_path)
         multi_model_metrics(models=models, exp_dirs=experiment_folders, #batchmulti_run=True#
-                            data_name=self.name, write_dir=write_dir,metric=metric)
+                            data_name=self.name, write_dir=write_dir,metric=metric,
+                            plot_experiments=plot_experiments)
 
 
 
@@ -1492,10 +1516,169 @@ class runner:
 #
 #     Simply Informed
 #
-    def run_subcomplex_informed_getognn(self, boxes=None,  dims=None, compute_complex = False):
+    def run_subcomplex_informed_getognn(self,
+                                        boxes=None,
+                                        dims=None,
+                                        compute_complex = False,
+                                        persistence_subgraphs = None,
+                                        subgraph_labels=None):
 
+
+
+        def compute_subgraph(sub_persistence, supgraph, subgraph_id, num_sublevel_sets, subgraph_labels=None):
+
+
+
+            map_labels = True
+            if subgraph_labels is not None:
+                f_path = self.image_path
+                seg_folder = os.path.dirname(os.path.abspath(f_path))
+                if not os.path.exists(os.path.join(seg_folder, 'geomsc')):
+                    os.makedirs(os.path.join(seg_folder, 'geomsc'))
+                if not os.path.exists(os.path.join(seg_folder, 'geomsc', str(sub_persistence))):
+                    os.makedirs(os.path.join(seg_folder, 'geomsc', str(sub_persistence)))
+                write_path = os.path.join(seg_folder, 'geomsc', str(sub_persistence))
+
+                msc_fname = os.path.join(write_path, self.label_file.split('raw')[0] + 'raw' )
+                msc_label_fname = msc_fname + subgraph_labels[int(subgraph_id)]
+                # subgraph.read_labels_from_file(file=msc_label_fname)
+                map_labels = False
+                subgraph = getograph.GeToGraph(geomsc_fname_base=msc_fname,
+                                                                label_file=msc_label_fname)
+            else:
+                subgraph, msc_fname = supgraph.compute_morse_smale_complex(
+                    fname_base=self.image_path,
+                    persistence=[sub_persistence],
+                    sigma=[2],
+                    X=supgraph.X,
+                    Y=supgraph.Y
+                )
+
+            pout(("MAX PERSISTENCE FOR SUBCOMPLEX:", subgraph.persistence,
+                  "__ In read Geom file__",
+                  "TOTAL NUMBER EDGES:",
+                  subgraph.edge_count,
+                  "TOTAL NUMBER NODES:",
+                  subgraph.vertex_count,
+                  "TOTAL NUMBER ISOLATED(-1 gid) VERTICES:",
+                  subgraph.isolated_node_count))
+
+            # sublevel_priors_graph_max = getograph.GeToGraph(geomsc_fname_base=msc_fname)
+
+            # compute nx graph and idx info
+            subgraph.G, subgraph.graph_idx_to_gid, subgraph.node_gid_to_graph_idx = supgraph.build_subgraph(
+                gid_gnode_dict=subgraph.gid_gnode_dict,
+                gid_edge_dict=subgraph.gid_edge_dict)
+
+            subgraph.params['collect_features'] = COMPUTE_FEATURES
+            subgraph.params['load_features'] = BEGIN_LOADING_FEATURES
+
+            if supgraph.params['load_features']:
+                supgraph.load_feature_images()
+                supgraph.load_feature_image_names()
+
+            if subgraph_labels is not None:
+                subgraph.features, subgraph.node_gid_to_feature, subgraph.node_gid_to_feat_idx, subgraph.node_gid_to_graph_idx, subgraph.graph_idx_to_gid = compute_subgraph_features(
+                    gid_gnode_dict=subgraph.gid_gnode_dict,
+                    node_gid_to_graph_idx=subgraph.node_gid_to_graph_idx,
+                    subgraph_name=subgraph_id,
+                    collect_features=subgraph.params['collect_features'],
+                    model=supgraph)
+
+            supgraph.gid_gnode_dict, supgraph.gid_edge_dict, subgraph.node_gid_to_label, subgraph.sup_gid_to_sub_dict = supgraph.mark_sublevel_set(
+                sublevel_nodes=subgraph.gid_gnode_dict,
+                sublevel_edges=subgraph.gid_edge_dict,
+                X=supgraph.X,
+                Y=supgraph.Y,
+                sublevel_label_dict=subgraph.node_gid_to_label,
+                union_radius=None,
+                union_thresh=union_thresh,
+                map_labels=map_labels,
+                level_id=sub_persistence)
+
+
+            #
+            #     ......................     EROR_R_R_R   NEED TO BUILD SUBGRAPH USING SUPGRAPH IDS ..........
+            #
+            subgraph.G, subgraph.graph_idx_to_gid, subgraph.node_gid_to_graph_idx = supgraph.build_subgraph(
+                gid_gnode_dict=supgraph.gid_gnode_dict,  # changed this!
+                #                                        #                     #   err; used to be sub
+                gid_edge_dict=supgraph.gid_edge_dict)    # changed this
+
+            subgraph.params['collect_features'] = COMPUTE_FEATURES
+            subgraph.params['load_features'] = BEGIN_LOADING_FEATURES
+
+            if supgraph.params['load_features']:
+                supgraph.load_feature_images()
+                supgraph.load_feature_image_names()
+
+            #
+            #   End untested addition
+            #
+
+
+            superlevel_training_set, sublevel_training_set, subgraph.G = supgraph.complex_sublevel_training_set(
+                level_id=sub_persistence,
+                subgraph=subgraph,
+                map_labels=map_labels,
+                num_sublevel_sets=num_sublevel_sets)
+
+
+            # subgraph.homophily_ratio, homophily_train_ratio = supgraph.compute_homophily(G=subgraph.G,
+            #                                                                              graph_idx_to_gid=subgraph.graph_idx_to_gid,
+            #                                                                              gid_to_label_dict=subgraph.node_gid_to_label,
+            #                                                                              sup_gids_of_sublevel_training_set=sublevel_training_set,
+            #                                                                              subgraph=subgraph)
+            subgraph.homophily_ratio, homophily_train_ratio, sublevel_homophily_ratio, sublevel_homophily_train_ratio = supgraph.compute_homophily(
+                G=supgraph.G,
+                graph_idx_to_gid=supgraph.graph_idx_to_gid,
+                gid_to_label_dict=supgraph.node_gid_to_label,
+                sup_gids_of_sublevel_set=sublevel_training_set,
+                subgraph=subgraph)
+
+            # class_stats = supgraph.compute_class_balance(G=subgraph.G,
+            #                                              graph_idx_to_gid=subgraph.graph_idx_to_gid,
+            #                                              gid_to_label_dict=subgraph.node_gid_to_label)
+            class_stats = supgraph.compute_class_balance(G=supgraph.G,
+                                                         graph_idx_to_gid=supgraph.graph_idx_to_gid,
+                                                         gid_to_label_dict=supgraph.node_gid_to_label,
+                                                         sup_gids_of_sublevel_set=sublevel_training_set)
+            subgraph.class_statistics['positive'] = class_stats[0]
+            subgraph.class_statistics['negative'] = class_stats[1]
+            subgraph.class_statistics['total'] = class_stats[2]
+
+            pout(("____ HOMOPHILY RATIO ____",
+                  subgraph.homophily_ratio))
+            pout(("____ CLASS BALANCE STATISTICS _____ ",
+                  "positive", class_stats[0],
+                  "negative", class_stats[1],
+                  "total", class_stats[2]))
+
+            supgraph.write_homophily_stats(homo_ratio = subgraph.homophily_ratio, homo_train_ratio = homophily_train_ratio, sublevel_homophily_ratio=sublevel_homophily_ratio, sublevel_homophily_train_ratio=sublevel_homophily_train_ratio )
+            supgraph.write_class_stats(positive = class_stats[0],
+                                       negative = class_stats[1],
+                                       pos_neg_ratio = class_stats[0]/class_stats[1],
+                                       positive_train=class_stats[3],
+                                       negative_train=class_stats[4],
+                                       #
+                                       positive_sublevel=class_stats[5],
+                                       negative_sublevel=class_stats[6],
+                                       pos_neg_sublevel_ratio=class_stats[5] / class_stats[6],
+                                       positive_sublevel_train=class_stats[8],
+                                       negative_sublevel_train=class_stats[9],
+                                       )
+
+            pout(["len subgraph "+subgraph_id, len(sublevel_training_set)])
+
+            supgraph.draw_segmentation(dirpath=os.path.join(self.input_path, 'geomsc'),
+                                                  draw_sublevel_set=True, name='persistence_' + str(
+                    sub_persistence))
+            # subgraph_dict['subgraph_0'] = subgraph
+            return subgraph, supgraph, superlevel_training_set, sublevel_training_set
 
         from getognn import supervised_getognn
+
+
 
         IMG_WIDTH = dims[0]
         IMG_HEIGHT = dims[1]
@@ -1513,10 +1696,14 @@ class runner:
             write_feat_comp_time = True
         else:
             write_feat_comp_time = False
-
-        persistence_subcomplex_max = 45#w/ lr 1e-3, sub/100 wd 1e-6 comb loss sep weights sep/shared mlp good results for low
+        # neuron2 45. foam 220
+        persistence_subcomplex_max = persistence_subgraphs[0]#w/ lr 1e-3, sub/100 wd 1e-6 comb loss sep weights sep/shared mlp good results for low
         persistence_subcomplex_med = 0
         persistence_subcomplex_maxypad = 0
+
+        sublevel_persistence_values = [persistence_subcomplex_max]#,
+                                       # persistence_subcomplex_med,
+                                       # persistence_subcomplex_maxypad]
 
         union_thresh = 0
 
@@ -1602,17 +1789,37 @@ class runner:
 
             subgraph_dict = {}
             sup_gid_to_sub_dict = {}
+            sublevel_training_sets = []
             # featureGraph = GeToFeatureGraph()
             if compute_complex:
                 pout(["COMPUTING SUBCOMPLEX"])
                 #pout(['sublevel graph epoch growth ', sup_getognn.getognn.params['sublevel_init_epochs']])
 
-                sublevel_priors_graph_max, msc_fname = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
+                subgraph, supgraph, superlevel_training_set, sublevel_training_set = compute_subgraph(sub_persistence=persistence_subcomplex_max,
+                                                      supgraph=sup_getognn.getognn,
+                                                      subgraph_id='0',
+                                                      subgraph_labels=subgraph_labels,
+                                                                                                      num_sublevel_sets = len(sublevel_persistence_values))
+                sup_getognn.getognn = supgraph
+                subgraph_dict['subgraph_0'] = subgraph
+                sublevel_training_sets.append(sublevel_training_set)
+
+                '''sublevel_priors_graph_max, msc_fname = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
                                                                                persistence=[persistence_subcomplex_max],
                                                                                sigma=[2],
                                                                                X=sup_getognn.getognn.X,
                                                                                Y=sup_getognn.getognn.Y
                                                                                )
+
+                pout(("MAX PERSISTENCE FOR SUBCOMPLEX:" , sublevel_priors_graph_max.persistence,
+                      "__ In read Geom file__",
+                      "TOTAL NUMBER EDGES:",
+                      sublevel_priors_graph_max.edge_count,
+                      "TOTAL NUMBER NODES:",
+                      sublevel_priors_graph_max.vertex_count,
+                      "TOTAL NUMBER ISOLATED(-1 gid) VERTICES:",
+                      sublevel_priors_graph_max.isolated_node_count))
+
                 # sublevel_priors_graph_max = getograph.GeToGraph(geomsc_fname_base=msc_fname)
 
                 # compute nx graph and idx info
@@ -1641,6 +1848,8 @@ class runner:
                 # if node_gid_to_graph_idx is not None:
                 #     sublevel_priors_graph_max.node_gid_to_graph_idx = node_gid_to_graph_idx
                 subgraph_dict['subgraph_0'] = sublevel_priors_graph_max
+                '''
+
                 if persistence_subcomplex_med:
                     sublevel_priors_graph_med = sup_getognn.getognn.compute_morse_smale_complex(fname_base=self.image_path,
                                                                                             persistence=[
@@ -1684,20 +1893,16 @@ class runner:
             #     sublevel_priors_graph_max.gid_gnode_dict = sup_getognn.getognn.gid_gnode_dict
             #     sublevel_priors_graph_max.gid_edge_dict =  sup_getognn.getognn.gid_edge_dict
 
-            gid_gnode_dict_max = sublevel_priors_graph_max.gid_gnode_dict
-            gid_edge_dict_max  = sublevel_priors_graph_max.gid_edge_dict
-
-            sublevel_priors_graph_labels =  False#sup_getognn.getognn.node_gid_to_label#sublevel_priors_graph_max.node_gid_to_label if not compute_complex else False
-
             #mark sublevel
-            sup_getognn.getognn.gid_gnode_dict,sup_getognn.getognn.gid_edge_dict, sublevel_priors_graph_max.node_gid_to_label, sublevel_priors_graph_max.sup_gid_to_sub_dict = sup_getognn.getognn.mark_sublevel_set(
-                gid_edge_dict_max,
-                gid_gnode_dict_max,
+            '''sup_getognn.getognn.gid_gnode_dict,sup_getognn.getognn.gid_edge_dict, sublevel_priors_graph_max.node_gid_to_label, sublevel_priors_graph_max.sup_gid_to_sub_dict = sup_getognn.getognn.mark_sublevel_set(
+                sublevel_nodes = sublevel_priors_graph_max.gid_gnode_dict,
+                sublevel_edges = sublevel_priors_graph_max.gid_edge_dict,
                 X=sup_getognn.getognn.X,
                 Y=sup_getognn.getognn.Y,
                 sublevel_label_dict=subgraph_dict['subgraph_0'].node_gid_to_label,
                 union_radius=None,
-                union_thresh=union_thresh, sublevel_labels=sublevel_priors_graph_labels,
+                union_thresh=union_thresh,
+                sublevel_labels=False,
                 level_id=persistence_subcomplex_max)
 
 
@@ -1714,7 +1919,7 @@ class runner:
 
             sup_getognn.getognn.draw_segmentation(dirpath=os.path.join(self.input_path, 'geomsc'),
                                                   draw_sublevel_set=True, name='persistence_' + str(
-                    persistence_subcomplex_max))
+                    persistence_subcomplex_max))'''
 
             if persistence_subcomplex_med:
                 gid_gnode_dict_med = sublevel_priors_graph_med.gid_gnode_dict
@@ -1763,11 +1968,6 @@ class runner:
 
 
 
-            sublevel_training_sets = [sublevel_training_set_max]
-            if persistence_subcomplex_med:
-                sublevel_training_sets.append(sublevel_training_set_med)
-            if persistence_subcomplex_maxypad:
-                sublevel_training_sets.append(sublevel_training_set_maxypad)
 
             sup_getognn.getognn.get_complex_informed_subgraph_split(sublevel_training_sets=sublevel_training_sets,
                                                                     collect_validation=False,
@@ -1805,7 +2005,7 @@ class runner:
 
 
 
-
+            subgraph_dict=None
             getognn = sup_getognn.train(run_num=str(percent), sublevel_sets=True, subgraph_dict=subgraph_dict)
 
             #getognn.update_run_info(batch_multi_run=str(percent))

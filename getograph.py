@@ -24,6 +24,7 @@ class GeToElement:
         self.gid = gid
         self.centroid = None
         self.vec = None
+        self.global_isolated_nodes = 0
         if dim is not None:
             self.points = points
 
@@ -31,9 +32,12 @@ class GeToElement:
         for i in range(0, len(lst), 2):
             yield tuple(lst[i : i + 2])
 
-    def read_line(self, line, labeled=False):
+    def read_line(self, line, labeled=False, isolated_node_count=0):
         tmplist = line.split(" ")
         self.gid = int(tmplist[0])
+        self.global_isolated_nodes = isolated_node_count
+        if self.gid == -1:
+            self.global_isolated_nodes += 1
         # if self.gid == -1:
         #     self.gid += self.multiplicity_count
         self.dim = int(tmplist[1])
@@ -152,6 +156,14 @@ class GeToGraph(Attributes):
 
         self.geomsc_fname_base = geomsc_fname_base
         self.label_file = label_file
+
+        self.persistence = None
+
+        self.homophily_ratio = None
+        self.class_statistics = {}
+        self.class_statistics['positive'] = 0
+        self.class_statistics['negative'] = 0
+        self.class_statistics['total'] = 0
         #
         # read pre-computed MSC
         #
@@ -162,6 +174,8 @@ class GeToGraph(Attributes):
 
     def compute_morse_smale_complex(self, fname_base, polyline_graph = True,
                                     persistence = [0.01], sigma=[2], X=None,Y=None):
+
+        self.persistence = persistence[0]
 
         f_path      = fname_base
         seg_folder = os.path.dirname(os.path.abspath(f_path))
@@ -205,7 +219,7 @@ class GeToGraph(Attributes):
     def mark_sublevel_set(self, sublevel_edges, sublevel_nodes,
                           X, Y, sublevel_label_dict, level_id=1,
                           union_radius=None, union_thresh=0,
-                          sublevel_labels=False):
+                          map_labels=False):
 
 
         point_map_sub = np.ones(self.image.shape) * -2
@@ -243,10 +257,14 @@ class GeToGraph(Attributes):
             sup_points = gedge_super.points
             sup_points = [tuple(map(round, p)) for p in sup_points]
 
+
             cardinality_intersect = 0
             xy_init = None
             for xy in sup_points:
                 xy = (xy[i_x],xy[i_y])
+
+                for ngid in gedge_super.gnode_gids:
+                    sup_gid_to_sub_dict[ngid] = point_map_sub[xy]#_init]
 
                 if point_map_sub[xy] >= -1:
                     if xy_init is None:
@@ -295,9 +313,11 @@ class GeToGraph(Attributes):
                 for ngid in gedge_super.gnode_gids:
                     gn = self.gid_gnode_dict[ngid]
                     gn.is_sublevel_set(level_id)
+                    # sub_gid = point_map_sub[xy_init]
+                    # sublevel_label_dict[sub_gid] = self.node_gid_to_label[ngid]
                     # if sublevel_labels:
                     #     self.node_gid_to_label[ngid] = sublevel_labels[gid_sub]
-                    # sup_gid_to_sub_dict[ngid] = point_map_sub[xy_init]
+                    sup_gid_to_sub_dict[ngid] = point_map_sub[xy_init]
             self.gid_edge_dict[gid] = gedge_super
 
 
@@ -314,8 +334,12 @@ class GeToGraph(Attributes):
                 xy = (xy[i_x],xy[i_y]) #if xy[i_x] <= X-1 and xy[i_y] <= Y-1 else (X-1,Y-1)
                 # if xy_init is None:
                 #     xy_init = xy
+                sub_gid = point_map_sub[xy]
+                sup_gid_to_sub_dict[gid] = sub_gid
 
-                sup_gid_to_sub_dict[gid] = point_map_sub[xy]
+                # map label of sup to sub
+
+                # sublevel_label_dict[sub_gid] = self.node_gid_to_label[gid]
 
                 if point_map_sub[xy] >= -1:
                     gid_sub = point_map_sub[xy] #take gid of interesecting node
@@ -387,7 +411,7 @@ class GeToGraph(Attributes):
                         else:
                             continue
                     sup_gid_to_sub_dict[gid] = sub_gid
-                    sublevel_label_dict[sub_gid] = self.node_gid_to_label[gid]
+                    # sublevel_label_dict[sub_gid] = self.node_gid_to_label[gid]
 
             self.gid_gnode_dict[gid] = gnode_super
         return self.gid_gnode_dict, self.gid_edge_dict, sublevel_label_dict, sup_gid_to_sub_dict
@@ -418,10 +442,15 @@ class GeToGraph(Attributes):
         node_file.close()
         self.edge_count = 0
         self.vertex_count = 0
+
+        self.isolated_node_count = 1
         #getoelm_idx = 0
         for l in geo_lines:
             elm = GeToElement()
-            elm.read_line(l)
+            elm.read_line(l, isolated_node_count = self.isolated_node_count)
+            self.isolated_node_count = elm.global_isolated_nodes
+            if elm.gid == -1:
+                elm.gid = elm.gid/(2**self.isolated_node_count)
             if elm.dim == 0:
                 #self.edge_count  +=  1
                 edge = GeToEdge(getoelm=elm)
@@ -436,12 +465,12 @@ class GeToGraph(Attributes):
                 #getoelm_idx += 1
         # add isolated placement holder gnode due to single
         # vertice edges
-        isolated = GeToElement()
-        isolated.dim = 1
-        isolated.gid = -1
-        isolated.points = [(1., 1.), (1., 1.), (1., 1.)]
-        phantom_gnode = GeTogNode(getoelm=isolated)
-        self.gid_gnode_dict[phantom_gnode.gid] = phantom_gnode
+        # isolated = GeToElement()
+        # isolated.dim = 1
+        # isolated.gid = -1
+        # isolated.points = [(1., 1.), (1., 1.), (1., 1.)]
+        # phantom_gnode = GeTogNode(getoelm=isolated)
+        # self.gid_gnode_dict[phantom_gnode.gid] = phantom_gnode
 
         for l in edge_lines:
             self.edge_count += 1
@@ -449,10 +478,15 @@ class GeToGraph(Attributes):
             gid_v1 = int(tmplist[1])
             gid_v2 = int(tmplist[2])
             gid_edge = int(tmplist[0])
-            '''if gid_v1 != -1:'''
+            # add self loop if vertex isolated
+            if gid_v1 == -1:
+                gid_v1 = gid_v2
+            if gid_v2 == -1:
+                gid_v2 = gid_v1
+
             v1 = self.gid_gnode_dict[gid_v1]
             v1.add_edge(gid_edge)
-            '''if gid_v2 != -1:'''
+
             v2 = self.gid_gnode_dict[gid_v2]
             v2.add_edge(gid_edge)
             '''v2 = v1 if gid_v2 == -1 else v2
@@ -461,6 +495,14 @@ class GeToGraph(Attributes):
 
             edge = self.gid_edge_dict[gid_edge]
             edge.add_vertices(gid_v1, gid_v2)
+
+        pout(("__ In read Geom file__",
+              "TOTAL NUMBER EDGES:",
+              self.edge_count,
+              "TOTAL NUMBER NODES:",
+              self.vertex_count,
+              "TOTAL NUMBER ISOLATED(-1 gid) VERTICES:",
+              self.isolated_node_count))
 
 
     def write_getograph(self, fname_base, labeled=False):
@@ -512,7 +554,7 @@ class GeToGraph(Attributes):
             gnode.label = label
             self.node_gid_to_label[gid] = label
             gnode.ground_truth = label
-        self.node_gid_to_label[-1] = [1., 0.]
+        # self.node_gid_to_label[-1] = [1., 0.] # !!!!!!!1   !!   !!!! !   !! !  ! !  !!!!!!! !! !!
 
     def build_kdtree(self):
         sorted_vertices = sorted(self.gid_gnode_dict.values(), key=lambda gnode: len(gnode.points))

@@ -1418,6 +1418,7 @@ class MaxPoolingAggregator(Layer):
 
 
         else:
+
             def agg():
                 # pollenators = tf.cast(tf.reduce_sum(tf.reshape(pollenation,
                 #                                                (sub_batch0_size, num_sub_neighbors)),

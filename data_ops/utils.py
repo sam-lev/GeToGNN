@@ -366,6 +366,7 @@ def compute_subgraph_features(gid_gnode_dict, subgraph_name, node_gid_to_graph_i
         features, node_gid_to_feature, node_gid_to_feat_idx = model.compile_subgraph_features(
             gid_gnode_dict=gid_gnode_dict,
             include_geto=False)  # model.params['geto_as_feat'])
+        graph_idx_to_node_gid = {v: k for k, v in node_gid_to_graph_idx.items()}
         model.write_gnode_features(filename=subgraph_name, gid_gnode_dict=gid_gnode_dict,
                                    node_gid_to_graph_idx=node_gid_to_graph_idx,
                                    node_gid_to_standard_feature=node_gid_to_feature),
@@ -373,9 +374,10 @@ def compute_subgraph_features(gid_gnode_dict, subgraph_name, node_gid_to_graph_i
         # model.write_feature_names()
     else:#if model.params['load_features']:
 
-        features, node_gid_to_feature, node_gid_to_feat_idx, node_gid_to_graph_idx = model.load_gnode_features(
+        features, node_gid_to_feature, node_gid_to_feat_idx, node_gid_to_graph_idx_loaded = model.load_gnode_features(
             gid_gnode_dict=gid_gnode_dict,
             filename=subgraph_name)
+        graph_idx_to_node_gid = {v: k for k, v in  node_gid_to_graph_idx.items()}
 
         # model.load_feature_names()
 
@@ -412,7 +414,7 @@ def compute_subgraph_features(gid_gnode_dict, subgraph_name, node_gid_to_graph_i
     subgraph_features = np.array(features)
         # model.getoelms = None
 
-    return subgraph_features, node_gid_to_feature, node_gid_to_feat_idx, node_gid_to_graph_idx
+    return subgraph_features, node_gid_to_feature, node_gid_to_feat_idx, node_gid_to_graph_idx, graph_idx_to_node_gid
 
 def pout(show=None):
     if isinstance(show, list):

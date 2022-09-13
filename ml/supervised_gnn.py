@@ -807,6 +807,7 @@ class gnn:
 
 
                 if False:#epoch >= int(FLAGS.epochs *.7):
+                    minibatch.update_training_sublevel()
                     feed_dict.update({placeholders['subcomplex_weight']: -1})
                     outs = sess.run(
                         [merged,

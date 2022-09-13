@@ -210,9 +210,9 @@ class MLGraph(GeToFeatureGraph):
         self.node_gid_to_partition = {}
 
         # deal with priors with incident edge and without adjacent prior( -1 gid)
-        isolated = self.gid_gnode_dict[-1]
-        isolated.partition = 'train'
-        isolated.label = [1., 0.]
+        # isolated = self.gid_gnode_dict[-1]
+        # isolated.partition = 'train'
+        # isolated.label = [1., 0.]
 
         if len(x_range_select) == 1:#np.array(x_range).shape == np.array([6,9]).shape:
             x_ranges = x_range_select[0]
@@ -283,9 +283,9 @@ class MLGraph(GeToFeatureGraph):
 
 
         # deal with priors with incident edge and without adjacent prior( -1 gid)
-        isolated = self.gid_gnode_dict[-1]
-        isolated.partition = 'train'
-        isolated.label = [1, 0]
+        # isolated = self.gid_gnode_dict[-1]
+        # isolated.partition = 'train'
+        # isolated.label = [1, 0]
 
         num_test = len(self.selected_test_arc_ids)
         if num_test == 0:
@@ -588,7 +588,7 @@ class MLGraph(GeToFeatureGraph):
         end_time = time.time()
         return (self.G_dict, self.node_gid_to_feat_idx , self.node_gid_to_label, self.features)
 
-    def complex_sublevel_training_set(self, level_id, subgraph=None):
+    def complex_sublevel_training_set(self, level_id, num_sublevel_sets, subgraph=None, map_labels=False):
         # #for gnode in self.gid_gnode_dict.values():
         #
         #     partition = self.node_gid_to_partition[gnode.gid]
@@ -612,6 +612,9 @@ class MLGraph(GeToFeatureGraph):
             #
             # node["features"] =  features#gnode.features.tolist()
 
+
+            node["sublevel_set_id"] = [num_sublevel_sets, level_id]
+
             node["gid"] = sub_gnode.gid
             # getoelm = self.gid_geto_elm_dict[gnode.gid]
             # polyline = getoelm.points
@@ -631,14 +634,19 @@ class MLGraph(GeToFeatureGraph):
             # node["sublevel_set_id"] = [len(sublevel_training_sets), sublevel_id]
             node["test"] = sup_partition == 'test'
             node["val"] = sup_partition == 'val'
-            node["label"] = [
-                    int(sup_gid in self.negative_arc_ids),
-                    int(sup_gid in self.positive_arc_ids)
-                ]
+            if map_labels:
+                node["label"] = [
+                        int(sup_gid in self.negative_arc_ids),
+                        int(sup_gid in self.positive_arc_ids)
+                    ]
+                subgraph.node_gid_to_label = self.node_gid_to_label
+            else:
+                node["label"] = subgraph.node_gid_to_label[sub_gid]
 
             node["prediction"] = []
 
-            # subgraph.node_gid_to_label[sub_gid] = node["label"]
+            subgraph.G.node[nx_gid] = node
+
 
         return superlevel_training_set, sublevel_set, subgraph.G
 
@@ -905,6 +913,7 @@ class MLGraph(GeToFeatureGraph):
             100.0 * (total_length_positive_training_nodes / total_length_positive_nodes)) + "\n")
         pred_file.close()
 
+
     def write_training_percentages(self, dir=None, msc_segmentation=None, train_regions=None,
                                    path=None, msc=None, name='',total_positive_training_pixels=None,
                                                   total_positive_pixels=None, object='region'):
@@ -998,6 +1007,56 @@ class MLGraph(GeToFeatureGraph):
             window_file.write('x_box' + ' ' + str(x_box[0]) +','+str(x_box[1])+ "\n")
             window_file.write('y_box' + ' ' + str(y_box[0]) +','+str(y_box[1])+ end_line)
         window_file.close()
+
+    def write_homophily_stats(self, homo_ratio, homo_train_ratio, sublevel_homophily_ratio, sublevel_homophily_train_ratio , dir=None ):
+        if dir is not None:
+            pred_session_run_path = dir
+        else:
+            pred_session_run_path = self.pred_session_run_path
+
+        homo_file = os.path.join(pred_session_run_path, "homophily_ratio.txt")
+        pout(("&&&& writing homophily ratio in", homo_file))
+        homo_file = open(homo_file, "w+")
+        homo_file.write("homophily_ratio " + str(homo_ratio) + "\n")
+        homo_file.write("homophily_train_ratio " + str(homo_train_ratio) + "\n")
+
+        homo_file.write("sublevel_homophily_ratio " + str(sublevel_homophily_ratio) + "\n")
+        homo_file.write("sublevel_homophily_train_ratio " + str(sublevel_homophily_train_ratio) + "\n")
+        homo_file.close()
+
+        return 0
+    def write_class_stats(self, positive , negative, pos_neg_ratio, positive_train, negative_train,
+                          positive_sublevel,
+                          negative_sublevel,
+                          pos_neg_sublevel_ratio,
+                          positive_sublevel_train,
+                          negative_sublevel_train,
+                          dir=None):
+        if dir is not None:
+            pred_session_run_path = dir
+        else:
+            pred_session_run_path = self.pred_session_run_path
+
+        class_balance_file = os.path.join(pred_session_run_path, "class_balance.txt")
+        pout(("&&&& writing homophily ratio in", class_balance_file))
+        class_balance_file = open(class_balance_file, "w+")
+        class_balance_file.write("pos_neg_ratio " + str(pos_neg_ratio) + "\n")
+        class_balance_file.write("positive " + str(positive) + "\n")
+        class_balance_file.write("negative " + str(negative) + "\n")
+        class_balance_file.write("pos_neg_train_ratio " + str(positive_train/float(negative_train))+"\n")
+        class_balance_file.write("positive_train " + str(positive_train) + "\n")
+        class_balance_file.write("negative_train " + str(negative_train) + "\n")
+        #
+        class_balance_file.write("sublevel_pos_neg_ratio " + str(pos_neg_sublevel_ratio) + "\n")
+        class_balance_file.write("sublevel_positive " + str(positive_sublevel) + "\n")
+        class_balance_file.write("sublevel_negative " + str(negative_sublevel) + "\n")
+        class_balance_file.write("sublevel_pos_neg_train_ratio " +str(positive_sublevel_train/float(negative_sublevel_train))+"\n")
+        class_balance_file.write("sublevel_positive_train " + str(positive_sublevel_train) + "\n")
+        class_balance_file.write("sublevel_negative_train " + str(negative_sublevel_train) + "\n")
+        #
+        class_balance_file.close()
+
+        return 0
 
     def record_time(self, time, dir = None, type=''):
         if dir is not None:

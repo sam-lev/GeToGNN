@@ -237,6 +237,14 @@ class GeToFeatureGraph(GeToGraph):
         node_gid_to_graph_idx = {}
         graph_idx_to_gid = {}
         for gnode in gid_gnode_dict.values():
+            #
+            #                                CHECK THIS!
+            #                added to skip supergraph 8/31/22
+            #
+            # if gnode.level_id == 0:
+            #     continue
+
+
             gid = gnode.gid
             G.add_node(
                 nx_node_idx, edges=gnode.edge_gids, size=len(gnode.points)
@@ -249,12 +257,124 @@ class GeToFeatureGraph(GeToGraph):
 
             for adj_edge in node["edges"]:
                 for adj_gnode_gid in gid_edge_dict[adj_edge].gnode_gids:
+
                     node_gid = graph_idx_to_gid[nx_gid]
                     adj_gnode_nx_id = node_gid_to_graph_idx[adj_gnode_gid]
                     if adj_gnode_gid != node_gid:
                         G.add_edge(nx_gid, adj_gnode_nx_id)
 
         return G.copy(), graph_idx_to_gid, node_gid_to_graph_idx
+
+    def compute_homophily(self, G, graph_idx_to_gid, gid_to_label_dict, sup_gids_of_sublevel_set, subgraph):
+        homophily_count = 0.
+        homophily_train_count = 0.
+        total_edges = G.size()
+        total_train_edges = 0.
+
+        sublevel_homophily_count = 0.
+        sublevel_homophily_train_count = 0.
+        total_sublevel_edges = 0
+        total_sublevel_train_edges = 0.
+
+        sup_G = self.G
+
+        # sub_gid = subgraph.sup_gid_to_sub_dict[sup_gid]
+        sub_gid_to_sup_gid_dict ={v: k for k, v in subgraph.sup_gid_to_sub_dict.items()}
+        # dict([(subgid,supgid) for supgid,subgid in subgraph.sup_gid_to_sub_dict.items()])
+
+        seen_nodes = []
+        for nodeid in G.nodes():
+            node_gid = graph_idx_to_gid[nodeid]
+
+            seen_nodes.append(node_gid)
+            self_label = gid_to_label_dict[node_gid]
+            # neighbor_nxids = [neighbor for neighbor in G.neighbors(nodeid)]
+            neighbor_gids = [(neighbor, graph_idx_to_gid[neighbor]) for neighbor in G.neighbors(nodeid)]
+            neighbor_labels = [gid_to_label_dict[neighbor[1]] for neighbor in neighbor_gids]
+            for nl, n_ids in zip(neighbor_labels, neighbor_gids):
+                n_gid = n_ids[1]
+                n_nxid = n_ids[0]
+                # nbr_node = G.node[n_nxid]
+                # sup_gid = sub_gid_to_sup_gid_dict[n_gid]    ## !!! why doesnt this work
+                # nbr_is_train = sup_gid in sup_gids_of_sublevel_training_set
+                nbr_is_train = self.node_gid_to_partition[n_gid] == 'train'
+
+                # sup_partition = self.node_gid_to_partition[sup_gid]
+                # nx_gid = subgraph.node_gid_to_graph_idx[n_gid]
+                # node = subgraph.G.node[nx_gid]
+                if n_gid in sup_gids_of_sublevel_set:
+                    total_sublevel_edges += 1
+
+                if n_gid not in seen_nodes and nbr_is_train:
+                    total_train_edges += 1
+                    if n_gid in sup_gids_of_sublevel_set:
+                        total_sublevel_train_edges += 1
+
+                if n_gid not in seen_nodes and self_label == nl:
+                    homophily_count += 1.
+                    if n_gid in sup_gids_of_sublevel_set:
+                        sublevel_homophily_count += 1
+                    if nbr_is_train:
+                        homophily_train_count += 1
+                        if n_gid in sup_gids_of_sublevel_set:
+                            sublevel_homophily_train_count += 1
+        homophily_ratio = homophily_count/float(total_edges)
+        homophily_train_ratio = homophily_train_count/float(total_train_edges)
+
+        sublevel_homophily_ratio = sublevel_homophily_count/float(total_sublevel_edges)
+        sublevel_homophily_train_ratio = sublevel_homophily_train_count/float(total_sublevel_train_edges)
+        return homophily_ratio, homophily_train_ratio, sublevel_homophily_ratio, sublevel_homophily_train_ratio
+
+    def compute_class_balance(self, G, graph_idx_to_gid, gid_to_label_dict, sup_gids_of_sublevel_set):
+        positive_count = 0.
+        negative_count = 0.
+
+        positive_count_train = 0.
+        negative_count_train = 0.
+
+        positive_sublevel_count = 0.
+        negative_sublevel_count = 0.
+        positive_sublevel_count_train = 0.
+        negative_sublevel_count_train = 0.
+
+        total_nodes = G.number_of_nodes()
+        seen_nodes = []
+
+        check = 0
+
+        for nodeid in G.nodes():
+            node_gid = graph_idx_to_gid[nodeid]
+            seen_nodes.append(node_gid)
+            self_label = gid_to_label_dict[node_gid]
+            # neighbor_gids = np.array([graph_idx_to_gid[neighbor]
+            #                          for neighbor in G.neighbors(nodeid)])
+            # neighbor_labels = np.array([gid_to_label_dict[neighbor]
+            #                             for neighbor in neighbor_gids])
+            # for nl, n_gid in zip(neighbor_labels, neighbor_gids):
+            node_is_train = self.node_gid_to_partition[node_gid] == 'train'
+
+            node = G.node[nodeid]
+            if self_label[1] > 0:#n_gid not in seen_nodes and self_label == nl:
+                check+=1
+                positive_count += 1
+                if node_gid in sup_gids_of_sublevel_set:
+                    positive_sublevel_count += 1
+                if node_is_train:
+                    positive_count_train += 1
+                    if node_gid in sup_gids_of_sublevel_set:
+                        positive_sublevel_count_train += 1
+            else:
+                negative_count += 1
+                if node_gid in sup_gids_of_sublevel_set:
+                    negative_sublevel_count += 1
+                if node_is_train:
+                    negative_count_train += 1
+                    if node_gid in sup_gids_of_sublevel_set:
+                        negative_sublevel_count_train += 1
+            # if check < 10:
+            #     pout(("label observed", self_label))
+        #                0             1            2                  3                    4                     5                       6                          7                                    8                             9
+        return positive_count, negative_count, total_nodes, positive_count_train, negative_count_train,  positive_sublevel_count, negative_sublevel_count, len(sup_gids_of_sublevel_set), positive_sublevel_count_train, negative_sublevel_count_train
 
     #@profile
     def build_geto_adj_list(self, influence_type='weighted'):
@@ -1570,3 +1690,4 @@ class GeToFeatureGraph(GeToGraph):
         feats_time_file = open(msc_feats_file, "w+")
         feats_time_file.write(str(self.feature_comp_time) + '\n')
         feats_time_file.close()
+
