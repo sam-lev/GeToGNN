@@ -55,19 +55,39 @@ dim_image = [[700,605],                      # 0
         [891,896]]                           # 10
 
 
+datasets    = [ 0 ]
+
+#
+#         NAME            IDX        PERS_SUPERGRAPH      PERS_SUBGRAPH
+#  ['retinal',            # 0           0.01                 0.8
+#   'neuron2',            # 2           11                   45
+#   'foam_cell',          # 8           220                  800
+#   'diadem_sub1',        # 9
+#   'berghia_membrane']   # 10
+#
+#
+#
+
+persistences = [2]
+
+
 batch         =         0
 plot_only     =         0
 overide_plots =         0
-region_thresh =         5#40
-break_training_thresh = 40#60 45,57
+region_thresh =         1#40
+break_training_thresh = 60#60 45,57
 #feat control
-load_features              = 0
-compute_features           = 1
+load_features              = 1
+compute_features           = 0
 load_geto_features         = 0
 compute_geto_features      = 0              # !!!!
 feats_independent          = 1# geom / std separate # mlp unet and random need to node_gid_to_standard_feature
 compute_complex = True
+load_subgraph_labels      =  False
+
 clear_runs = True if not plot_only else False
+
+
 
 experiments = [ #      "UNet",
                 #      "Random_Forest_Pixel",
@@ -87,19 +107,30 @@ models      = [ #    'unet',
                 #    'mlp',
                 #    'mlp'
                 ]
-datasets    = [ 2 ]
 
-plot_experiments = [  "UNet",
-                      "Random_Forest_Pixel",
-                      "Random_Forest_MSC",
-                      #'Random_Forest_MSC_Geom',
-                      'GNN',
-                      #'GNN_Geom',
-                      'GNN_SUB',
-                      'MLP_MSC',
-                      'MLP_Pixel'
-                ]
 
+# plot_experiments   = [ 'GNN_SUB' ]
+# plot_experiments = [  "UNet",
+#                       "Random_Forest_Pixel",
+#                       "Random_Forest_MSC",
+#                       #'Random_Forest_MSC_Geom',
+#                       'GNN',
+#                       #'GNN_Geom',
+#                       'GNN_SUB',
+#                       'MLP_MSC',
+#                       'MLP_Pixel'
+#                 ]
+plot_experiments = [
+                        "Random_Forest_Pixel",
+                        'MLP_Pixel',
+                        "UNet",
+                        "Random_Forest_MSC",
+                        # 'Random_Forest_MSC_Geom',
+                        'MLP_MSC',
+                        'GNN',
+                        #'GNN_Geom',
+                        'GNN_SUB'
+                        ]
 def unit_run():
     exp_runner = None
     for exp, model in zip(experiments,
@@ -119,7 +150,8 @@ def unit_run():
                                                    feats_independent = feats_independent,
                                                    percent_train_thresh=region_thresh,
                                                    break_training_size=break_training_thresh,
-                                                   clear_runs= not plot_only)
+                                                   clear_runs= not plot_only,
+                                                   load_subgraph_labels=load_subgraph_labels)
             #                            !        !  ^
             #                           ! CLEAR? ! _/
             #                          !        !
@@ -133,8 +165,13 @@ def unit_run():
 
 
 
-                exp_runner.start(model, boxes=boxes, dims=dims, learning=learn_type,
-                                 compute_complex=compute_complex)
+                exp_runner.start(model,
+                                 boxes=boxes,
+                                 dims=dims,
+                                 learning=learn_type,
+                                 compute_complex=compute_complex,
+                                 persistences=persistences
+                                 )
 
             current_exp = exp
 
@@ -143,11 +180,18 @@ def unit_run():
             exp_runner.multi_model_metrics(plot_experiments,
                                            plot_experiments,
                                             None,
+                                           plot_experiments=plot_experiments,
                                             metric='time')
             exp_runner.multi_model_metrics(plot_experiments,
                                            plot_experiments,
-                                           None)
-
+                                           None,
+                                           plot_experiments=plot_experiments,
+                                           metric='f1')
+    exp_runner.multi_model_metrics(['GNN_SUB'],
+                                   ['GNN_SUB'],
+                                   None,
+                                   plot_experiments=['GNN_SUB'],
+                                   metric='homophily')
 
 
 
@@ -178,7 +222,11 @@ def batch_runs():
                 init_box = box_list[dataset_idx]
                 dim_im = dim_image[dataset_idx]
 
-                exp_runner.start(model, boxes = init_box , dims=dim_im, learning=learn_type)
+                exp_runner.start(model,
+                                 boxes = init_box ,
+                                 dims=dim_im,
+                                 learning=learn_type,
+                                 persistences = persistences)
 
                 model_exp.append(exp)
 
