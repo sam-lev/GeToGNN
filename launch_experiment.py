@@ -59,7 +59,7 @@ datasets    = [ 0 ]
 
 #
 #         NAME            IDX        PERS_SUPERGRAPH      PERS_SUBGRAPH
-#  ['retinal',            # 0           0.01                 0.8
+#  ['retinal',            # 0           0.01                 0.8 2
 #   'neuron2',            # 2           11                   45
 #   'foam_cell',          # 8           220                  800
 #   'diadem_sub1',        # 9
@@ -68,14 +68,14 @@ datasets    = [ 0 ]
 #
 #
 
-persistences = [2]
+persistences = [30]
 
 
 batch         =         0
-plot_only     =         0
+plot_only     =         1
 overide_plots =         0
 region_thresh =         1#40
-break_training_thresh = 60#60 45,57
+break_training_thresh = 40#60 45,57
 #feat control
 load_features              = 1
 compute_features           = 0
@@ -95,7 +95,8 @@ experiments = [ #      "UNet",
                 #      'Random_Forest_MSC_Geom',
                 #      'GNN',
                 #      'GNN_Geom',
-                      'GNN_SUB',
+                        'GNN_INIT',
+                #        'GNN_INIT',
                 #      'MLP_MSC',
                 #      'MLP_Pixel'
                 ]
@@ -123,12 +124,13 @@ models      = [ #    'unet',
 plot_experiments = [
                         "Random_Forest_Pixel",
                         'MLP_Pixel',
-                        "UNet",
+                        #"UNet",
                         "Random_Forest_MSC",
                         # 'Random_Forest_MSC_Geom',
                         'MLP_MSC',
                         'GNN',
                         #'GNN_Geom',
+                        'GNN_INIT',
                         'GNN_SUB'
                         ]
 def unit_run():
@@ -156,7 +158,10 @@ def unit_run():
             #                           ! CLEAR? ! _/
             #                          !        !
             if not plot_only:
-                learn_type = 'subcomplex' if 'SUB' in exp else 'supervised'
+                if 'SUB' in exp or 'INIT' in exp:
+                    learn_type = 'subcomplex'
+                else:
+                    learn_type = 'supervised'
                 if model == 'random_forest' or model == 'mlp':
                     learn_type = 'pixel' if 'Pixel' in exp else 'msc'
 

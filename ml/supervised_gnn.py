@@ -770,6 +770,7 @@ class gnn:
         else:
             num_sublevel_sets = 1
 
+
         # iterations in an epoch
         FLAGS.print_every = int(0.5 * minibatch.total_train_nodes//FLAGS.batch_size)
 
@@ -788,6 +789,9 @@ class gnn:
 
             if self.sublevel_sets:
                 total_sublevel_sets = minibatch.total_sublevel_sets
+                if epoch == int(FLAGS.epochs * .5):
+                   minibatch.update_training_sublevel()
+
                 # if epoch%(FLAGS.epochs//(num_sublevel_sets+1)) == 0:
                 #if epoch in switch_level_set and self.sublevel_sets:
                 #    minibatch.update_sublevel_training_set()

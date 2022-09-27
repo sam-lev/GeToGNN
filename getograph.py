@@ -263,10 +263,11 @@ class GeToGraph(Attributes):
             for xy in sup_points:
                 xy = (xy[i_x],xy[i_y])
 
-                for ngid in gedge_super.gnode_gids:
-                    sup_gid_to_sub_dict[ngid] = point_map_sub[xy]#_init]
+
 
                 if point_map_sub[xy] >= -1:
+                    for ngid in gedge_super.gnode_gids:
+                        sup_gid_to_sub_dict[ngid] = point_map_sub[xy]  # _init]
                     if xy_init is None:
                         xy_init = xy
                     cardinality_intersect += 1
@@ -335,7 +336,7 @@ class GeToGraph(Attributes):
                 # if xy_init is None:
                 #     xy_init = xy
                 sub_gid = point_map_sub[xy]
-                sup_gid_to_sub_dict[gid] = sub_gid
+
 
                 # map label of sup to sub
 
@@ -343,6 +344,7 @@ class GeToGraph(Attributes):
 
                 if point_map_sub[xy] >= -1:
                     gid_sub = point_map_sub[xy] #take gid of interesecting node
+                    sup_gid_to_sub_dict[gid] = sub_gid
                     if xy_init is None:
                         xy_init = xy
                 if point_map_sub[xy] >= -1:

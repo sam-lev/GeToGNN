@@ -1705,7 +1705,7 @@ class runner:
                                        # persistence_subcomplex_med,
                                        # persistence_subcomplex_maxypad]
 
-        union_thresh = 0
+        union_thresh = 0.5
 
         for gr in range(len(growth_regions)):
 

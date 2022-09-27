@@ -1056,7 +1056,7 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             ## (0, (1, 1)) # densely dotted(0, (5, 1)) # dashed (0, (1, 1))# 'densely dotted'
             lw = 2.0
         if model_name == 'GNN':
-            c = 'red'
+            c = 'darkviolet'
             lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
             lw = 2.0
         if 'GNN' in model_name and 'Geom' in model_name:
@@ -1087,12 +1087,24 @@ def multi_model_metrics(models, exp_dirs, write_dir, bins=None, runs='runs', dat
             if 'sub G' in model_name:
                 sub_id = model_name.split(' ')[-1]
                 model_name = 'subgraph '+str(sub_id)#'GNN Complex Informed'
-                c = 'orchid'#
+                c = 'blue'#
                 lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
                 lw = 2.0
             else:
-                model_name =  'Hierarchical GNN'
-                c = 'orchid'#
+                model_name =  'GNN-HJT'
+                c = 'blue'#
+                lstyle = (0, (5, 1))  # dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
+                lw = 2.0
+        if 'GNN' in model_name and 'INIT' in model_name:
+            if 'sub G' in model_name:
+                sub_id = model_name.split(' ')[-1]
+                model_name = 'subgraph '+str(sub_id)#'GNN Complex Informed'
+                c = 'cornflowerblue'#
+                lstyle = (0, (5, 1)) #dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
+                lw = 2.0
+            else:
+                model_name =  'GNN-HST'
+                c = 'cornflowerblue'#
                 lstyle = (0, (5, 1))  # dense dash'solid'# (0, (3, 5, 1, 5, 1, 5))#'dashdotdotted'
                 lw = 2.0
         if metric == 'f1':

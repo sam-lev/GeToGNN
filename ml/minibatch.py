@@ -358,7 +358,10 @@ class NodeMinibatchIterator(object):
 
             self.all_subadj_list.append(self.adj)  # [-1,:,:]= self.adj
             self.all_subadj_list = np.array(self.all_subadj_list).astype(dtype=np.int32)
-            self.update_sublevel_training_set()
+
+            #self.update_sublevel_training_set()
+
+            self.update_training_sublevel()
 
             # # for inf over all
             # self.total_levelset_node_lists = []
@@ -391,8 +394,9 @@ class NodeMinibatchIterator(object):
               len(self.observed_sublevel_set1)])
 
     def update_training_sublevel(self):
+        pout(("UPDATING TRAINING SET IDs"))
         self.sublevel_set_id += 1
-        # self.observed_sublevel_set_ids.append(self.sublevel_set_id)
+        self.observed_sublevel_set_ids.append(self.sublevel_set_id)
         if self.sublevel_set_id <= self.total_sublevel_sets:
             self.train_nodes = self.levelset_node_lists[self.sublevel_set_id-1]
             pout(["Updating sublevel training set", 'total nodes now:', len(self.train_nodes)])
@@ -400,8 +404,7 @@ class NodeMinibatchIterator(object):
             self.train_nodes = set(self.G.nodes()).difference(self.no_train_nodes_set)
             # don't train on nodes that only have edges to test set
             self.train_nodes = [n for n in self.train_nodes if self.deg[self.id2idx[n]] > 0]
-        pout(['updating training subgraph', 'length_training',len(self.train_nodes),'length observed sublevel',
-              len(self.observed_sublevel_set1)])
+        pout(['updating training subgraph', 'length_training',len(self.train_nodes)])
 
 
     def _make_label_vec(self, node, level_set_id=None):
